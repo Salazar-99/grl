@@ -1,0 +1,92 @@
+context/
+NOTES.md
+
+# Rust build artifacts
+**/target/
+
+# Firecracker images
+base-images/
+task-images/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+# Virtual environments (uv, venv, poetry, etc.)
+.venv/
+venv/
+ENV/
+env/
+
+# Test, lint, and type-checker caches
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Local env files (keep .env.example if you add one)
+.env
+.env.*
+!.env.example
+
+# uv local cache (lockfile is committed; do not ignore uv.lock)
+.uv/
+
+# Terraform working directories
+**/.terraform/*
+
+# Terraform state
+*.tfstate
+*.tfstate.*
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Terraform plan files
+*.tfplan
+*.plan
+
+# Terraform variable files that may contain secrets
+*.tfvars
+*.tfvars.json
+
+# Terraform override files, usually local-only
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

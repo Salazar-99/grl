@@ -1,0 +1,31 @@
+rayCluster:
+  name: grl-ray
+  namespace: default
+  version: 2.55.1
+  images:
+    head: grl-training:head
+    rollouts: grl-training:rollouts
+    training: grl-training:training
+    environment: grl-training:environment
+  workers:
+    rollouts:
+      gpusPerNode: 1
+      # RolloutWorker starts a prometheus_client server here to expose
+      # in-process vLLM engine metrics; scraped by the otel collector.
+      vllmMetricsPort: 9090
+    training:
+      gpusPerNode: 1
+
+otelCollector:
+  name: grl-collector
+  namespace: default
+  # External collector VM (owns the ClickHouse export). Always TLS with
+  # basic auth; credentials are injected from Terraform variables.
+  upstream:
+    endpoint: otel.gerardosalazar.com:4317
+    username: ""
+    password: ""
+
+dcgmExporter:
+  namespace: default
+  image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04

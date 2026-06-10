@@ -1,0 +1,21 @@
+[package]
+name = "grl-env-server"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "executor"
+path = "src/bin/executor.rs"
+
+[dependencies]
+prost = "0.13"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = "0.12"
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-build = "0.12"

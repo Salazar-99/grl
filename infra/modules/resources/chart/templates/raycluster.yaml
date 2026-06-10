@@ -1,0 +1,132 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: {{ .Values.rayCluster.name | quote }}
+  namespace: {{ .Values.rayCluster.namespace | quote }}
+spec:
+  rayVersion: {{ .Values.rayCluster.version | quote }}
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      metrics-export-port: "8080"
+    template:
+      spec:
+        nodeSelector:
+          role: ray
+        containers:
+          - name: ray-head
+            image: {{ .Values.rayCluster.images.head | quote }}
+            env:
+              - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
+            ports:
+              - name: gcs
+                containerPort: 6379
+              - name: dashboard
+                containerPort: 8265
+              - name: client
+                containerPort: 10001
+              - name: metrics
+                containerPort: 8080
+            resources:
+              requests:
+                cpu: "1"
+                memory: 2Gi
+              limits:
+                cpu: "2"
+                memory: 4Gi
+  workerGroupSpecs:
+    - groupName: rollouts
+      replicas: 1
+      minReplicas: 0
+      maxReplicas: 3
+      rayStartParams:
+        num-gpus: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
+        resources: {{ dict "rollouts" (.Values.rayCluster.workers.rollouts.gpusPerNode | int) | toJson | quote }}
+        metrics-export-port: "8080"
+      template:
+        spec:
+          nodeSelector:
+            role: rollouts
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
+          containers:
+            - name: ray-worker
+              image: {{ .Values.rayCluster.images.rollouts | quote }}
+              env:
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
+                - name: GRL_VLLM_METRICS_PORT
+                  value: {{ .Values.rayCluster.workers.rollouts.vllmMetricsPort | quote }}
+              ports:
+                - name: vllm-metrics
+                  containerPort: {{ .Values.rayCluster.workers.rollouts.vllmMetricsPort }}
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 8Gi
+                  nvidia.com/gpu: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+                  nvidia.com/gpu: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
+    - groupName: training
+      replicas: 1
+      minReplicas: 0
+      maxReplicas: 3
+      rayStartParams:
+        num-gpus: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
+        resources: {{ dict "training" (.Values.rayCluster.workers.training.gpusPerNode | int) | toJson | quote }}
+        metrics-export-port: "8080"
+      template:
+        spec:
+          nodeSelector:
+            role: training
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
+          containers:
+            - name: ray-worker
+              image: {{ .Values.rayCluster.images.training | quote }}
+              env:
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 8Gi
+                  nvidia.com/gpu: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+                  nvidia.com/gpu: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
+    - groupName: environment
+      replicas: 1
+      minReplicas: 1
+      maxReplicas: 3
+      rayStartParams:
+        num-cpus: "1"
+        resources: '{"environment": 1}'
+        metrics-export-port: "8080"
+      template:
+        spec:
+          nodeSelector:
+            role: environment
+          containers:
+            - name: ray-worker
+              image: {{ .Values.rayCluster.images.environment | quote }}
+              env:
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+                limits:
+                  cpu: "2"
+                  memory: 4Gi

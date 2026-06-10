@@ -1,0 +1,131 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Values.otelCollector.name | quote }}
+  namespace: {{ .Values.otelCollector.namespace | quote }}
+spec:
+  mode: deployment
+  serviceAccount: {{ .Values.otelCollector.name | quote }}
+  config:
+    extensions:
+      basicauth/upstream:
+        client_auth:
+          username: {{ .Values.otelCollector.upstream.username | quote }}
+          password: {{ .Values.otelCollector.upstream.password | quote }}
+    receivers:
+      # Manual instrumentation (Python workers, Rust env server) pushes here.
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+      prometheus:
+        config:
+          scrape_configs:
+            # Ray node metrics — every Ray pod, metrics-export-port 8080.
+            - job_name: ray
+              scrape_interval: 15s
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces:
+                    names:
+                      - {{ .Values.rayCluster.namespace | quote }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_label_ray_io_cluster]
+                  regex: {{ .Values.rayCluster.name | quote }}
+                  action: keep
+                - source_labels: [__meta_kubernetes_pod_ip]
+                  replacement: $$1:8080
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_pod_label_ray_io_group]
+                  target_label: ray_group
+                - source_labels: [__meta_kubernetes_pod_label_ray_io_node_type]
+                  target_label: ray_node_type
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
+            # vLLM engine metrics — rollouts pods only; RolloutWorker starts a
+            # prometheus_client HTTP server on this port (see training code).
+            - job_name: vllm
+              scrape_interval: 15s
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces:
+                    names:
+                      - {{ .Values.rayCluster.namespace | quote }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_label_ray_io_cluster]
+                  regex: {{ .Values.rayCluster.name | quote }}
+                  action: keep
+                - source_labels: [__meta_kubernetes_pod_label_ray_io_group]
+                  regex: rollouts
+                  action: keep
+                - source_labels: [__meta_kubernetes_pod_ip]
+                  replacement: $$1:{{ .Values.rayCluster.workers.rollouts.vllmMetricsPort }}
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
+            # GPU metrics from the dcgm-exporter DaemonSet.
+            - job_name: dcgm
+              scrape_interval: 15s
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces:
+                    names:
+                      - {{ .Values.dcgmExporter.namespace | quote }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_label_app]
+                  regex: dcgm-exporter
+                  action: keep
+                - source_labels: [__meta_kubernetes_pod_ip]
+                  replacement: $$1:9400
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_pod_node_name]
+                  target_label: node
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+      batch: {}
+    exporters:
+      # Forward everything to the external collector VM, which owns the
+      # ClickHouse export. TLS (system CAs) + basic auth; queue + retry so
+      # brief VM outages don't drop data.
+      otlp:
+        endpoint: {{ .Values.otelCollector.upstream.endpoint | quote }}
+        auth:
+          authenticator: basicauth/upstream
+        sending_queue:
+          enabled: true
+          queue_size: 5000
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 300s
+    service:
+      extensions:
+        - basicauth/upstream
+      pipelines:
+        traces:
+          receivers:
+            - otlp
+          processors:
+            - memory_limiter
+            - batch
+          exporters:
+            - otlp
+        metrics:
+          receivers:
+            - otlp
+            - prometheus
+          processors:
+            - memory_limiter
+            - batch
+          exporters:
+            - otlp
+        logs:
+          receivers:
+            - otlp
+          processors:
+            - memory_limiter
+            - batch
+          exporters:
+            - otlp
