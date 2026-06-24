@@ -10,6 +10,16 @@ environment:
     max_attempts: 10
     initial_backoff_secs: 0.5
     max_backoff_secs: 30.0
+  # Client-side gRPC deadlines. Defaults follow prime-rl SWE reference configs
+  # (sandbox_command_timeout=30, eval timeout.rollout=3600, score ~900s).
+  rpc_timeouts:
+    create_secs: 30
+    list_tasks_secs: 30
+    execute_default_secs: 140
+    execute_submit_secs: 10
+    execute_timeout_buffer_secs: 10
+    evaluate_secs: 930
+    teardown_secs: 30
 
 grpo:
   beta: 0.001
@@ -34,12 +44,16 @@ rollout:
   max_assistant_turns: 8
   enable_prefix_caching: true
   vllm_metrics_port: 9090
+  generation_timeout_secs: 600
+  trajectory_timeout_secs: 3600
 
 pipeline:
   pending_tasks_queue_size: 64
   completed_rollouts_queue_size: 256
   train_batches_queue_size: 16
   seed: 0
+  group_assembly_timeout_secs: 3900
+  group_poll_interval_secs: 5
 
 telemetry:
   run_id: null

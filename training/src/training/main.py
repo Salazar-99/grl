@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 import ray
 
 from training.config import DEFAULT_CONFIG_PATH, GRLConfig
-from training.environments import list_task_ids
+from training.environments import RpcTimeouts, list_task_ids
 from training.rollouts import RolloutRequest, RolloutResult, RolloutWorker
 from training.telemetry import init_telemetry
 from training.trainer import TrainingBatch, TrainingWorker
@@ -27,12 +28,45 @@ async def _get(ref: ray.ObjectRef) -> Any:
     return await asyncio.to_thread(ray.get, ref)
 
 
+def _timeout_rollout_result(template: RolloutResult, *, rollout_index: int) -> RolloutResult:
+    return RolloutResult(
+        group_id=template.group_id,
+        task_id=template.task_id,
+        env_id="",
+        rollout_index=rollout_index,
+        expected_group_size=template.expected_group_size,
+        policy_version=template.policy_version,
+        request_id="",
+        prompt_ids=[],
+        response_ids=[],
+        response_mask=[],
+        inference_logprobs=[],
+        num_turns=0,
+        reward=None,
+        done_reason="infra_error",
+    )
+
+
+def _pad_group_timeouts(members: list[RolloutResult]) -> list[RolloutResult]:
+    if not members:
+        return members
+    expected = members[0].expected_group_size
+    present = {rollout.rollout_index for rollout in members}
+    padded = list(members)
+    template = members[0]
+    for index in range(expected):
+        if index not in present:
+            padded.append(_timeout_rollout_result(template, rollout_index=index))
+    return padded
+
+
 async def rollout_loop(
     pending_tasks: asyncio.Queue[GRPOGroupRequest],
     completed_rollouts: asyncio.Queue[RolloutResult],
     rollout_workers: list[ray.actor.ActorHandle],
     *,
     max_in_flight: int,
+    trajectory_timeout_secs: float,
 ) -> None:
     in_flight = asyncio.Semaphore(max_in_flight)
     next_worker = 0
@@ -43,8 +77,30 @@ async def rollout_loop(
     ) -> None:
         async with in_flight:
             try:
-                result = await _get(worker.run_rollout.remote(request))
+                result = await asyncio.wait_for(
+                    _get(worker.run_rollout.remote(request)),
+                    timeout=trajectory_timeout_secs,
+                )
                 await completed_rollouts.put(result)
+            except asyncio.TimeoutError:
+                await completed_rollouts.put(
+                    RolloutResult(
+                        group_id=request.group_id,
+                        task_id=request.task_id,
+                        env_id="",
+                        rollout_index=request.rollout_index,
+                        expected_group_size=request.expected_group_size,
+                        policy_version=request.policy_version,
+                        request_id="",
+                        prompt_ids=[],
+                        response_ids=[],
+                        response_mask=[],
+                        inference_logprobs=[],
+                        num_turns=0,
+                        reward=None,
+                        done_reason="infra_error",
+                    )
+                )
             except Exception as exc:
                 await completed_rollouts.put(
                     RolloutResult(
@@ -136,48 +192,96 @@ def _batch_size_to_emit(
     return 0
 
 
+def _flush_expired_groups(
+    partial_groups: dict[str, list[RolloutResult]],
+    group_started: dict[str, float],
+    *,
+    group_assembly_timeout_secs: float,
+) -> list[list[RolloutResult]]:
+    now = time.monotonic()
+    expired: list[list[RolloutResult]] = []
+    for group_id, members in list(partial_groups.items()):
+        if not members:
+            continue
+        started = group_started.get(group_id)
+        if started is None:
+            continue
+        if len(members) >= members[0].expected_group_size:
+            continue
+        if now - started < group_assembly_timeout_secs:
+            continue
+        partial_groups.pop(group_id, None)
+        group_started.pop(group_id, None)
+        expired.append(_pad_group_timeouts(members))
+    return expired
+
+
 async def batcher_loop(
     completed_rollouts: asyncio.Queue[RolloutResult],
     train_batches: asyncio.Queue[TrainingBatch],
     *,
     groups_per_batch: int,
     max_policy_staleness: int,
+    group_assembly_timeout_secs: float,
+    group_poll_interval_secs: float,
 ) -> None:
     partial_groups: dict[str, list[RolloutResult]] = {}
+    group_started: dict[str, float] = {}
     ready_groups: list[list[RolloutResult]] = []
     latest_policy_version = 0
 
+    async def emit_ready_batches() -> None:
+        nonlocal ready_groups
+        while True:
+            batch_size = _batch_size_to_emit(
+                ready_groups,
+                groups_per_batch=groups_per_batch,
+                latest_policy_version=latest_policy_version,
+                max_policy_staleness=max_policy_staleness,
+            )
+            if batch_size == 0:
+                return
+            batch_groups = ready_groups[:batch_size]
+            del ready_groups[:batch_size]
+            await train_batches.put(
+                TrainingBatch(
+                    batch_id=uuid.uuid4().hex,
+                    groups=batch_groups,
+                    policy_version=max(
+                        _group_policy_version(group) for group in batch_groups
+                    ),
+                )
+            )
+
     while True:
-        result = await completed_rollouts.get()
-        latest_policy_version = max(latest_policy_version, result.policy_version)
-        group = partial_groups.setdefault(result.group_id, [])
-        group.append(result)
+        try:
+            result = await asyncio.wait_for(
+                completed_rollouts.get(),
+                timeout=group_poll_interval_secs,
+            )
+        except asyncio.TimeoutError:
+            result = None
 
-        if len(group) == result.expected_group_size:
-            ready_groups.append(partial_groups.pop(result.group_id))
+        if result is not None:
+            latest_policy_version = max(latest_policy_version, result.policy_version)
+            group = partial_groups.setdefault(result.group_id, [])
+            if not group:
+                group_started[result.group_id] = time.monotonic()
+            group.append(result)
 
-            while True:
-                batch_size = _batch_size_to_emit(
-                    ready_groups,
-                    groups_per_batch=groups_per_batch,
-                    latest_policy_version=latest_policy_version,
-                    max_policy_staleness=max_policy_staleness,
-                )
-                if batch_size == 0:
-                    break
-                batch_groups = ready_groups[:batch_size]
-                del ready_groups[:batch_size]
-                await train_batches.put(
-                    TrainingBatch(
-                        batch_id=uuid.uuid4().hex,
-                        groups=batch_groups,
-                        policy_version=max(
-                            _group_policy_version(group) for group in batch_groups
-                        ),
-                    )
-                )
+            if len(group) == result.expected_group_size:
+                ready_groups.append(partial_groups.pop(result.group_id))
+                group_started.pop(result.group_id, None)
+                await emit_ready_batches()
+            completed_rollouts.task_done()
 
-        completed_rollouts.task_done()
+        for expired_group in _flush_expired_groups(
+            partial_groups,
+            group_started,
+            group_assembly_timeout_secs=group_assembly_timeout_secs,
+        ):
+            ready_groups.append(expired_group)
+            await emit_ready_batches()
 
 
 async def trainer_loop(
@@ -207,10 +311,11 @@ async def run(config: GRLConfig, run_id: str) -> None:
         for _ in range(config.workers.num_training_workers)
     ]
 
-    # Task ids from the manager catalog; prompts/tools on CreateEnvironment.
+    rpc_timeouts = RpcTimeouts.from_config(config.environment.rpc_timeouts)
     task_ids = await list_task_ids(
         addr=config.environment.server_addr,
         split=config.environment.split,
+        rpc_timeouts=rpc_timeouts,
     )
 
     pipeline = config.pipeline
@@ -238,12 +343,15 @@ async def run(config: GRLConfig, run_id: str) -> None:
             completed_rollouts,
             rollout_workers,
             max_in_flight=config.workers.max_in_flight_rollouts,
+            trajectory_timeout_secs=config.rollout.trajectory_timeout_secs,
         ),
         batcher_loop(
             completed_rollouts,
             train_batches,
             groups_per_batch=grpo.groups_per_batch,
             max_policy_staleness=pipeline.max_policy_staleness,
+            group_assembly_timeout_secs=pipeline.group_assembly_timeout_secs,
+            group_poll_interval_secs=pipeline.group_poll_interval_secs,
         ),
         trainer_loop(train_batches, training_workers, rollout_workers),
     )

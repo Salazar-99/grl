@@ -3,6 +3,10 @@ name = "env"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "env"
+path = "src/lib.rs"
+
 [dependencies]
 portable-pty = "0.8"
 prost = "0.13"

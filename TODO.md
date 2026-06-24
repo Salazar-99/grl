@@ -10,14 +10,8 @@ swebench-lite
 -------------
 - [ ] Review for coupling between environment and grl
 
-Environment manager (Rust)
---------------------------
-- [ ] Forward `Execute` and `Evaluate` over vsock to the in-VM executor.
-
 Training correctness
 --------------------
-- [ ] Real rewards: manager `Evaluate` still returns `infra_error` until vsock
-      forwarding and the in-VM scorer are wired end-to-end.
 - [ ] Token-In-Token-Out semantics (e.g. prime renderers lib): keep exact
       sampled token ids and logprobs end-to-end so the trainer sees what the
       sampler emitted — no retokenization drift between vLLM and HF.
@@ -36,8 +30,6 @@ Performance
       closer to on-policy.
 - [ ] (For multiple rollout engines) Exploit prefix caching deliberately: the N rollouts in a group share a
       prompt — route them to the same engine using a hashmap in the data submitter
-- [ ] Per-call timeouts on gRPC and generation so one hung VM or runaway
-      trajectory can't stall a group.
 
 Observability
 -------------

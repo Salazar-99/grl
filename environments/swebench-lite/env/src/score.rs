@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::pb::ScoreResponse;
+use crate::pb::EvaluateResponse;
 use crate::session::Sessions;
 
 /// Where `vms build-tasks` writes the per-task answer key inside the VM.
@@ -48,7 +48,7 @@ fn default_repo_dir() -> String {
 }
 
 /// Score the environment `env_id` by running its baked-in test suite.
-pub fn score(sessions: &Sessions, env_id: &str) -> ScoreResponse {
+pub fn score(sessions: &Sessions, env_id: &str) -> EvaluateResponse {
     let spec = match load_spec() {
         Ok(spec) => spec,
         Err(e) => return error_score(format!("load task spec: {e}")),
@@ -116,7 +116,7 @@ fn build_score_command(spec: &TaskSpec) -> String {
 /// `-rA` prints one summary line per test as `OUTCOME <nodeid>` (e.g.
 /// `PASSED tests/test_x.py::test_y`). Resolution requires every targeted test
 /// to be PASSED; a target we never see in the output counts as not passed.
-pub fn resolve_reward(output: &str, fail_to_pass: &[String], pass_to_pass: &[String]) -> ScoreResponse {
+pub fn resolve_reward(output: &str, fail_to_pass: &[String], pass_to_pass: &[String]) -> EvaluateResponse {
     let outcomes = parse_outcomes(output);
 
     let mut missing: Vec<&str> = Vec::new();
@@ -142,9 +142,10 @@ pub fn resolve_reward(output: &str, fail_to_pass: &[String], pass_to_pass: &[Str
         "failed": failed,
         "missing": missing,
     });
-    ScoreResponse {
+    EvaluateResponse {
         reward,
         detail_json: detail.to_string(),
+        infra_error: false,
     }
 }
 
@@ -170,10 +171,11 @@ fn parse_outcomes(output: &str) -> BTreeMap<String, String> {
     map
 }
 
-pub fn error_score(message: String) -> ScoreResponse {
-    ScoreResponse {
+pub fn error_score(message: String) -> EvaluateResponse {
+    EvaluateResponse {
         reward: 0.0,
         detail_json: json!({ "error": message }).to_string(),
+        infra_error: false,
     }
 }
 

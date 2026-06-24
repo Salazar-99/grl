@@ -72,6 +72,7 @@ impl EnvironmentServiceImpl {
                 }
                 Err(err) => {
                     eprintln!("VM boot failed for {env_id}: {err}");
+                    let _ = registry.mark_failed(&env_id).await;
                 }
             }
         });
@@ -136,7 +137,7 @@ impl EnvironmentService for EnvironmentServiceImpl {
         request: Request<ExecuteRequest>,
     ) -> Result<Response<ExecuteResponse>, Status> {
         let request = request.into_inner();
-        let env_id = request.env_id;
+        let env_id = request.env_id.clone();
 
         if request.tool_name == SUBMIT_TOOL {
             match self.registry.mark_submitted(&env_id).await {
@@ -161,15 +162,15 @@ impl EnvironmentService for EnvironmentServiceImpl {
             .await
             .map_err(Self::registry_status)?;
 
-        // TODO: forward ExecuteRequest to the in-VM executor over vsock and relay
-        // its ExecuteResponse.
-        Ok(Response::new(ExecuteResponse {
-            content: format!(
-                "{} is not implemented for env {}: {}",
-                request.tool_name, env_id, request.arguments_json
-            ),
-            is_error: true,
-        }))
+        let executor = self.registry.executor(&env_id).await.ok_or_else(|| {
+            Status::unavailable(format!("no VM attached for environment {env_id}"))
+        })?;
+
+        let response = executor
+            .forward_execute(request)
+            .await
+            .map_err(|err| Status::internal(err))?;
+        Ok(Response::new(response))
     }
 
     async fn evaluate(
@@ -183,21 +184,32 @@ impl EnvironmentService for EnvironmentServiceImpl {
             .await
             .map_err(Self::registry_status)?;
 
-        // TODO: send an Evaluate frame to this env's in-VM executor over vsock and
-        // return the response it produces. Until forwarding exists, surface an
-        // infra error so GRPO excludes this rollout.
+        let response = if let Some(executor) = self.registry.executor(&env_id).await {
+            match executor.forward_evaluate(&env_id).await {
+                Ok(response) => response,
+                Err(err) => EvaluateResponse {
+                    reward: 0.0,
+                    detail_json: serde_json::json!({ "error": err }).to_string(),
+                    infra_error: true,
+                },
+            }
+        } else {
+            EvaluateResponse {
+                reward: 0.0,
+                detail_json: serde_json::json!({
+                    "error": format!("no VM attached for environment {env_id}")
+                })
+                .to_string(),
+                infra_error: true,
+            }
+        };
+
         self.registry
             .mark_evaluated(&env_id)
             .await
             .map_err(Self::registry_status)?;
 
-        Ok(Response::new(EvaluateResponse {
-            reward: 0.0,
-            detail_json: format!(
-                "{{\"error\":\"evaluate forwarding not implemented for env {env_id}\"}}"
-            ),
-            infra_error: true,
-        }))
+        Ok(Response::new(response))
     }
 
     async fn teardown(
@@ -337,6 +349,84 @@ mod tests {
             .into_inner();
         assert!(second.is_error);
         assert!(second.content.contains("already submitted"));
+    }
+
+    #[tokio::test]
+    async fn evaluate_without_vm_returns_infra_error() {
+        let svc = test_service(4);
+        let env_id = svc
+            .create_environment(Request::new(CreateEnvironmentRequest {
+                task_id: "t1".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .env_id;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let resp = svc
+            .evaluate(Request::new(EvaluateRequest {
+                env_id: env_id.clone(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.infra_error);
+        assert_eq!(
+            svc.registry.phase(&env_id).await.unwrap(),
+            crate::registry::EnvPhase::Evaluated
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_forwards_to_attached_executor() {
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use std::thread;
+
+        use env::server::handle_conn;
+        use env::session::Sessions;
+        use tokio::process::Command;
+
+        use crate::vm::{ExecutorConn, VmHandle};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sessions = Arc::new(Sessions::default());
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            handle_conn(stream, &sessions);
+        });
+
+        let svc = test_service(4);
+        let env_id = svc
+            .registry
+            .register_booting("t1")
+            .await
+            .unwrap();
+        svc.registry.set_ready(&env_id).await.unwrap();
+        let executor = Arc::new(ExecutorConn::connect_tcp(&addr.to_string()).unwrap());
+        let child = Command::new("sleep").arg("3600").spawn().unwrap();
+        svc.registry
+            .attach_vm(&env_id, VmHandle::for_test(executor, child))
+            .await;
+
+        let resp = svc
+            .execute(Request::new(ExecuteRequest {
+                env_id: env_id.clone(),
+                tool_name: "bash".into(),
+                arguments_json: r#"{"command":"echo forwarded"}"#.into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!resp.is_error, "unexpected: {}", resp.content);
+        assert!(resp.content.contains("forwarded"));
+
+        if let Some(vm) = svc.registry.take_vm(&env_id).await {
+            vm.stop().await;
+        }
+        svc.registry.remove(&env_id).await;
     }
 
     #[tokio::test]

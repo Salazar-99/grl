@@ -2,11 +2,13 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::RwLock;
 
 use crate::vm::VmHandle;
+use crate::vm::ExecutorConn;
 
 /// Standard submit tool name (must match task catalog and trainer).
 pub const SUBMIT_TOOL: &str = "submit";
@@ -18,6 +20,7 @@ pub enum EnvPhase {
     Ready,
     Submitted,
     Evaluated,
+    Failed,
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +129,17 @@ impl Registry {
         Ok(())
     }
 
+    pub async fn mark_failed(&self, env_id: &str) -> Result<(), RegistryError> {
+        let mut envs = self.envs.write().await;
+        let record = envs
+            .get_mut(env_id)
+            .ok_or_else(|| RegistryError::NotFound(env_id.to_string()))?;
+        if record.phase == EnvPhase::Booting {
+            record.phase = EnvPhase::Failed;
+        }
+        Ok(())
+    }
+
     pub async fn mark_submitted(&self, env_id: &str) -> Result<(), RegistryError> {
         let mut envs = self.envs.write().await;
         let record = envs
@@ -143,9 +157,9 @@ impl Registry {
                 env_id: env_id.to_string(),
                 phase: EnvPhase::Booting,
             }),
-            EnvPhase::Evaluated => Err(RegistryError::ExecuteForbidden {
+            EnvPhase::Failed | EnvPhase::Evaluated => Err(RegistryError::ExecuteForbidden {
                 env_id: env_id.to_string(),
-                phase: EnvPhase::Evaluated,
+                phase: record.phase,
             }),
         }
     }
@@ -156,7 +170,7 @@ impl Registry {
             .get_mut(env_id)
             .ok_or_else(|| RegistryError::NotFound(env_id.to_string()))?;
         match record.phase {
-            EnvPhase::Ready | EnvPhase::Submitted => {
+            EnvPhase::Ready | EnvPhase::Submitted | EnvPhase::Failed => {
                 record.phase = EnvPhase::Evaluated;
                 Ok(())
             }
@@ -183,6 +197,14 @@ impl Registry {
         self.vms.write().await.remove(env_id)
     }
 
+    pub async fn executor(&self, env_id: &str) -> Option<Arc<ExecutorConn>> {
+        self.vms
+            .read()
+            .await
+            .get(env_id)
+            .map(|vm| Arc::clone(&vm.executor))
+    }
+
     pub async fn phase(&self, env_id: &str) -> Result<EnvPhase, RegistryError> {
         self.envs
             .read()
@@ -200,7 +222,7 @@ impl Registry {
                 phase,
             }),
             EnvPhase::Ready => Ok(()),
-            EnvPhase::Submitted | EnvPhase::Evaluated => {
+            EnvPhase::Submitted | EnvPhase::Evaluated | EnvPhase::Failed => {
                 Err(RegistryError::ExecuteForbidden {
                     env_id: env_id.to_string(),
                     phase,
@@ -216,7 +238,7 @@ impl Registry {
                 env_id: env_id.to_string(),
                 phase,
             }),
-            EnvPhase::Ready | EnvPhase::Submitted => Ok(()),
+            EnvPhase::Ready | EnvPhase::Submitted | EnvPhase::Failed => Ok(()),
             EnvPhase::Evaluated => Err(RegistryError::AlreadyEvaluated {
                 env_id: env_id.to_string(),
             }),
@@ -259,6 +281,16 @@ mod tests {
         let registry = Registry::with_capacity(1);
         let env_id = registry.register_booting("t").await.unwrap();
         registry.set_ready(&env_id).await.unwrap();
+        assert!(registry.require_evaluate(&env_id).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn boot_failure_marks_failed_and_blocks_execute() {
+        let registry = Registry::with_capacity(1);
+        let env_id = registry.register_booting("t").await.unwrap();
+        registry.mark_failed(&env_id).await.unwrap();
+        assert_eq!(registry.phase(&env_id).await.unwrap(), EnvPhase::Failed);
+        assert!(registry.require_execute(&env_id).await.is_err());
         assert!(registry.require_evaluate(&env_id).await.is_ok());
     }
 }

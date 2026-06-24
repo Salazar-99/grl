@@ -6,7 +6,7 @@
 //! training client.
 //!
 //! Two kinds flow today: [`MsgKind::Execute`] (an [`ExecuteRequest`], the common
-//! per-tool-call path) and [`MsgKind::Score`] (a [`ScoreRequest`], run once at
+//! per-tool-call path) and [`MsgKind::Evaluate`] (an [`EvaluateRequest`], run once at
 //! the end of a trajectory to compute the reward).
 //!
 //! One connection carries many requests (the manager holds it open for the life
@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use prost::Message;
 
-use crate::pb::{ExecuteRequest, ExecuteResponse, ScoreRequest};
+use crate::pb::{EvaluateRequest, ExecuteRequest, ExecuteResponse};
 use crate::score;
 use crate::session::Sessions;
 
@@ -32,14 +32,14 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MsgKind {
     Execute,
-    Score,
+    Evaluate,
 }
 
 impl MsgKind {
     fn from_byte(b: u8) -> Option<MsgKind> {
         match b {
             0 => Some(MsgKind::Execute),
-            1 => Some(MsgKind::Score),
+            1 => Some(MsgKind::Evaluate),
             _ => None,
         }
     }
@@ -47,7 +47,7 @@ impl MsgKind {
     fn as_byte(self) -> u8 {
         match self {
             MsgKind::Execute => 0,
-            MsgKind::Score => 1,
+            MsgKind::Evaluate => 1,
         }
     }
 }
@@ -101,7 +101,7 @@ fn serve_vsock(_port: u32, _sessions: Arc<Sessions>) -> io::Result<()> {
 }
 
 /// Serve requests on one connection until the peer closes it.
-fn handle_conn<S: Read + Write>(mut stream: S, sessions: &Sessions) {
+pub fn handle_conn<S: Read + Write>(mut stream: S, sessions: &Sessions) {
     loop {
         let kind = match read_kind(&mut stream) {
             Ok(Some(kind)) => kind,
@@ -118,10 +118,9 @@ fn handle_conn<S: Read + Write>(mut stream: S, sessions: &Sessions) {
                 Ok(req) => dispatch(sessions, req).encode_to_vec(),
                 Err(e) => error_response(format!("malformed ExecuteRequest: {e}")).encode_to_vec(),
             },
-            MsgKind::Score => match ScoreRequest::decode(frame.as_slice()) {
+            MsgKind::Evaluate => match EvaluateRequest::decode(frame.as_slice()) {
                 Ok(req) => score::score(sessions, &req.env_id).encode_to_vec(),
-                // Score has no error channel of its own; reward 0 with detail.
-                Err(e) => score::error_score(format!("malformed ScoreRequest: {e}"))
+                Err(e) => score::error_score(format!("malformed EvaluateRequest: {e}"))
                     .encode_to_vec(),
             },
         };

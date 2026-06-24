@@ -25,6 +25,7 @@ from training.environments import (
     EnvironmentSession,
     InfraError,
     RetryConfig,
+    RpcTimeouts,
     SUBMIT_TOOL,
 )
 from training.telemetry import init_telemetry
@@ -129,6 +130,8 @@ class RolloutWorker:
         self.max_model_len = rollout.max_model_len
         self.max_tokens_per_turn = rollout.max_tokens_per_turn
         self.max_assistant_turns = rollout.max_assistant_turns
+        self.generation_timeout_secs = rollout.generation_timeout_secs
+        self.trajectory_timeout_secs = rollout.trajectory_timeout_secs
         self.env_server_addr = cfg.environment.server_addr
         env_retry = cfg.environment.retry
         self.env_retry = RetryConfig(
@@ -136,6 +139,7 @@ class RolloutWorker:
             initial_backoff_secs=env_retry.initial_backoff_secs,
             max_backoff_secs=env_retry.max_backoff_secs,
         )
+        self.env_rpc_timeouts = RpcTimeouts.from_config(cfg.environment.rpc_timeouts)
 
         engine_args = AsyncEngineArgs(
             model=resolved_model,
@@ -191,6 +195,30 @@ class RolloutWorker:
 
     async def run_rollout(self, request: RolloutRequest) -> RolloutResult:
         """Run one trajectory: Create → Execute* → Evaluate → Teardown."""
+        try:
+            return await asyncio.wait_for(
+                self._run_rollout_inner(request),
+                timeout=self.trajectory_timeout_secs,
+            )
+        except asyncio.TimeoutError:
+            return RolloutResult(
+                group_id=request.group_id,
+                task_id=request.task_id,
+                env_id="",
+                rollout_index=request.rollout_index,
+                expected_group_size=request.expected_group_size,
+                policy_version=request.policy_version,
+                request_id="",
+                prompt_ids=[],
+                response_ids=[],
+                response_mask=[],
+                inference_logprobs=[],
+                num_turns=0,
+                reward=None,
+                done_reason="infra_error",
+            )
+
+    async def _run_rollout_inner(self, request: RolloutRequest) -> RolloutResult:
         sampling_params = dict(request.sampling_params or {"temperature": 1.0, "top_p": 1.0})
         reward: float | None = None
         done_reason = "completed"
@@ -201,6 +229,7 @@ class RolloutWorker:
                 request.task_id,
                 addr=self.env_server_addr,
                 retry=self.env_retry,
+                rpc_timeouts=self.env_rpc_timeouts,
             )
             try:
                 messages = env.initial_messages
@@ -217,7 +246,10 @@ class RolloutWorker:
                     prompt_ids=prompt_ids,
                     messages=list(messages),
                 )
-                session = await self._run_trajectory(session, sampling_params)
+                try:
+                    session = await self._run_trajectory(session, sampling_params)
+                except InfraError:
+                    done_reason = "infra_error"
                 try:
                     result = await env.evaluate()
                     if result.infra_error:
@@ -226,7 +258,7 @@ class RolloutWorker:
                 except InfraError:
                     done_reason = "infra_error"
             finally:
-                await env.teardown()
+                await asyncio.shield(env.teardown())
 
         assert session is not None
         prompt_len = len(session.prompt_ids) - len(session.response_ids)
@@ -278,11 +310,18 @@ class RolloutWorker:
                 session.done = True
                 break
 
-            generation = await self._generate_once(
-                request_id=session.request_id,
-                prompt_ids=session.prompt_ids,
-                sampling_params=sampling_params,
-            )
+            try:
+                generation = await asyncio.wait_for(
+                    self._generate_once(
+                        request_id=session.request_id,
+                        prompt_ids=session.prompt_ids,
+                        sampling_params=sampling_params,
+                    ),
+                    timeout=self.generation_timeout_secs,
+                )
+            except asyncio.TimeoutError:
+                session.done = True
+                break
             session.assistant_turns += 1
             session.prompt_ids += generation.token_ids
             session.response_ids += generation.token_ids

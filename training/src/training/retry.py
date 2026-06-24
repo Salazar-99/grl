@@ -10,12 +10,20 @@ import grpc
 
 T = TypeVar("T")
 
+# Retried while the manager/env is temporarily unavailable (boot, admission).
 RETRYABLE_CODES = frozenset(
     {
         grpc.StatusCode.UNAVAILABLE,
         grpc.StatusCode.RESOURCE_EXHAUSTED,
     }
 )
+
+# CreateEnvironment while the VM is still booting.
+CREATE_RETRY_CODES = RETRYABLE_CODES
+
+# Execute/Evaluate after the env is ready — only admission pressure is retried.
+EXECUTE_RETRY_CODES = frozenset({grpc.StatusCode.RESOURCE_EXHAUSTED})
+EVALUATE_RETRY_CODES = EXECUTE_RETRY_CODES
 
 
 class InfraError(Exception):

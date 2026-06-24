@@ -8,10 +8,18 @@ from typing import Any
 
 import grpc
 
+from training.config import EnvironmentRpcTimeoutsConfig
 from training.proto.grl.environment.v1 import environment_pb2, environment_pb2_grpc
-from training.retry import InfraError, grpc_retry
+from training.retry import (
+    CREATE_RETRY_CODES,
+    EVALUATE_RETRY_CODES,
+    EXECUTE_RETRY_CODES,
+    InfraError,
+    grpc_retry,
+)
 
 SUBMIT_TOOL = "submit"
+DEFAULT_TOOL_TIMEOUT_SECS = 120
 
 
 @dataclass(frozen=True)
@@ -22,19 +30,68 @@ class RetryConfig:
 
 
 @dataclass(frozen=True)
+class RpcTimeouts:
+    create_secs: float
+    list_tasks_secs: float
+    execute_default_secs: float
+    execute_submit_secs: float
+    execute_timeout_buffer_secs: float
+    evaluate_secs: float
+    teardown_secs: float
+
+    @classmethod
+    def from_config(cls, cfg: EnvironmentRpcTimeoutsConfig) -> RpcTimeouts:
+        return cls(
+            create_secs=cfg.create_secs,
+            list_tasks_secs=cfg.list_tasks_secs,
+            execute_default_secs=cfg.execute_default_secs,
+            execute_submit_secs=cfg.execute_submit_secs,
+            execute_timeout_buffer_secs=cfg.execute_timeout_buffer_secs,
+            evaluate_secs=cfg.evaluate_secs,
+            teardown_secs=cfg.teardown_secs,
+        )
+
+    def execute_secs(self, tool_name: str, arguments_json: str) -> float:
+        if tool_name == SUBMIT_TOOL:
+            return self.execute_submit_secs
+        tool_timeout = _tool_timeout_secs(arguments_json)
+        return float(tool_timeout) + self.execute_timeout_buffer_secs
+
+
+def _tool_timeout_secs(arguments_json: str) -> int:
+    try:
+        args = json.loads(arguments_json)
+    except json.JSONDecodeError:
+        return DEFAULT_TOOL_TIMEOUT_SECS
+    raw = args.get("timeout_secs")
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    if isinstance(raw, float) and raw > 0:
+        return int(raw)
+    return DEFAULT_TOOL_TIMEOUT_SECS
+
+
+@dataclass(frozen=True)
 class EvaluateResult:
     reward: float
     detail: dict[str, Any]
     infra_error: bool
 
 
-async def list_task_ids(*, addr: str, split: str | None = None) -> list[str]:
+async def list_task_ids(
+    *,
+    addr: str,
+    split: str | None = None,
+    rpc_timeouts: RpcTimeouts | None = None,
+) -> list[str]:
     """Fetch task ids from the manager (catalog loaded at manager startup)."""
+    timeouts = rpc_timeouts or RpcTimeouts.from_config(EnvironmentRpcTimeoutsConfig())
     channel = grpc.aio.insecure_channel(addr)
     stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
     try:
         response = await stub.ListTasks(
-            environment_pb2.ListTasksRequest(split=split or "")
+            environment_pb2.ListTasksRequest(split=split or ""),
+            timeout=timeouts.list_tasks_secs,
         )
     finally:
         await channel.close()
@@ -66,12 +123,14 @@ class EnvironmentSession:
         initial_messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         retry: RetryConfig,
+        rpc_timeouts: RpcTimeouts,
     ) -> None:
         self._channel = channel
         self._stub = stub
         self.env_id = env_id
         self.task_id = task_id
         self._retry = retry
+        self._rpc = rpc_timeouts
         self.initial_messages = initial_messages
         self.tools = tools
 
@@ -82,17 +141,24 @@ class EnvironmentSession:
         *,
         addr: str | None = None,
         retry: RetryConfig | None = None,
-    ) -> "EnvironmentSession":
+        rpc_timeouts: RpcTimeouts | None = None,
+    ) -> EnvironmentSession:
         if addr is None:
             raise ValueError("environment server address is required")
         retry_cfg = retry or RetryConfig()
+        rpc_cfg = rpc_timeouts or RpcTimeouts.from_config(EnvironmentRpcTimeoutsConfig())
 
-        async def _create_once() -> tuple[grpc.aio.Channel, environment_pb2_grpc.EnvironmentServiceStub, environment_pb2.CreateEnvironmentResponse]:
+        async def _create_once() -> tuple[
+            grpc.aio.Channel,
+            environment_pb2_grpc.EnvironmentServiceStub,
+            environment_pb2.CreateEnvironmentResponse,
+        ]:
             channel = grpc.aio.insecure_channel(addr)
             stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
             try:
                 response = await stub.CreateEnvironment(
-                    environment_pb2.CreateEnvironmentRequest(task_id=task_id)
+                    environment_pb2.CreateEnvironmentRequest(task_id=task_id),
+                    timeout=rpc_cfg.create_secs,
                 )
             except BaseException:
                 await channel.close()
@@ -104,6 +170,7 @@ class EnvironmentSession:
             max_attempts=retry_cfg.max_attempts,
             initial_backoff_secs=retry_cfg.initial_backoff_secs,
             max_backoff_secs=retry_cfg.max_backoff_secs,
+            retry_codes=CREATE_RETRY_CODES,
         )
 
         if response.manager_addr and response.manager_addr != addr:
@@ -125,16 +192,20 @@ class EnvironmentSession:
             initial_messages,
             tools,
             retry_cfg,
+            rpc_cfg,
         )
 
     async def execute(self, tool_name: str, arguments_json: str) -> dict[str, str]:
+        timeout = self._rpc.execute_secs(tool_name, arguments_json)
+
         async def _execute_once() -> environment_pb2.ExecuteResponse:
             return await self._stub.Execute(
                 environment_pb2.ExecuteRequest(
                     env_id=self.env_id,
                     tool_name=tool_name,
                     arguments_json=arguments_json,
-                )
+                ),
+                timeout=timeout,
             )
 
         response = await grpc_retry(
@@ -142,6 +213,7 @@ class EnvironmentSession:
             max_attempts=self._retry.max_attempts,
             initial_backoff_secs=self._retry.initial_backoff_secs,
             max_backoff_secs=self._retry.max_backoff_secs,
+            retry_codes=EXECUTE_RETRY_CODES,
         )
         content = response.content
         if response.is_error:
@@ -153,7 +225,8 @@ class EnvironmentSession:
 
         async def _evaluate_once() -> environment_pb2.EvaluateResponse:
             return await self._stub.Evaluate(
-                environment_pb2.EvaluateRequest(env_id=self.env_id)
+                environment_pb2.EvaluateRequest(env_id=self.env_id),
+                timeout=self._rpc.evaluate_secs,
             )
 
         response = await grpc_retry(
@@ -161,6 +234,7 @@ class EnvironmentSession:
             max_attempts=self._retry.max_attempts,
             initial_backoff_secs=self._retry.initial_backoff_secs,
             max_backoff_secs=self._retry.max_backoff_secs,
+            retry_codes=EVALUATE_RETRY_CODES,
         )
         detail = json.loads(response.detail_json) if response.detail_json else {}
         return EvaluateResult(
@@ -172,10 +246,19 @@ class EnvironmentSession:
     async def teardown(self) -> None:
         try:
             await self._stub.Teardown(
-                environment_pb2.TeardownRequest(env_id=self.env_id)
+                environment_pb2.TeardownRequest(env_id=self.env_id),
+                timeout=self._rpc.teardown_secs,
             )
         finally:
             await self._channel.close()
 
 
-__all__ = ["EnvironmentSession", "EvaluateResult", "InfraError", "RetryConfig", "SUBMIT_TOOL", "list_task_ids"]
+__all__ = [
+    "EnvironmentSession",
+    "EvaluateResult",
+    "InfraError",
+    "RetryConfig",
+    "RpcTimeouts",
+    "SUBMIT_TOOL",
+    "list_task_ids",
+]

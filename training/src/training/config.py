@@ -46,6 +46,11 @@ class RolloutConfig(BaseModel):
     max_assistant_turns: int = 8
     enable_prefix_caching: bool = True
     vllm_metrics_port: int = 9090
+    # Wall-clock cap on one vLLM completion (prime-rl SWE runs rely on per-turn
+    # token limits; this bounds hung generation).
+    generation_timeout_secs: float = 600.0
+    # Per-trajectory wall clock (prime-rl eval SWE configs use timeout.rollout=3600).
+    trajectory_timeout_secs: float = 3600.0
 
 
 class PipelineConfig(BaseModel):
@@ -56,12 +61,31 @@ class PipelineConfig(BaseModel):
     # policy versions behind the newest completed rollout.
     max_policy_staleness: int = 0
     seed: int = 0
+    # Emit partial GRPO groups when not all rollouts finish in time.
+    group_assembly_timeout_secs: float = 3900.0
+    group_poll_interval_secs: float = 5.0
 
 
 class EnvironmentRetryConfig(BaseModel):
     max_attempts: int = 10
     initial_backoff_secs: float = 0.5
     max_backoff_secs: float = 30.0
+
+
+class EnvironmentRpcTimeoutsConfig(BaseModel):
+    """Client-side gRPC deadlines for manager calls (seconds).
+
+    Defaults align with in-VM bash/score timeouts and prime-rl SWE reference
+    configs (sandbox_command_timeout=30, eval rollout timeout=3600, score ~900s).
+    """
+
+    create_secs: float = 30.0
+    list_tasks_secs: float = 30.0
+    execute_default_secs: float = 140.0
+    execute_submit_secs: float = 10.0
+    execute_timeout_buffer_secs: float = 10.0
+    evaluate_secs: float = 930.0
+    teardown_secs: float = 30.0
 
 
 class EnvironmentConfig(BaseModel):
@@ -90,6 +114,11 @@ class EnvironmentConfig(BaseModel):
 
     retry: EnvironmentRetryConfig = Field(default_factory=EnvironmentRetryConfig)
     """gRPC retry policy for manager calls (admission, env boot)."""
+
+    rpc_timeouts: EnvironmentRpcTimeoutsConfig = Field(
+        default_factory=EnvironmentRpcTimeoutsConfig
+    )
+    """Per-RPC client deadlines passed to gRPC stubs."""
 
     def resolve_tasks_uri(self) -> str:
         if self.tasks_uri:

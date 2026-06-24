@@ -1,14 +1,17 @@
 //! Firecracker VM boot and teardown for one rollout environment.
 
 mod config;
+mod executor;
 mod firecracker;
 mod jailer;
 mod paths;
 mod vsock;
 
+pub use executor::ExecutorConn;
 pub use paths::{cache_root, join_and_verify, resolve_kernel, run_root, VmPaths};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -33,6 +36,7 @@ pub fn boot_enabled() -> bool {
 pub struct VmHandle {
     pub guest_cid: u32,
     pub run_dir: PathBuf,
+    pub executor: Arc<ExecutorConn>,
     child: Child,
 }
 
@@ -41,6 +45,16 @@ impl VmHandle {
         let _ = self.child.start_kill();
         let _ = self.child.wait().await;
         let _ = std::fs::remove_dir_all(&self.run_dir);
+    }
+
+    #[cfg(test)]
+    pub fn for_test(executor: Arc<ExecutorConn>, child: Child) -> Self {
+        Self {
+            guest_cid: 3,
+            run_dir: PathBuf::from("/tmp/grl-test-vm"),
+            executor,
+            child,
+        }
     }
 }
 
@@ -83,12 +97,24 @@ pub async fn boot(env_id: &str, spec: &TaskSpec) -> Result<VmHandle, String> {
             .unwrap_or(120),
     );
     vsock::wait_executor(guest_cid, boot_timeout).await?;
+    let executor = connect_executor(guest_cid)?;
 
     Ok(VmHandle {
         guest_cid,
         run_dir,
+        executor,
         child,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn connect_executor(guest_cid: u32) -> Result<Arc<ExecutorConn>, String> {
+    Ok(Arc::new(ExecutorConn::connect_vsock(guest_cid)?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn connect_executor(_guest_cid: u32) -> Result<Arc<ExecutorConn>, String> {
+    Err("vsock executor connection requires Linux".into())
 }
 
 #[cfg(test)]
