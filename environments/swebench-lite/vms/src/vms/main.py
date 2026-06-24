@@ -6,7 +6,7 @@ from vms.build_images import build_all
 from vms.build_tasks import build_all_tasks
 from vms.dataset import DEFAULT_DATASET, load_tasks
 from vms.dockerfile import render_dockerfile, slug
-from vms.manifest import resolve, write_manifest
+from vms.manifest import resolve, resolve_from_tasks_jsonl, write_manifest
 from vms.requirements import fetch_requirements
 from vms.tasks import write_tasks_jsonl
 from vms.upload import upload_all, upload_tasks_file
@@ -104,6 +104,12 @@ def main() -> None:
     lookup = sub.add_parser("resolve", help="look up images for a task id")
     lookup.add_argument("task_id")
     lookup.add_argument("--manifest", type=Path, default=ROOT / "manifest.json")
+    lookup.add_argument(
+        "--from-tasks",
+        type=Path,
+        default=None,
+        help="read from tasks.jsonl instead of manifest.json",
+    )
 
     build = sub.add_parser("build", help="build ext4 firecracker base images")
     build.add_argument("--dockerfiles", type=Path, default=ROOT / "dockerfiles")
@@ -177,7 +183,11 @@ def main() -> None:
             task_images_dir=args.task_images_dir,
         )
     elif args.command == "resolve":
-        print(json.dumps(resolve(args.manifest, args.task_id), indent=2))
+        if args.from_tasks:
+            row = resolve_from_tasks_jsonl(args.from_tasks, args.task_id)
+        else:
+            row = resolve(args.manifest, args.task_id)
+        print(json.dumps(row, indent=2))
     elif args.command == "build":
         build_all(
             args.dockerfiles,

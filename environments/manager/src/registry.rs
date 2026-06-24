@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::RwLock;
 
+use crate::vm::VmHandle;
+
 /// Standard submit tool name (must match task catalog and trainer).
 pub const SUBMIT_TOOL: &str = "submit";
 
@@ -62,6 +64,7 @@ pub struct Registry {
     max_concurrent: usize,
     next_suffix: AtomicU64,
     envs: RwLock<HashMap<String, EnvRecord>>,
+    vms: RwLock<HashMap<String, VmHandle>>,
 }
 
 impl Registry {
@@ -74,6 +77,7 @@ impl Registry {
             max_concurrent,
             next_suffix: AtomicU64::new(0),
             envs: RwLock::new(HashMap::new()),
+            vms: RwLock::new(HashMap::new()),
         }
     }
 
@@ -82,6 +86,7 @@ impl Registry {
             max_concurrent,
             next_suffix: AtomicU64::new(0),
             envs: RwLock::new(HashMap::new()),
+            vms: RwLock::new(HashMap::new()),
         }
     }
 
@@ -166,7 +171,16 @@ impl Registry {
     }
 
     pub async fn remove(&self, env_id: &str) -> bool {
+        self.vms.write().await.remove(env_id);
         self.envs.write().await.remove(env_id).is_some()
+    }
+
+    pub async fn attach_vm(&self, env_id: &str, vm: VmHandle) {
+        self.vms.write().await.insert(env_id.to_string(), vm);
+    }
+
+    pub async fn take_vm(&self, env_id: &str) -> Option<VmHandle> {
+        self.vms.write().await.remove(env_id)
     }
 
     pub async fn phase(&self, env_id: &str) -> Result<EnvPhase, RegistryError> {

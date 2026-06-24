@@ -2,11 +2,13 @@
 
 Environment-agnostic Rust gRPC server (`manager`) that fronts every environment during training. It implements `EnvironmentService` — VM lifecycle (create/evaluate/teardown), tool call dispatch, and scoring — and forwards execution into the Firecracker VM, where an environment-specific executor binary (e.g. [`swebench-lite/env`](../swebench-lite/env/)) implements the tools and computes the reward.
 
-The manager contains no environment-specific code: environments vary only in the data they ship (VM images, manifest, in-VM executor, `tasks.jsonl`), never in the manager or the gRPC contract.
+The manager contains no environment-specific code: environments vary only in the data they ship (VM images, `tasks.jsonl`, in-VM executor), never in the manager or the gRPC contract.
 
 **Per-rollout lifecycle:** `CreateEnvironment → Execute* → Evaluate → Teardown`. The standard `submit` tool is handled locally by the manager; bash tools are forwarded to the in-VM executor (when wired).
 
-**Task catalog.** At startup the manager loads `tasks.jsonl` from `GRL_TASKS_FILE` (synced by the DaemonSet initContainer from `GRL_BUNDLE_URI` into `{GRL_VM_CACHE_DIR}/active/`). Trainers call `ListTasks` for the task index (optionally filtered by split) instead of reading object storage. On `CreateEnvironment` the manager returns the task's opening prompt (`initial_messages_json`) and tool schemas (`tools_json`). The manager treats prompt/tools as opaque JSON.
+**Task catalog.** At startup the manager loads `tasks.jsonl` from `GRL_TASKS_FILE` (synced by the DaemonSet initContainer from `GRL_BUNDLE_URI` into `{GRL_VM_CACHE_DIR}/active/`). Each line includes `task_id`, `split`, opening prompt (`messages`), tool schemas (`tools`), and node-relative VM image paths (`base_image`, `task_image`). Trainers call `ListTasks` for the task index (optionally filtered by split). On `CreateEnvironment` the manager boots a Firecracker microVM from those image paths, then returns the task's prompt and tools. The manager treats prompt/tools as opaque JSON.
+
+**VM boot.** On Linux, `CreateEnvironment` resolves `base_image` and `task_image` under `GRL_VM_CACHE_DIR`, attaches them as root and secondary drives, and waits for the in-VM executor on vsock port 5005 before marking the environment ready. Set `GRL_VM_BOOT=0` to skip real boot (local dev/tests). Optional `GRL_USE_JAILER=1` runs Firecracker via the jailer wrapper.
 
 **Admission control.** `CreateEnvironment` returns `RESOURCE_EXHAUSTED` when in-flight environments reach `GRL_MAX_CONCURRENT_ENVS` (default 32). Trainers retry with exponential backoff on a fresh Service connection so kube-proxy may reach another manager pod.
 
@@ -32,9 +34,12 @@ Set `GRL_ENV_SERVER_ADDR` (default `0.0.0.0:50051` on the manager, `localhost:50
 |----------|---------|
 | `GRL_BUNDLE_URI` | S3 prefix synced by initContainer (`s3://…/datasets/…/dev`) |
 | `GRL_TASKS_FILE` | Local path to catalog (`…/active/tasks.jsonl`) |
-| `GRL_MANIFEST_FILE` | Local path to manifest (`…/active/manifest.json`) |
 | `GRL_ENV_ID` | Environment name echoed in `ListTasksResponse.env_name` |
 | `GRL_VM_CACHE_DIR` | Node-local cache root (`/var/lib/grl`) |
+| `GRL_KERNEL_FILE` | Guest kernel path (default: first `kernel/vmlinux*` under cache) |
+| `GRL_VM_BOOT` | Set `0` to skip Firecracker boot (dev/tests; default boot on Linux) |
+| `GRL_USE_JAILER` | Set `1` to spawn Firecracker via jailer |
+| `GRL_VM_RUN_DIR` | Per-VM runtime dir for API sockets (`/var/run/grl/vms`) |
 | `GRL_ACTIVE_DIR` | Subdir for active bundle (`active`) |
 | `GRL_MANAGER_ADVERTISE_ADDR` | Pod IP:port returned as `manager_addr` |
 | `GRL_MAX_CONCURRENT_ENVS` | Admission cap for in-flight rollout environments |

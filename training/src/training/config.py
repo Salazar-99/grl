@@ -88,9 +88,6 @@ class EnvironmentConfig(BaseModel):
     tasks_uri: str | None = None
     """Override for ``{bundle_uri}/tasks.jsonl``. Launcher/infra only."""
 
-    manifest_uri: str | None = None
-    """Override for ``{bundle_uri}/manifest.json``. Launcher/infra only."""
-
     retry: EnvironmentRetryConfig = Field(default_factory=EnvironmentRetryConfig)
     """gRPC retry policy for manager calls (admission, env boot)."""
 
@@ -100,13 +97,6 @@ class EnvironmentConfig(BaseModel):
         if self.bundle_uri:
             return f"{self.bundle_uri.rstrip('/')}/tasks.jsonl"
         raise ValueError("environment.bundle_uri or environment.tasks_uri is required")
-
-    def resolve_manifest_uri(self) -> str | None:
-        if self.manifest_uri:
-            return self.manifest_uri
-        if self.bundle_uri:
-            return f"{self.bundle_uri.rstrip('/')}/manifest.json"
-        return None
 
 
 class TelemetryConfig(BaseModel):

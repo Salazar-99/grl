@@ -9,13 +9,13 @@ This is used by the `vms/` module to generate the Firecracker VM environments fo
 ## vms/
 Python tooling that builds Firecracker-ready ext4 disks for the SWE-bench-lite dev split.
 
-**Base images** (`base-images/`) — one per repo+version environment. Ubuntu, Python, and pip dependencies are baked in via Docker, then exported to an ext4 disk sized to fit the content plus 512 MB of runtime headroom (typically ~1–1.8 GB).
+**Base images** (`base-images/`) — one per repo+version environment. Ubuntu, Python, and pip dependencies are baked in via Docker, then exported to an ext4 disk sized to fit the content plus 512 MB of runtime headroom (typically ~1–1.8 GB). Each base image is boot-ready: `/init` mounts the task disk at `/testbed` and starts `grl-env` on vsock port 5005.
 
-**Task images** (`task-images/`) — one per dataset instance. Repo source at `base_commit` on an ext4 disk right-sized to the checkout plus 64 MB headroom (typically a few MB–tens of MB).
+**Task images** (`task-images/`) — one per dataset instance. Repo source at `base_commit` on an ext4 disk right-sized to the checkout plus 64 MB headroom (typically a few MB–tens of MB). Attached as the second virtio block device; the base init mounts it at `/testbed`.
 
-**Manifest** (`manifest.json`) — maps each `instance_id` to its base and task image paths.
+**Manifest** (`manifest.json`) — optional bucket-root index mapping each `instance_id` to local dev image paths (`base-images/`, `task-images/`). VM boot metadata also lives in `tasks.jsonl` for the manager catalog.
 
-**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`) plus the opening prompt (`messages`) and tool schemas (`tools`) the manager serves from `CreateEnvironment`. It carries no answer keys: the reward spec (held-out tests, test patch, test command) is baked into each task VM image at `/grl/task.json`, where only the in-VM scorer reads it.
+**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`), the opening prompt (`messages`), tool schemas (`tools`), and node-relative VM image paths (`base_image`, `task_image`) for Firecracker boot. It carries no answer keys: the reward spec (held-out tests, test patch, test command) is baked into each task VM image at `/grl/task.json`, where only the in-VM scorer reads it.
 
 ### Prerequisites
 
@@ -44,7 +44,8 @@ uv run vms build-tasks       # build task-images/*.ext4 (skips existing)
 uv run vms upload --jobs 4   # upload to s3://$VMS_S3_BUCKET/bases/ and .../tasks/
 uv run vms tasks             # render tasks.jsonl (prompts + tools) for the trainer
 uv run vms tasks --upload    # also upload to s3://$VMS_S3_BUCKET/datasets/swebench-lite/<split>/tasks.jsonl
-uv run vms resolve <task_id> # look up image paths for a task
+uv run vms resolve <task_id>              # look up image paths from manifest.json
+uv run vms resolve <task_id> --from-tasks tasks.jsonl  # from tasks.jsonl
 ```
 
 Pass `--force` to rebuild or re-upload images that already exist. Use `--only <name>` with `build` or `build-tasks` to target a single image.

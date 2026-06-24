@@ -7,10 +7,10 @@
 # per environment: a channel is a single TCP connection, so kube-proxy pins
 # each environment to one manager pod while spreading environments across pods.
 #
-# Per-run environment bundles: the launcher sets manager.bundleUri (and optional
+# per-run environment bundles: the launcher sets manager.bundleUri (and optional
 # manager.envId), then rolls the DaemonSet. The sync-bundle initContainer pulls
-# tasks.jsonl + manifest.json into {{ .Values.vmImageCache.hostPath }}/active/
-# before the manager loads the catalog at startup.
+# tasks.jsonl into {{ .Values.vmImageCache.hostPath }}/active/ before the manager
+# loads the catalog at startup.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -85,8 +85,6 @@ spec:
               value: {{ .Values.manager.envId | quote }}
             - name: GRL_TASKS_FILE
               value: {{ .Values.vmImageCache.hostPath }}/{{ .Values.manager.activeDir }}/tasks.jsonl
-            - name: GRL_MANIFEST_FILE
-              value: {{ .Values.vmImageCache.hostPath }}/{{ .Values.manager.activeDir }}/manifest.json
             - name: POD_IP
               valueFrom:
                 fieldRef:

@@ -6,22 +6,18 @@ vLLM — with production-quality correctness, performance, and observability.
 Scaling and fault tolerance are explicitly deferred (see bottom). General
 reference material lives in NOTES.md.
 
+swebench-lite
+-------------
+- [ ] Review for coupling between environment and grl
+
 Environment manager (Rust)
 --------------------------
-- [ ] VM lifecycle in `environments/manager/src/environment.rs`:
-      `CreateEnvironment` boots Firecracker from base+task images (via
-      `manifest.json`). Registry + admission + `manager_addr` + Evaluate/
-      Teardown lifecycle are wired; vsock forwarding and real VM boot remain.
-- [ ] Real `env` executor (`environments/swebench-lite/env`): in-VM tool
-      execution (bash, file view/edit) over vsock, with per-call timeouts.
-      Currently prints "executor".
-- [ ] Forward `Evaluate` and `Execute` over vsock to the in-VM executor.
+- [ ] Forward `Execute` and `Evaluate` over vsock to the in-VM executor.
 
 Training correctness
 --------------------
-- [ ] Wire real rewards: manager `Evaluate` still returns `infra_error` until
-      vsock forwarding lands. Trainer calls Evaluate and filters infra failures
-      from GRPO.
+- [ ] Real rewards: manager `Evaluate` still returns `infra_error` until vsock
+      forwarding and the in-VM scorer are wired end-to-end.
 - [ ] Token-In-Token-Out semantics (e.g. prime renderers lib): keep exact
       sampled token ids and logprobs end-to-end so the trainer sees what the
       sampler emitted — no retokenization drift between vLLM and HF.
@@ -29,9 +25,6 @@ Training correctness
       messages in isolation, re-prepending system/BOS tokens mid-trajectory.
       Render the full message list incrementally and slice. (Subsumed by a
       proper TITO renderer if adopted.)
-- [ ] Data feeder: nothing populates `pending_tasks`. Read SWE-bench-Lite
-      tasks (parquet/manifest), build system prompt + problem statement +
-      tool schemas into `GRPOGroupRequest`s.
 
 Performance
 -----------
@@ -74,4 +67,4 @@ Deferred (scaling / fault tolerance)
 - Checkpointing + resumption, retries, preemption tolerance
 - Off-policy corrections (importance sampling, interruptible generation)
 - VM snapshot/restore for fast resets; manager autoscaling / load-aware
-  placement (admission control + retry covers the first pass)
+  placement

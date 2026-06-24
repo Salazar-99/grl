@@ -10,6 +10,7 @@ use crate::pb::{
     TeardownRequest, TeardownResponse,
 };
 use crate::registry::{Registry, RegistryError, SUBMIT_TOOL};
+use crate::vm;
 
 #[derive(Debug)]
 pub struct EnvironmentServiceImpl {
@@ -58,11 +59,21 @@ impl EnvironmentServiceImpl {
         }
     }
 
-    fn spawn_boot_task(registry: Arc<Registry>, env_id: String) {
+    fn spawn_boot_task(registry: Arc<Registry>, env_id: String, spec: crate::catalog::TaskSpec) {
         tokio::spawn(async move {
-            // TODO: boot Firecracker VM from manifest, then set_ready.
-            // Until VM wiring lands, transition immediately so local tests work.
-            let _ = registry.set_ready(&env_id).await;
+            if !vm::boot_enabled() {
+                let _ = registry.set_ready(&env_id).await;
+                return;
+            }
+            match vm::boot(&env_id, &spec).await {
+                Ok(handle) => {
+                    registry.attach_vm(&env_id, handle).await;
+                    let _ = registry.set_ready(&env_id).await;
+                }
+                Err(err) => {
+                    eprintln!("VM boot failed for {env_id}: {err}");
+                }
+            }
         });
     }
 }
@@ -106,7 +117,11 @@ impl EnvironmentService for EnvironmentServiceImpl {
             .await
             .map_err(Self::registry_status)?;
 
-        Self::spawn_boot_task(Arc::clone(&self.registry), env_id.clone());
+        Self::spawn_boot_task(
+            Arc::clone(&self.registry),
+            env_id.clone(),
+            spec.clone(),
+        );
 
         Ok(Response::new(CreateEnvironmentResponse {
             env_id,
@@ -190,8 +205,9 @@ impl EnvironmentService for EnvironmentServiceImpl {
         request: Request<TeardownRequest>,
     ) -> Result<Response<TeardownResponse>, Status> {
         let env_id = request.into_inner().env_id;
-        // Best-effort cleanup; always succeed so the trainer's finally path never fails.
-        // TODO: stop Firecracker VM for this env_id.
+        if let Some(vm) = self.registry.take_vm(&env_id).await {
+            vm.stop().await;
+        }
         let _ = self.registry.remove(&env_id).await;
         Ok(Response::new(TeardownResponse {}))
     }
@@ -205,7 +221,7 @@ mod tests {
 
     fn test_catalog() -> Arc<Catalog> {
         let jsonl = concat!(
-            r#"{"task_id":"t1","split":"dev","messages":[{"role":"user","content":"hi"}],"tools":[]}"#,
+            r#"{"task_id":"t1","split":"dev","messages":[{"role":"user","content":"hi"}],"tools":[],"base_image":"images/bases/t.ext4","task_image":"images/tasks/t1.ext4"}"#,
             "\n",
         );
         Arc::new(Catalog::from_jsonl(jsonl).unwrap())

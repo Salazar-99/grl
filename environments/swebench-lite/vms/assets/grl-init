@@ -1,0 +1,21 @@
+#!/bin/sh
+# Boot-time init baked into base ext4 images. The manager attaches the task
+# repo disk as the second virtio block device; we mount it at /testbed and
+# hand off to the in-VM executor on vsock:5005.
+set -eu
+
+for _ in $(seq 1 60); do
+  if [ -b /dev/vdb ]; then
+    break
+  fi
+  sleep 0.1
+done
+
+if [ ! -b /dev/vdb ]; then
+  echo "grl-init: /dev/vdb not found" >&2
+  exit 1
+fi
+
+mkdir -p /testbed
+mount /dev/vdb /testbed
+exec /usr/local/bin/grl-env

@@ -21,7 +21,7 @@ knows which environment a given training run uses.
 grl launch run @ path/to/run-config.yaml
 
   1. Validate run config (training YAML + environment block)
-  2. Resolve bundle_uri → head S3 objects exist (tasks.jsonl, manifest.json)
+  2. Resolve bundle_uri → head S3 objects exist (tasks.jsonl; bucket-root manifest.json optional for cache ops)
   3. Optional: drain or cancel prior Ray training job on the cluster
   4. (Optional) Purge stale ext4s on environment nodes — see below
   5. Helm upgrade: manager.bundleUri, manager.envId, vmImageCache.bucket (if changed)

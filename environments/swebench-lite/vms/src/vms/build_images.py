@@ -2,11 +2,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from vms.env_binary import resolve_grl_env_binary
+
 PLATFORM = "linux/amd64"
 # Preallocate generously during build; filesystem is shrunk after populate.
 BUILD_SIZE_MB = 2048
 # Free space retained for runtime work (pip install -e ., test artifacts, etc.)
 HEADROOM_MB = 512
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+GRL_INIT = ASSETS_DIR / "grl-init"
 
 
 def _shrink_ext4_bash(path: str, headroom_mb: int) -> str:
@@ -53,6 +57,7 @@ def build_base_image(
     tag = f"swe-base-{name}"
     ext4_path = output_dir / f"{name}.ext4"
     output_dir.mkdir(parents=True, exist_ok=True)
+    grl_env = resolve_grl_env_binary(platform=platform)
 
     run(
         [
@@ -86,6 +91,10 @@ def build_base_image(
                 platform,
                 "-v",
                 f"{output_dir.resolve()}:/output",
+                "-v",
+                f"{GRL_INIT}:/assets/grl-init:ro",
+                "-v",
+                f"{grl_env}:/assets/grl-env:ro",
                 "ubuntu:22.04",
                 "bash",
                 "-c",
@@ -96,6 +105,9 @@ def build_base_image(
                 mkdir -p /mnt/disk
                 mount /output/{ext4_path.name} /mnt/disk
                 tar -xf - -C /mnt/disk
+                install -m 755 /assets/grl-init /mnt/disk/init
+                mkdir -p /mnt/disk/usr/local/bin
+                install -m 755 /assets/grl-env /mnt/disk/usr/local/bin/grl-env
                 umount /mnt/disk
                 {_shrink_ext4_bash(f"/output/{ext4_path.name}", headroom_mb)}
                 """,

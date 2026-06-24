@@ -44,7 +44,7 @@ manager:
   bundleUri: ""
   envId: ""
   # Subdirectory under vmImageCache.hostPath where the initContainer syncs
-  # tasks.jsonl and manifest.json for the active environment bundle.
+  # tasks.jsonl for the active environment bundle (includes VM image paths).
   activeDir: active
   # Max rollout environments in flight on this manager pod (admission control).
   maxConcurrentEnvs: "32"

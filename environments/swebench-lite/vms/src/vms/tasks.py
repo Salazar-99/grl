@@ -5,8 +5,9 @@ SWE-bench-specific shaping lives here, not in the trainer:
 
   - ``tasks.jsonl`` — one line per instance with the opening prompt
     (``messages``) and ``tools`` the manager serves in ``CreateEnvironment``,
-    plus the index fields (``task_id``, ``split``) the trainer uses to enumerate
-    and shard the dataset. It carries no answer keys.
+    plus index fields (``task_id``, ``split``) and VM image paths
+    (``base_image``, ``task_image``) for Firecracker boot. It carries no answer
+    keys.
   - ``reward_spec`` — the held-out tests and how to run them. This is the
     *answer*, so it never enters ``tasks.jsonl``; it is baked into each task VM
     image (``/grl/task.json``) where only the in-VM scorer can read it.
@@ -18,6 +19,7 @@ import json
 from pathlib import Path
 
 from vms.dockerfile import slug  # noqa: F401  (kept for parity with other modules)
+from vms.manifest import NODE_BASES_DIR, NODE_TASKS_DIR, image_paths
 from vms.versions import MAP_REPO_VERSION_TO_SPECS_PY
 
 DEFAULT_TEST_CMD = "pytest -rA"
@@ -128,6 +130,11 @@ def task_record(row: dict, split: str) -> dict:
         "version": row["version"],
         "messages": render_messages(row),
         "tools": tool_schemas(),
+        **image_paths(
+            row,
+            bases_dir=NODE_BASES_DIR,
+            tasks_dir=NODE_TASKS_DIR,
+        ),
     }
 
 

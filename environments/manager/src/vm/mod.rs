@@ -1,0 +1,104 @@
+//! Firecracker VM boot and teardown for one rollout environment.
+
+mod config;
+mod firecracker;
+mod jailer;
+mod paths;
+mod vsock;
+
+pub use paths::{cache_root, join_and_verify, resolve_kernel, run_root, VmPaths};
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+use tokio::process::Child;
+
+use crate::catalog::TaskSpec;
+
+static NEXT_GUEST_CID: AtomicU32 = AtomicU32::new(3);
+
+/// Whether this manager process should boot real VMs (Linux + `GRL_VM_BOOT` unset/1).
+pub fn boot_enabled() -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    !matches!(
+        std::env::var("GRL_VM_BOOT").as_deref(),
+        Ok("0") | Ok("false") | Ok("no")
+    )
+}
+
+#[derive(Debug)]
+pub struct VmHandle {
+    pub guest_cid: u32,
+    pub run_dir: PathBuf,
+    child: Child,
+}
+
+impl VmHandle {
+    pub async fn stop(mut self) {
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+        let _ = std::fs::remove_dir_all(&self.run_dir);
+    }
+}
+
+fn alloc_guest_cid() -> u32 {
+    NEXT_GUEST_CID.fetch_add(1, Ordering::Relaxed)
+}
+
+pub async fn boot(env_id: &str, spec: &TaskSpec) -> Result<VmHandle, String> {
+    let cache = cache_root();
+    let paths = spec.resolve_vm_paths(&cache)?;
+
+    let guest_cid = alloc_guest_cid();
+    let run_dir = run_root().join(env_id);
+    std::fs::create_dir_all(&run_dir)
+        .map_err(|e| format!("mkdir {}: {e}", run_dir.display()))?;
+    let api_sock = run_dir.join("firecracker.sock");
+    let vsock_uds = run_dir.join("vsock.sock");
+    let _ = std::fs::remove_file(&api_sock);
+    let _ = std::fs::remove_file(&vsock_uds);
+
+    let child = jailer::spawn(env_id, &api_sock).await?;
+    firecracker::wait_for_socket(&api_sock, Duration::from_secs(10)).await?;
+
+    firecracker::put(&api_sock, "machine-config", &config::machine_config()).await?;
+    firecracker::put(&api_sock, "boot-source", &config::boot_source(&paths)).await?;
+    firecracker::put(&api_sock, "drives/rootfs", &config::root_drive(&paths)).await?;
+    firecracker::put(&api_sock, "drives/task", &config::task_drive(&paths)).await?;
+    firecracker::put(
+        &api_sock,
+        "vsock",
+        &config::vsock(guest_cid, &vsock_uds),
+    )
+    .await?;
+    firecracker::put(&api_sock, "actions", &config::instance_start()).await?;
+
+    let boot_timeout = Duration::from_secs(
+        std::env::var("GRL_VM_BOOT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120),
+    );
+    vsock::wait_executor(guest_cid, boot_timeout).await?;
+
+    Ok(VmHandle {
+        guest_cid,
+        run_dir,
+        child,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boot_disabled_off_linux() {
+        if !cfg!(target_os = "linux") {
+            assert!(!boot_enabled());
+        }
+    }
+}
