@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$grl/environment/v1/environment.proto\x12\x12grl.environment.v1\"+\n\x18\x43reateEnvironmentRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"t\n\x19\x43reateEnvironmentResponse\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x14\n\x0cmanager_addr\x18\x02 \x01(\t\x12\x1d\n\x15initial_messages_json\x18\x03 \x01(\t\x12\x12\n\ntools_json\x18\x04 \x01(\t\"\x1e\n\x0cScoreRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"4\n\rScoreResponse\x12\x0e\n\x06reward\x18\x01 \x01(\x01\x12\x13\n\x0b\x64\x65tail_json\x18\x02 \x01(\t\"K\n\x0e\x45xecuteRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x11\n\ttool_name\x18\x02 \x01(\t\x12\x16\n\x0e\x61rguments_json\x18\x03 \x01(\t\"4\n\x0f\x45xecuteResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\t\x12\x10\n\x08is_error\x18\x02 \x01(\x08\"\x1e\n\x0cResetRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x0f\n\rResetResponse\"\x1e\n\x0c\x43loseRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x0f\n\rCloseResponse2\xc4\x03\n\x12\x45nvironmentService\x12p\n\x11\x43reateEnvironment\x12,.grl.environment.v1.CreateEnvironmentRequest\x1a-.grl.environment.v1.CreateEnvironmentResponse\x12R\n\x07\x45xecute\x12\".grl.environment.v1.ExecuteRequest\x1a#.grl.environment.v1.ExecuteResponse\x12L\n\x05Score\x12 .grl.environment.v1.ScoreRequest\x1a!.grl.environment.v1.ScoreResponse\x12L\n\x05Reset\x12 .grl.environment.v1.ResetRequest\x1a!.grl.environment.v1.ResetResponse\x12L\n\x05\x43lose\x12 .grl.environment.v1.CloseRequest\x1a!.grl.environment.v1.CloseResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$grl/environment/v1/environment.proto\x12\x12grl.environment.v1\"+\n\x18\x43reateEnvironmentRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"!\n\x10ListTasksRequest\x12\r\n\x05split\x18\x01 \x01(\t\"0\n\x0eTaskIndexEntry\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\r\n\x05split\x18\x02 \x01(\t\"X\n\x11ListTasksResponse\x12\x31\n\x05tasks\x18\x01 \x03(\x0b\x32\".grl.environment.v1.TaskIndexEntry\x12\x10\n\x08\x65nv_name\x18\x02 \x01(\t\"t\n\x19\x43reateEnvironmentResponse\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x14\n\x0cmanager_addr\x18\x02 \x01(\t\x12\x1d\n\x15initial_messages_json\x18\x03 \x01(\t\x12\x12\n\ntools_json\x18\x04 \x01(\t\"!\n\x0f\x45valuateRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"L\n\x10\x45valuateResponse\x12\x0e\n\x06reward\x18\x01 \x01(\x01\x12\x13\n\x0b\x64\x65tail_json\x18\x02 \x01(\t\x12\x13\n\x0binfra_error\x18\x03 \x01(\x08\"K\n\x0e\x45xecuteRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x11\n\ttool_name\x18\x02 \x01(\t\x12\x16\n\x0e\x61rguments_json\x18\x03 \x01(\t\"4\n\x0f\x45xecuteResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\t\x12\x10\n\x08is_error\x18\x02 \x01(\x08\"!\n\x0fTeardownRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x12\n\x10TeardownResponse2\xe2\x03\n\x12\x45nvironmentService\x12X\n\tListTasks\x12$.grl.environment.v1.ListTasksRequest\x1a%.grl.environment.v1.ListTasksResponse\x12p\n\x11\x43reateEnvironment\x12,.grl.environment.v1.CreateEnvironmentRequest\x1a-.grl.environment.v1.CreateEnvironmentResponse\x12R\n\x07\x45xecute\x12\".grl.environment.v1.ExecuteRequest\x1a#.grl.environment.v1.ExecuteResponse\x12U\n\x08\x45valuate\x12#.grl.environment.v1.EvaluateRequest\x1a$.grl.environment.v1.EvaluateResponse\x12U\n\x08Teardown\x12#.grl.environment.v1.TeardownRequest\x1a$.grl.environment.v1.TeardownResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,24 +33,26 @@ if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_CREATEENVIRONMENTREQUEST']._serialized_start=60
   _globals['_CREATEENVIRONMENTREQUEST']._serialized_end=103
-  _globals['_CREATEENVIRONMENTRESPONSE']._serialized_start=105
-  _globals['_CREATEENVIRONMENTRESPONSE']._serialized_end=221
-  _globals['_SCOREREQUEST']._serialized_start=223
-  _globals['_SCOREREQUEST']._serialized_end=253
-  _globals['_SCORERESPONSE']._serialized_start=255
-  _globals['_SCORERESPONSE']._serialized_end=307
-  _globals['_EXECUTEREQUEST']._serialized_start=309
-  _globals['_EXECUTEREQUEST']._serialized_end=384
-  _globals['_EXECUTERESPONSE']._serialized_start=386
-  _globals['_EXECUTERESPONSE']._serialized_end=438
-  _globals['_RESETREQUEST']._serialized_start=440
-  _globals['_RESETREQUEST']._serialized_end=470
-  _globals['_RESETRESPONSE']._serialized_start=472
-  _globals['_RESETRESPONSE']._serialized_end=487
-  _globals['_CLOSEREQUEST']._serialized_start=489
-  _globals['_CLOSEREQUEST']._serialized_end=519
-  _globals['_CLOSERESPONSE']._serialized_start=521
-  _globals['_CLOSERESPONSE']._serialized_end=536
-  _globals['_ENVIRONMENTSERVICE']._serialized_start=539
-  _globals['_ENVIRONMENTSERVICE']._serialized_end=991
+  _globals['_LISTTASKSREQUEST']._serialized_start=105
+  _globals['_LISTTASKSREQUEST']._serialized_end=138
+  _globals['_TASKINDEXENTRY']._serialized_start=140
+  _globals['_TASKINDEXENTRY']._serialized_end=188
+  _globals['_LISTTASKSRESPONSE']._serialized_start=190
+  _globals['_LISTTASKSRESPONSE']._serialized_end=278
+  _globals['_CREATEENVIRONMENTRESPONSE']._serialized_start=280
+  _globals['_CREATEENVIRONMENTRESPONSE']._serialized_end=396
+  _globals['_EVALUATEREQUEST']._serialized_start=398
+  _globals['_EVALUATEREQUEST']._serialized_end=431
+  _globals['_EVALUATERESPONSE']._serialized_start=433
+  _globals['_EVALUATERESPONSE']._serialized_end=509
+  _globals['_EXECUTEREQUEST']._serialized_start=511
+  _globals['_EXECUTEREQUEST']._serialized_end=586
+  _globals['_EXECUTERESPONSE']._serialized_start=588
+  _globals['_EXECUTERESPONSE']._serialized_end=640
+  _globals['_TEARDOWNREQUEST']._serialized_start=642
+  _globals['_TEARDOWNREQUEST']._serialized_end=675
+  _globals['_TEARDOWNRESPONSE']._serialized_start=677
+  _globals['_TEARDOWNRESPONSE']._serialized_end=695
+  _globals['_ENVIRONMENTSERVICE']._serialized_start=698
+  _globals['_ENVIRONMENTSERVICE']._serialized_end=1180
 # @@protoc_insertion_point(module_scope)

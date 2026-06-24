@@ -8,7 +8,7 @@ from typing import Any
 import ray
 
 from training.config import DEFAULT_CONFIG_PATH, GRLConfig
-from training.dataset import Task, load_tasks
+from training.environments import list_task_ids
 from training.rollouts import RolloutRequest, RolloutResult, RolloutWorker
 from training.telemetry import init_telemetry
 from training.trainer import TrainingBatch, TrainingWorker
@@ -87,7 +87,7 @@ async def rollout_loop(
 
 async def task_loop(
     pending_tasks: asyncio.Queue[GRPOGroupRequest],
-    tasks: list[Task],
+    task_ids: list[str],
     *,
     num_rollouts: int,
     sampling_params: dict[str, Any],
@@ -99,20 +99,41 @@ async def task_loop(
     backpressure on ``pending_tasks`` (the queue's maxsize) instead of flooding
     the rollout workers.
     """
-    if not tasks:
+    if not task_ids:
         raise RuntimeError("no tasks to train on")
     rng = random.Random(seed)
-    order = list(tasks)
+    order = list(task_ids)
     while True:
         rng.shuffle(order)
-        for task in order:
+        for task_id in order:
             await pending_tasks.put(
                 GRPOGroupRequest(
-                    task_id=task.task_id,
+                    task_id=task_id,
                     num_rollouts=num_rollouts,
                     sampling_params=sampling_params,
                 )
             )
+
+
+def _group_policy_version(group: list[RolloutResult]) -> int:
+    return max(rollout.policy_version for rollout in group)
+
+
+def _batch_size_to_emit(
+    ready_groups: list[list[RolloutResult]],
+    *,
+    groups_per_batch: int,
+    latest_policy_version: int,
+    max_policy_staleness: int,
+) -> int:
+    if not ready_groups:
+        return 0
+    if len(ready_groups) >= groups_per_batch:
+        return groups_per_batch
+    oldest_version = _group_policy_version(ready_groups[0])
+    if latest_policy_version - oldest_version > max_policy_staleness:
+        return len(ready_groups)
+    return 0
 
 
 async def batcher_loop(
@@ -120,28 +141,39 @@ async def batcher_loop(
     train_batches: asyncio.Queue[TrainingBatch],
     *,
     groups_per_batch: int,
+    max_policy_staleness: int,
 ) -> None:
     partial_groups: dict[str, list[RolloutResult]] = {}
-    ready_groups: dict[int, list[list[RolloutResult]]] = {}
+    ready_groups: list[list[RolloutResult]] = []
+    latest_policy_version = 0
 
     while True:
         result = await completed_rollouts.get()
+        latest_policy_version = max(latest_policy_version, result.policy_version)
         group = partial_groups.setdefault(result.group_id, [])
         group.append(result)
 
         if len(group) == result.expected_group_size:
-            complete_group = partial_groups.pop(result.group_id)
-            policy_groups = ready_groups.setdefault(result.policy_version, [])
-            policy_groups.append(complete_group)
+            ready_groups.append(partial_groups.pop(result.group_id))
 
-            if len(policy_groups) >= groups_per_batch:
-                batch_groups = policy_groups[:groups_per_batch]
-                del policy_groups[:groups_per_batch]
+            while True:
+                batch_size = _batch_size_to_emit(
+                    ready_groups,
+                    groups_per_batch=groups_per_batch,
+                    latest_policy_version=latest_policy_version,
+                    max_policy_staleness=max_policy_staleness,
+                )
+                if batch_size == 0:
+                    break
+                batch_groups = ready_groups[:batch_size]
+                del ready_groups[:batch_size]
                 await train_batches.put(
                     TrainingBatch(
                         batch_id=uuid.uuid4().hex,
                         groups=batch_groups,
-                        policy_version=result.policy_version,
+                        policy_version=max(
+                            _group_policy_version(group) for group in batch_groups
+                        ),
                     )
                 )
 
@@ -175,12 +207,10 @@ async def run(config: GRLConfig, run_id: str) -> None:
         for _ in range(config.workers.num_training_workers)
     ]
 
-    # The environment's tasks.jsonl is the task index; the env itself renders
-    # each task's prompt/tools at CreateEnvironment time.
-    tasks = await asyncio.to_thread(
-        load_tasks,
-        config.dataset.tasks_s3_uri or "",
-        split=config.dataset.split,
+    # Task ids from the manager catalog; prompts/tools on CreateEnvironment.
+    task_ids = await list_task_ids(
+        addr=config.environment.server_addr,
+        split=config.environment.split,
     )
 
     pipeline = config.pipeline
@@ -198,7 +228,7 @@ async def run(config: GRLConfig, run_id: str) -> None:
     await asyncio.gather(
         task_loop(
             pending_tasks,
-            tasks,
+            task_ids,
             num_rollouts=grpo.num_rollouts,
             sampling_params=grpo.sampling_params(),
             seed=pipeline.seed,
@@ -213,6 +243,7 @@ async def run(config: GRLConfig, run_id: str) -> None:
             completed_rollouts,
             train_batches,
             groups_per_batch=grpo.groups_per_batch,
+            max_policy_staleness=pipeline.max_policy_staleness,
         ),
         trainer_loop(train_batches, training_workers, rollout_workers),
     )

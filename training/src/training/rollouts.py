@@ -6,7 +6,7 @@ One ``RolloutWorker`` Ray actor owns:
 
 Concurrency:
   - Across trajectories: ``asyncio.gather`` with a semaphore cap
-  - Within a trajectory: turns are sequential; tool calls in one turn run in parallel
+  - Within a trajectory: turns are sequential; one tool call per turn
 """
 
 from __future__ import annotations
@@ -21,7 +21,12 @@ from typing import Any
 import ray
 
 from training.config import GRLConfig
-from training.environments import EnvironmentSession
+from training.environments import (
+    EnvironmentSession,
+    InfraError,
+    RetryConfig,
+    SUBMIT_TOOL,
+)
 from training.telemetry import init_telemetry
 
 # Hermes-style tool call blocks (Qwen2.5 tool format); extend when adding parsers.
@@ -89,6 +94,7 @@ class Session:
     response_mask: list[int] = field(default_factory=list)
     inference_logprobs: list[float] = field(default_factory=list)
     assistant_turns: int = 0
+    submitted: bool = False
     done: bool = False
 
 
@@ -124,6 +130,12 @@ class RolloutWorker:
         self.max_tokens_per_turn = rollout.max_tokens_per_turn
         self.max_assistant_turns = rollout.max_assistant_turns
         self.env_server_addr = cfg.environment.server_addr
+        env_retry = cfg.environment.retry
+        self.env_retry = RetryConfig(
+            max_attempts=env_retry.max_attempts,
+            initial_backoff_secs=env_retry.initial_backoff_secs,
+            max_backoff_secs=env_retry.max_backoff_secs,
+        )
 
         engine_args = AsyncEngineArgs(
             model=resolved_model,
@@ -178,17 +190,19 @@ class RolloutWorker:
         # TODO: hot-load weights into vLLM when that path is available.
 
     async def run_rollout(self, request: RolloutRequest) -> RolloutResult:
-        """Run one trajectory against the environment bound to this request."""
+        """Run one trajectory: Create → Execute* → Evaluate → Teardown."""
         sampling_params = dict(request.sampling_params or {"temperature": 1.0, "top_p": 1.0})
+        reward: float | None = None
+        done_reason = "completed"
+        session: Session | None = None
 
         async with self._sem:
             env = await EnvironmentSession.create(
                 request.task_id,
                 addr=self.env_server_addr,
+                retry=self.env_retry,
             )
             try:
-                # The environment supplies the opening prompt and tool schemas;
-                # the trainer stays task-agnostic.
                 messages = env.initial_messages
                 tools = env.tools
                 prompt_ids = self._tokenize_chat(messages, tools=tools)
@@ -204,12 +218,17 @@ class RolloutWorker:
                     messages=list(messages),
                 )
                 session = await self._run_trajectory(session, sampling_params)
-                # The environment grades the finished trajectory and returns the
-                # reward (e.g. by running the held-out tests in the VM).
-                reward, _detail = await env.score()
+                try:
+                    result = await env.evaluate()
+                    if result.infra_error:
+                        done_reason = "infra_error"
+                    reward = result.reward
+                except InfraError:
+                    done_reason = "infra_error"
             finally:
-                await env.close()
+                await env.teardown()
 
+        assert session is not None
         prompt_len = len(session.prompt_ids) - len(session.response_ids)
         return RolloutResult(
             group_id=session.group_id,
@@ -225,6 +244,7 @@ class RolloutWorker:
             inference_logprobs=session.inference_logprobs,
             num_turns=session.assistant_turns,
             reward=reward,
+            done_reason=done_reason,
         )
 
     async def generate_batch(
@@ -274,16 +294,16 @@ class RolloutWorker:
                 session.done = True
                 break
 
-            tool_messages = await asyncio.gather(
-                *[self._execute_tool(session, tc) for tc in tool_calls]
-            )
-            session.messages.extend(tool_messages)
-
-            tool_token_ids = self._tokenize_tool_messages(tool_messages)
+            tool_message = await self._execute_tool(session, tool_calls[0])
+            session.messages.append(tool_message)
+            tool_token_ids = self._tokenize_tool_messages([tool_message])
             session.prompt_ids += tool_token_ids
             session.response_ids += tool_token_ids
             session.response_mask += [0] * len(tool_token_ids)
             session.inference_logprobs += [0.0] * len(tool_token_ids)
+
+            if session.submitted:
+                session.done = True
 
         return session
 
@@ -355,7 +375,9 @@ class RolloutWorker:
         session: Session,
         tool_call: ToolCall,
     ) -> dict[str, Any]:
-        """Dispatch a tool call to the VM owned by this session."""
+        """Dispatch one tool call to the environment owned by this session."""
+        if tool_call.name == SUBMIT_TOOL:
+            session.submitted = True
         return await session.env.execute(tool_call.name, tool_call.arguments)
 
     def _parse_tool_calls(self, token_ids: list[int]) -> list[ToolCall]:
@@ -370,6 +392,7 @@ class RolloutWorker:
                     arguments = json.dumps(arguments)
                 if name:
                     calls.append(ToolCall(name=name, arguments=str(arguments)))
+                    break
             except (json.JSONDecodeError, TypeError):
                 continue
         return calls

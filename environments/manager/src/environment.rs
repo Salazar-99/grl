@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
@@ -6,35 +5,92 @@ use tonic::{Request, Response, Status};
 use crate::catalog::Catalog;
 use crate::pb::environment_service_server::EnvironmentService;
 use crate::pb::{
-    CloseRequest, CloseResponse, CreateEnvironmentRequest, CreateEnvironmentResponse,
-    ExecuteRequest, ExecuteResponse, ResetRequest, ResetResponse, ScoreRequest, ScoreResponse,
+    CreateEnvironmentRequest, CreateEnvironmentResponse, EvaluateRequest, EvaluateResponse,
+    ExecuteRequest, ExecuteResponse, ListTasksRequest, ListTasksResponse, TaskIndexEntry,
+    TeardownRequest, TeardownResponse,
 };
+use crate::registry::{Registry, RegistryError, SUBMIT_TOOL};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct EnvironmentServiceImpl {
-    /// Per-task prompts/tools, loaded from the environment's tasks.jsonl. The
-    /// manager serves these verbatim; it does not interpret them.
     catalog: Arc<Catalog>,
-    /// Monotonic suffix making env_ids unique within this manager process.
-    next_env: AtomicU64,
+    env_name: String,
+    manager_addr: String,
+    registry: Arc<Registry>,
 }
 
 impl EnvironmentServiceImpl {
     pub fn new(catalog: Arc<Catalog>) -> Self {
+        let env_name = std::env::var("GRL_ENV_ID").unwrap_or_default();
+        let manager_addr = std::env::var("GRL_MANAGER_ADVERTISE_ADDR").unwrap_or_default();
         Self {
             catalog,
-            next_env: AtomicU64::new(0),
+            env_name,
+            manager_addr,
+            registry: Arc::new(Registry::from_env()),
         }
     }
 
-    fn new_env_id(&self, task_id: &str) -> String {
-        let n = self.next_env.fetch_add(1, Ordering::Relaxed);
-        format!("{task_id}-{n}")
+    /// Test-only constructor with explicit registry and advertise address.
+    #[cfg(test)]
+    pub fn with_registry(
+        catalog: Arc<Catalog>,
+        registry: Arc<Registry>,
+        manager_addr: impl Into<String>,
+    ) -> Self {
+        Self {
+            catalog,
+            env_name: String::new(),
+            manager_addr: manager_addr.into(),
+            registry,
+        }
+    }
+
+    fn registry_status(err: RegistryError) -> Status {
+        match err {
+            RegistryError::Exhausted => Status::resource_exhausted(err.to_string()),
+            RegistryError::NotFound(id) => Status::not_found(id),
+            RegistryError::NotReady { .. } => Status::unavailable(err.to_string()),
+            RegistryError::AlreadySubmitted { .. } | RegistryError::ExecuteForbidden { .. } => {
+                Status::failed_precondition(err.to_string())
+            }
+            RegistryError::AlreadyEvaluated { .. } => Status::failed_precondition(err.to_string()),
+        }
+    }
+
+    fn spawn_boot_task(registry: Arc<Registry>, env_id: String) {
+        tokio::spawn(async move {
+            // TODO: boot Firecracker VM from manifest, then set_ready.
+            // Until VM wiring lands, transition immediately so local tests work.
+            let _ = registry.set_ready(&env_id).await;
+        });
     }
 }
 
 #[tonic::async_trait]
 impl EnvironmentService for EnvironmentServiceImpl {
+    async fn list_tasks(
+        &self,
+        request: Request<ListTasksRequest>,
+    ) -> Result<Response<ListTasksResponse>, Status> {
+        let split = request.into_inner().split;
+        let split_filter = if split.is_empty() {
+            None
+        } else {
+            Some(split.as_str())
+        };
+        let tasks = self
+            .catalog
+            .list_tasks(split_filter)
+            .into_iter()
+            .map(|(task_id, split)| TaskIndexEntry { task_id, split })
+            .collect();
+        Ok(Response::new(ListTasksResponse {
+            tasks,
+            env_name: self.env_name.clone(),
+        }))
+    }
+
     async fn create_environment(
         &self,
         request: Request<CreateEnvironmentRequest>,
@@ -44,15 +100,17 @@ impl EnvironmentService for EnvironmentServiceImpl {
             Status::not_found(format!("task {task_id} not in catalog"))
         })?;
 
-        // The trainer needs the opening prompt and tools to drive the policy;
-        // the environment is their source of truth, so we return them here.
-        // TODO: boot the Firecracker VM for this task and set manager_addr from
-        // GRL_MANAGER_ADVERTISE_ADDR so clients dial this instance directly;
-        // return RESOURCE_EXHAUSTED when this node's VM slots are full so the
-        // client retries on a fresh connection (kube-proxy rebalances it).
+        let env_id = self
+            .registry
+            .register_booting(&task_id)
+            .await
+            .map_err(Self::registry_status)?;
+
+        Self::spawn_boot_task(Arc::clone(&self.registry), env_id.clone());
+
         Ok(Response::new(CreateEnvironmentResponse {
-            env_id: self.new_env_id(&task_id),
-            manager_addr: String::new(),
+            env_id,
+            manager_addr: self.manager_addr.clone(),
             initial_messages_json: spec.initial_messages_json.clone(),
             tools_json: spec.tools_json.clone(),
         }))
@@ -63,54 +121,232 @@ impl EnvironmentService for EnvironmentServiceImpl {
         request: Request<ExecuteRequest>,
     ) -> Result<Response<ExecuteResponse>, Status> {
         let request = request.into_inner();
-        // TODO: forward this ExecuteRequest to the in-VM executor over vsock and
-        // relay its ExecuteResponse.
+        let env_id = request.env_id;
+
+        if request.tool_name == SUBMIT_TOOL {
+            match self.registry.mark_submitted(&env_id).await {
+                Ok(()) => {
+                    return Ok(Response::new(ExecuteResponse {
+                        content: "Submission received. Your solution will be graded.".into(),
+                        is_error: false,
+                    }));
+                }
+                Err(RegistryError::AlreadySubmitted { .. }) => {
+                    return Ok(Response::new(ExecuteResponse {
+                        content: "already submitted".into(),
+                        is_error: true,
+                    }));
+                }
+                Err(err) => return Err(Self::registry_status(err)),
+            }
+        }
+
+        self.registry
+            .require_execute(&env_id)
+            .await
+            .map_err(Self::registry_status)?;
+
+        // TODO: forward ExecuteRequest to the in-VM executor over vsock and relay
+        // its ExecuteResponse.
         Ok(Response::new(ExecuteResponse {
             content: format!(
                 "{} is not implemented for env {}: {}",
-                request.tool_name, request.env_id, request.arguments_json
+                request.tool_name, env_id, request.arguments_json
             ),
             is_error: true,
         }))
     }
 
-    async fn score(
+    async fn evaluate(
         &self,
-        request: Request<ScoreRequest>,
-    ) -> Result<Response<ScoreResponse>, Status> {
+        request: Request<EvaluateRequest>,
+    ) -> Result<Response<EvaluateResponse>, Status> {
         let env_id = request.into_inner().env_id;
-        // The reward is computed inside the env executor (it runs the held-out
-        // test suite against the policy's edits); the manager only relays it.
-        // TODO: send a Score frame to this env's in-VM executor over vsock and
-        // return the ScoreResponse it produces (see env/src/score.rs). Until the
-        // vsock transport exists, report a zero reward rather than failing the
-        // trajectory.
-        Ok(Response::new(ScoreResponse {
+
+        self.registry
+            .require_evaluate(&env_id)
+            .await
+            .map_err(Self::registry_status)?;
+
+        // TODO: send an Evaluate frame to this env's in-VM executor over vsock and
+        // return the response it produces. Until forwarding exists, surface an
+        // infra error so GRPO excludes this rollout.
+        self.registry
+            .mark_evaluated(&env_id)
+            .await
+            .map_err(Self::registry_status)?;
+
+        Ok(Response::new(EvaluateResponse {
             reward: 0.0,
             detail_json: format!(
-                "{{\"error\":\"score forwarding not implemented for env {env_id}\"}}"
+                "{{\"error\":\"evaluate forwarding not implemented for env {env_id}\"}}"
             ),
+            infra_error: true,
         }))
     }
 
-    async fn reset(
+    async fn teardown(
         &self,
-        request: Request<ResetRequest>,
-    ) -> Result<Response<ResetResponse>, Status> {
+        request: Request<TeardownRequest>,
+    ) -> Result<Response<TeardownResponse>, Status> {
         let env_id = request.into_inner().env_id;
-        Err(Status::unimplemented(format!(
-            "Reset is not implemented for env {env_id}"
-        )))
+        // Best-effort cleanup; always succeed so the trainer's finally path never fails.
+        // TODO: stop Firecracker VM for this env_id.
+        let _ = self.registry.remove(&env_id).await;
+        Ok(Response::new(TeardownResponse {}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::Catalog;
+    use std::sync::Arc;
+
+    fn test_catalog() -> Arc<Catalog> {
+        let jsonl = concat!(
+            r#"{"task_id":"t1","split":"dev","messages":[{"role":"user","content":"hi"}],"tools":[]}"#,
+            "\n",
+        );
+        Arc::new(Catalog::from_jsonl(jsonl).unwrap())
     }
 
-    async fn close(
-        &self,
-        request: Request<CloseRequest>,
-    ) -> Result<Response<CloseResponse>, Status> {
-        let env_id = request.into_inner().env_id;
-        // TODO: tear down the VM for this env. Treated as best-effort so the
-        // client's cleanup path never fails.
-        let _ = env_id;
-        Ok(Response::new(CloseResponse {}))
+    fn test_service(max_concurrent: usize) -> EnvironmentServiceImpl {
+        EnvironmentServiceImpl::with_registry(
+            test_catalog(),
+            Arc::new(Registry::with_capacity(max_concurrent)),
+            "127.0.0.1:50051",
+        )
+    }
+
+    #[tokio::test]
+    async fn create_returns_manager_addr_and_registers_env() {
+        let svc = test_service(4);
+        let resp = svc
+            .create_environment(Request::new(CreateEnvironmentRequest {
+                task_id: "t1".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.manager_addr, "127.0.0.1:50051");
+        assert!(resp.env_id.starts_with("t1-"));
+        // Boot task transitions to Ready quickly.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert_eq!(
+            svc.registry.phase(&resp.env_id).await.unwrap(),
+            crate::registry::EnvPhase::Ready
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_exhausted_on_create() {
+        let svc = test_service(1);
+        svc.create_environment(Request::new(CreateEnvironmentRequest {
+            task_id: "t1".into(),
+        }))
+        .await
+        .unwrap();
+        let err = svc
+            .create_environment(Request::new(CreateEnvironmentRequest {
+                task_id: "t1".into(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
+    async fn execute_after_evaluate_fails() {
+        let svc = test_service(4);
+        let env_id = svc
+            .create_environment(Request::new(CreateEnvironmentRequest {
+                task_id: "t1".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .env_id;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        svc.evaluate(Request::new(EvaluateRequest {
+            env_id: env_id.clone(),
+        }))
+        .await
+        .unwrap();
+
+        let err = svc
+            .execute(Request::new(ExecuteRequest {
+                env_id: env_id.clone(),
+                tool_name: "bash".into(),
+                arguments_json: r#"{"command":"echo hi"}"#.into(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    async fn submit_twice_returns_error_content() {
+        let svc = test_service(4);
+        let env_id = svc
+            .create_environment(Request::new(CreateEnvironmentRequest {
+                task_id: "t1".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .env_id;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let first = svc
+            .execute(Request::new(ExecuteRequest {
+                env_id: env_id.clone(),
+                tool_name: SUBMIT_TOOL.into(),
+                arguments_json: "{}".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!first.is_error);
+
+        let second = svc
+            .execute(Request::new(ExecuteRequest {
+                env_id,
+                tool_name: SUBMIT_TOOL.into(),
+                arguments_json: "{}".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(second.is_error);
+        assert!(second.content.contains("already submitted"));
+    }
+
+    #[tokio::test]
+    async fn teardown_removes_env() {
+        let svc = test_service(4);
+        let env_id = svc
+            .create_environment(Request::new(CreateEnvironmentRequest {
+                task_id: "t1".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .env_id;
+
+        svc.teardown(Request::new(TeardownRequest { env_id: env_id.clone() }))
+            .await
+            .unwrap();
+
+        let err = svc
+            .execute(Request::new(ExecuteRequest {
+                env_id,
+                tool_name: "bash".into(),
+                arguments_json: "{}".into(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }

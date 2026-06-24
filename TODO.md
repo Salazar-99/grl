@@ -10,30 +10,18 @@ Environment manager (Rust)
 --------------------------
 - [ ] VM lifecycle in `environments/manager/src/environment.rs`:
       `CreateEnvironment` boots Firecracker from base+task images (via
-      `manifest.json`), tracks env_id → VM; implement `Reset` and `Close`.
-      All four RPCs are stubs today. `CreateEnvironment` must also return
-      `manager_addr` from `GRL_MANAGER_ADVERTISE_ADDR` (direct routing) and
-      `RESOURCE_EXHAUSTED` when the node's VM slots are full (admission
-      control) — see TODOs in the file.
+      `manifest.json`). Registry + admission + `manager_addr` + Evaluate/
+      Teardown lifecycle are wired; vsock forwarding and real VM boot remain.
 - [ ] Real `env` executor (`environments/swebench-lite/env`): in-VM tool
       execution (bash, file view/edit) over vsock, with per-call timeouts.
       Currently prints "executor".
-- [ ] Add `Evaluate(env_id) → reward` RPC to the proto: run FAIL_TO_PASS /
-      PASS_TO_PASS tests in the VM. Bake per-instance test commands into the
-      manifest or task image.
+- [ ] Forward `Evaluate` and `Execute` over vsock to the in-VM executor.
 
 Training correctness
 --------------------
-- [ ] GRPO loss in `trainer.py` (currently a no-op): group-relative
-      advantages, KL vs ref model, optimizer step. Include from the start:
-      zero-variance group filtering (all-same-reward groups contribute
-      nothing) and a deliberate token-level vs sequence-level aggregation
-      choice.
-- [ ] Wire rewards through: call `Evaluate` after each trajectory and attach
-      to `RolloutResult` before the batcher. `reward` is always `None` today.
-- [ ] Fix batcher liveness bug: groups whose rollouts straddle a policy
-      version never complete. Batch on group completion with a staleness
-      bound instead of exact-version matching.
+- [ ] Wire real rewards: manager `Evaluate` still returns `infra_error` until
+      vsock forwarding lands. Trainer calls Evaluate and filters infra failures
+      from GRPO.
 - [ ] Token-In-Token-Out semantics (e.g. prime renderers lib): keep exact
       sampled token ids and logprobs end-to-end so the trainer sees what the
       sampler emitted — no retokenization drift between vLLM and HF.
@@ -53,7 +41,7 @@ Performance
 - [ ] Sparse weight transfer: send only a delta of the weights from trainer
       to rollout workers (Cursor-style) to cut sync time and keep rollouts
       closer to on-policy.
-- [ ] Exploit prefix caching deliberately: the N rollouts in a group share a
+- [ ] (For multiple rollout engines) Exploit prefix caching deliberately: the N rollouts in a group share a
       prompt — route them to the same engine using a hashmap in the data submitter
 - [ ] Per-call timeouts on gRPC and generation so one hung VM or runaway
       trajectory can't stall a group.
@@ -76,11 +64,8 @@ notes.
 
 Deploy / glue
 -------------
-- [ ] Job submission for `training.main` (RayJob or `ray job submit`); a
-      script is fine — the README's `launcher` doesn't exist yet.
-- [ ] Model weights onto GPU nodes (`local_files_only=True` needs them
-      present); pick the small model — 1.5B/3B is much cheaper than the
-      Qwen2.5-7B default for a first run.
+- [ ] Implement the launcher to upload the environment artifacts, deploy the infra, and deploy/run the training job using python, see prime-rl for example
+- [ ] Get model weights onto GPU nodes, maybe a daemonset that pulls from HF? or prebake into image?
 
 Deferred (scaling / fault tolerance)
 ------------------------------------

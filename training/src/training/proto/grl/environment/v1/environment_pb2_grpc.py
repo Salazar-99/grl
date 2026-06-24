@@ -26,7 +26,13 @@ if _version_not_supported:
 
 
 class EnvironmentServiceStub:
-    """EnvironmentService manages Firecracker-backed SWE-bench environments.
+    """EnvironmentService manages Firecracker-backed RL environments.
+
+    Per-rollout lifecycle (strict ordering after CreateEnvironment):
+    CreateEnvironment → Execute* → Evaluate → Teardown
+
+    Execute accepts bash tools until the agent calls the standard "submit" tool.
+    After Evaluate, only Teardown is valid for that env_id.
     """
 
     def __init__(self, channel):
@@ -35,6 +41,11 @@ class EnvironmentServiceStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.ListTasks = channel.unary_unary(
+                '/grl.environment.v1.EnvironmentService/ListTasks',
+                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ListTasksRequest.SerializeToString,
+                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ListTasksResponse.FromString,
+                _registered_method=True)
         self.CreateEnvironment = channel.unary_unary(
                 '/grl.environment.v1.EnvironmentService/CreateEnvironment',
                 request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.CreateEnvironmentRequest.SerializeToString,
@@ -45,57 +56,64 @@ class EnvironmentServiceStub:
                 request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteRequest.SerializeToString,
                 response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteResponse.FromString,
                 _registered_method=True)
-        self.Score = channel.unary_unary(
-                '/grl.environment.v1.EnvironmentService/Score',
-                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreRequest.SerializeToString,
-                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreResponse.FromString,
+        self.Evaluate = channel.unary_unary(
+                '/grl.environment.v1.EnvironmentService/Evaluate',
+                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.EvaluateRequest.SerializeToString,
+                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.EvaluateResponse.FromString,
                 _registered_method=True)
-        self.Reset = channel.unary_unary(
-                '/grl.environment.v1.EnvironmentService/Reset',
-                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ResetRequest.SerializeToString,
-                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ResetResponse.FromString,
-                _registered_method=True)
-        self.Close = channel.unary_unary(
-                '/grl.environment.v1.EnvironmentService/Close',
-                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.CloseRequest.SerializeToString,
-                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.CloseResponse.FromString,
+        self.Teardown = channel.unary_unary(
+                '/grl.environment.v1.EnvironmentService/Teardown',
+                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.TeardownRequest.SerializeToString,
+                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.TeardownResponse.FromString,
                 _registered_method=True)
 
 
 class EnvironmentServiceServicer:
-    """EnvironmentService manages Firecracker-backed SWE-bench environments.
+    """EnvironmentService manages Firecracker-backed RL environments.
+
+    Per-rollout lifecycle (strict ordering after CreateEnvironment):
+    CreateEnvironment → Execute* → Evaluate → Teardown
+
+    Execute accepts bash tools until the agent calls the standard "submit" tool.
+    After Evaluate, only Teardown is valid for that env_id.
     """
 
-    def CreateEnvironment(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Execute(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Score(self, request, context):
-        """Score evaluates the current state of an environment and returns the
-        task reward. The environment is the source of truth for its own reward
-        (e.g. running the held-out test suite for a SWE-bench task), so scoring
-        happens inside the env executor and the manager only relays the result.
+    def ListTasks(self, request, context):
+        """ListTasks returns the task index loaded at manager startup. Trainers call
+        this instead of reading tasks.jsonl from object storage.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Reset(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+    def CreateEnvironment(self, request, context):
+        """Non-blocking: returns catalog prompt/tools immediately while the VM boots
+        asynchronously. Execute/Evaluate return UNAVAILABLE until the env is ready.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Close(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+    def Execute(self, request, context):
+        """Run one tool call (bash, submit, etc.) inside the environment.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Evaluate(self, request, context):
+        """Grade the finished trajectory. Callable once per env_id. The environment
+        owns the reward (e.g. held-out test suite); the manager relays the result.
+        Allowed from Ready or Submitted (max turns without submit still grades).
+        After Evaluate, only Teardown is valid.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Teardown(self, request, context):
+        """Tear down the environment and free resources. Best-effort; always succeeds.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -103,6 +121,11 @@ class EnvironmentServiceServicer:
 
 def add_EnvironmentServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'ListTasks': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTasks,
+                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ListTasksRequest.FromString,
+                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ListTasksResponse.SerializeToString,
+            ),
             'CreateEnvironment': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateEnvironment,
                     request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.CreateEnvironmentRequest.FromString,
@@ -113,20 +136,15 @@ def add_EnvironmentServiceServicer_to_server(servicer, server):
                     request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteRequest.FromString,
                     response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteResponse.SerializeToString,
             ),
-            'Score': grpc.unary_unary_rpc_method_handler(
-                    servicer.Score,
-                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreRequest.FromString,
-                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreResponse.SerializeToString,
+            'Evaluate': grpc.unary_unary_rpc_method_handler(
+                    servicer.Evaluate,
+                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.EvaluateRequest.FromString,
+                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.EvaluateResponse.SerializeToString,
             ),
-            'Reset': grpc.unary_unary_rpc_method_handler(
-                    servicer.Reset,
-                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ResetRequest.FromString,
-                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ResetResponse.SerializeToString,
-            ),
-            'Close': grpc.unary_unary_rpc_method_handler(
-                    servicer.Close,
-                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.CloseRequest.FromString,
-                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.CloseResponse.SerializeToString,
+            'Teardown': grpc.unary_unary_rpc_method_handler(
+                    servicer.Teardown,
+                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.TeardownRequest.FromString,
+                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.TeardownResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -137,8 +155,41 @@ def add_EnvironmentServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class EnvironmentService:
-    """EnvironmentService manages Firecracker-backed SWE-bench environments.
+    """EnvironmentService manages Firecracker-backed RL environments.
+
+    Per-rollout lifecycle (strict ordering after CreateEnvironment):
+    CreateEnvironment → Execute* → Evaluate → Teardown
+
+    Execute accepts bash tools until the agent calls the standard "submit" tool.
+    After Evaluate, only Teardown is valid for that env_id.
     """
+
+    @staticmethod
+    def ListTasks(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/grl.environment.v1.EnvironmentService/ListTasks',
+            grl_dot_environment_dot_v1_dot_environment__pb2.ListTasksRequest.SerializeToString,
+            grl_dot_environment_dot_v1_dot_environment__pb2.ListTasksResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def CreateEnvironment(request,
@@ -195,7 +246,7 @@ class EnvironmentService:
             _registered_method=True)
 
     @staticmethod
-    def Score(request,
+    def Evaluate(request,
             target,
             options=(),
             channel_credentials=None,
@@ -208,9 +259,9 @@ class EnvironmentService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/grl.environment.v1.EnvironmentService/Score',
-            grl_dot_environment_dot_v1_dot_environment__pb2.ScoreRequest.SerializeToString,
-            grl_dot_environment_dot_v1_dot_environment__pb2.ScoreResponse.FromString,
+            '/grl.environment.v1.EnvironmentService/Evaluate',
+            grl_dot_environment_dot_v1_dot_environment__pb2.EvaluateRequest.SerializeToString,
+            grl_dot_environment_dot_v1_dot_environment__pb2.EvaluateResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -222,7 +273,7 @@ class EnvironmentService:
             _registered_method=True)
 
     @staticmethod
-    def Reset(request,
+    def Teardown(request,
             target,
             options=(),
             channel_credentials=None,
@@ -235,36 +286,9 @@ class EnvironmentService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/grl.environment.v1.EnvironmentService/Reset',
-            grl_dot_environment_dot_v1_dot_environment__pb2.ResetRequest.SerializeToString,
-            grl_dot_environment_dot_v1_dot_environment__pb2.ResetResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Close(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/grl.environment.v1.EnvironmentService/Close',
-            grl_dot_environment_dot_v1_dot_environment__pb2.CloseRequest.SerializeToString,
-            grl_dot_environment_dot_v1_dot_environment__pb2.CloseResponse.FromString,
+            '/grl.environment.v1.EnvironmentService/Teardown',
+            grl_dot_environment_dot_v1_dot_environment__pb2.TeardownRequest.SerializeToString,
+            grl_dot_environment_dot_v1_dot_environment__pb2.TeardownResponse.FromString,
             options,
             channel_credentials,
             insecure,

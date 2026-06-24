@@ -40,6 +40,14 @@ manager:
   namespace: default
   image: grl-manager:latest
   port: 50051
+  # Per-run environment binding (patched by the launcher before rollout restart).
+  bundleUri: ""
+  envId: ""
+  # Subdirectory under vmImageCache.hostPath where the initContainer syncs
+  # tasks.jsonl and manifest.json for the active environment bundle.
+  activeDir: active
+  # Max rollout environments in flight on this manager pod (admission control).
+  maxConcurrentEnvs: "32"
 
 vmImageCache:
   namespace: default

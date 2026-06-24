@@ -3,15 +3,53 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import grpc
 
 from training.proto.grl.environment.v1 import environment_pb2, environment_pb2_grpc
+from training.retry import InfraError, grpc_retry
+
+SUBMIT_TOOL = "submit"
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    max_attempts: int = 10
+    initial_backoff_secs: float = 0.5
+    max_backoff_secs: float = 30.0
+
+
+@dataclass(frozen=True)
+class EvaluateResult:
+    reward: float
+    detail: dict[str, Any]
+    infra_error: bool
+
+
+async def list_task_ids(*, addr: str, split: str | None = None) -> list[str]:
+    """Fetch task ids from the manager (catalog loaded at manager startup)."""
+    channel = grpc.aio.insecure_channel(addr)
+    stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
+    try:
+        response = await stub.ListTasks(
+            environment_pb2.ListTasksRequest(split=split or "")
+        )
+    finally:
+        await channel.close()
+    if not response.tasks:
+        raise RuntimeError(
+            f"manager at {addr} returned no tasks"
+            + (f" for split {split!r}" if split else "")
+        )
+    return [entry.task_id for entry in response.tasks]
 
 
 class EnvironmentSession:
     """One environment's lifetime on one manager instance.
+
+    Lifecycle: CreateEnvironment → Execute* → Evaluate → Teardown.
 
     Each session owns a dedicated channel. A gRPC channel is a single TCP
     connection, so every call for this environment reaches the manager pod
@@ -27,14 +65,13 @@ class EnvironmentSession:
         task_id: str,
         initial_messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        retry: RetryConfig,
     ) -> None:
         self._channel = channel
         self._stub = stub
         self.env_id = env_id
         self.task_id = task_id
-        # The environment renders the opening prompt and tool schemas, so the
-        # trainer never parses task-specific data — it just drives the policy
-        # with whatever the env hands back.
+        self._retry = retry
         self.initial_messages = initial_messages
         self.tools = tools
 
@@ -44,26 +81,36 @@ class EnvironmentSession:
         task_id: str,
         *,
         addr: str | None = None,
+        retry: RetryConfig | None = None,
     ) -> "EnvironmentSession":
         if addr is None:
             raise ValueError("environment server address is required")
-        channel = grpc.aio.insecure_channel(addr)
-        stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
-        try:
-            response = await stub.CreateEnvironment(
-                environment_pb2.CreateEnvironmentRequest(task_id=task_id)
-            )
-        except BaseException:
-            await channel.close()
-            raise
-        # Behind the Service, pinning is only as durable as the TCP connection:
-        # a transparent gRPC reconnect would be re-balanced to a pod that does
-        # not own this VM. Re-dial the owning pod directly when it tells us
-        # where it lives.
+        retry_cfg = retry or RetryConfig()
+
+        async def _create_once() -> tuple[grpc.aio.Channel, environment_pb2_grpc.EnvironmentServiceStub, environment_pb2.CreateEnvironmentResponse]:
+            channel = grpc.aio.insecure_channel(addr)
+            stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
+            try:
+                response = await stub.CreateEnvironment(
+                    environment_pb2.CreateEnvironmentRequest(task_id=task_id)
+                )
+            except BaseException:
+                await channel.close()
+                raise
+            return channel, stub, response
+
+        channel, stub, response = await grpc_retry(
+            _create_once,
+            max_attempts=retry_cfg.max_attempts,
+            initial_backoff_secs=retry_cfg.initial_backoff_secs,
+            max_backoff_secs=retry_cfg.max_backoff_secs,
+        )
+
         if response.manager_addr and response.manager_addr != addr:
             await channel.close()
             channel = grpc.aio.insecure_channel(response.manager_addr)
             stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
+
         initial_messages = (
             json.loads(response.initial_messages_json)
             if response.initial_messages_json
@@ -77,36 +124,58 @@ class EnvironmentSession:
             task_id,
             initial_messages,
             tools,
+            retry_cfg,
         )
 
     async def execute(self, tool_name: str, arguments_json: str) -> dict[str, str]:
-        response = await self._stub.Execute(
-            environment_pb2.ExecuteRequest(
-                env_id=self.env_id,
-                tool_name=tool_name,
-                arguments_json=arguments_json,
+        async def _execute_once() -> environment_pb2.ExecuteResponse:
+            return await self._stub.Execute(
+                environment_pb2.ExecuteRequest(
+                    env_id=self.env_id,
+                    tool_name=tool_name,
+                    arguments_json=arguments_json,
+                )
             )
+
+        response = await grpc_retry(
+            _execute_once,
+            max_attempts=self._retry.max_attempts,
+            initial_backoff_secs=self._retry.initial_backoff_secs,
+            max_backoff_secs=self._retry.max_backoff_secs,
         )
-        return {"role": "tool", "content": response.content}
+        content = response.content
+        if response.is_error:
+            content = f"Error: {content}"
+        return {"role": "tool", "content": content}
 
-    async def score(self) -> tuple[float, dict[str, Any]]:
-        """Ask the environment to grade the current state and return the reward.
+    async def evaluate(self) -> EvaluateResult:
+        """Grade the finished trajectory. Callable once per env after Execute."""
 
-        The environment owns the reward (e.g. running the held-out test suite),
-        so the trainer treats this as opaque: a scalar plus an optional JSON
-        breakdown for logging.
-        """
-        response = await self._stub.Score(
-            environment_pb2.ScoreRequest(env_id=self.env_id)
+        async def _evaluate_once() -> environment_pb2.EvaluateResponse:
+            return await self._stub.Evaluate(
+                environment_pb2.EvaluateRequest(env_id=self.env_id)
+            )
+
+        response = await grpc_retry(
+            _evaluate_once,
+            max_attempts=self._retry.max_attempts,
+            initial_backoff_secs=self._retry.initial_backoff_secs,
+            max_backoff_secs=self._retry.max_backoff_secs,
         )
         detail = json.loads(response.detail_json) if response.detail_json else {}
-        return response.reward, detail
+        return EvaluateResult(
+            reward=response.reward,
+            detail=detail,
+            infra_error=response.infra_error,
+        )
 
-    async def reset(self) -> None:
-        await self._stub.Reset(environment_pb2.ResetRequest(env_id=self.env_id))
-
-    async def close(self) -> None:
+    async def teardown(self) -> None:
         try:
-            await self._stub.Close(environment_pb2.CloseRequest(env_id=self.env_id))
+            await self._stub.Teardown(
+                environment_pb2.TeardownRequest(env_id=self.env_id)
+            )
         finally:
             await self._channel.close()
+
+
+__all__ = ["EnvironmentSession", "EvaluateResult", "InfraError", "RetryConfig", "SUBMIT_TOOL", "list_task_ids"]

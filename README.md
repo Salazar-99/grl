@@ -110,7 +110,7 @@ For breaking API changes, bump the package version (e.g. `grl.environment.v2`) r
 
 **What to do next:**
 
-- Implement `EnvironmentService` in Rust — wire `CreateEnvironment`, `Execute`, `Reset`, and `Close` to Firecracker VM lifecycle and the in-VM `env` executor binary.
+- Implement `EnvironmentService` in Rust — wire `CreateEnvironment`, `Execute`, `Evaluate`, and `Teardown` to Firecracker VM lifecycle and the in-VM `env` executor binary.
 - Add integration tests that start the manager and exercise the RPCs from Python.
 - Once the API stabilizes, consider adding [Buf](https://buf.build) at the repo root for linting and breaking-change detection.
 

@@ -14,6 +14,22 @@ from training.rollouts import RolloutResult
 from training.telemetry import init_telemetry
 
 
+def grpo_valid_rollouts(
+    group: list[RolloutResult],
+    *,
+    min_rollouts_per_group: int,
+) -> list[RolloutResult]:
+    """Return rollouts eligible for GRPO advantage computation."""
+    valid = [
+        r
+        for r in group
+        if r.done_reason != "infra_error" and r.reward is not None
+    ]
+    if len(valid) < min_rollouts_per_group:
+        return []
+    return valid
+
+
 @dataclass
 class TrainingBatch:
     batch_id: str
@@ -45,6 +61,7 @@ class TrainingWorker:
         self.beta = cfg.grpo.beta
         self.epsilon = cfg.grpo.epsilon
         learning_rate = cfg.grpo.learning_rate
+        self.min_rollouts_per_group = cfg.grpo.min_rollouts_per_group
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path, local_files_only=True
@@ -103,8 +120,14 @@ class TrainingWorker:
         advantages: list[torch.Tensor] = []
 
         for group in groups:
-            group_advantages = self._compute_group_advantages([r.reward for r in group])
-            for rollout, advantage in zip(group, group_advantages, strict=True):
+            valid = grpo_valid_rollouts(
+                group, min_rollouts_per_group=self.min_rollouts_per_group
+            )
+            if not valid:
+                continue
+
+            group_advantages = self._compute_group_advantages([r.reward for r in valid])
+            for rollout, advantage in zip(valid, group_advantages, strict=True):
                 if not rollout.response_ids:
                     continue
                 if len(rollout.inference_logprobs) != len(rollout.response_ids):

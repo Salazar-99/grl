@@ -6,6 +6,11 @@
 # workers connect through the ClusterIP Service below with one gRPC channel
 # per environment: a channel is a single TCP connection, so kube-proxy pins
 # each environment to one manager pod while spreading environments across pods.
+#
+# Per-run environment bundles: the launcher sets manager.bundleUri (and optional
+# manager.envId), then rolls the DaemonSet. The sync-bundle initContainer pulls
+# tasks.jsonl + manifest.json into {{ .Values.vmImageCache.hostPath }}/active/
+# before the manager loads the catalog at startup.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -24,6 +29,46 @@ spec:
     spec:
       nodeSelector:
         role: environment
+      initContainers:
+        - name: sync-bundle
+          image: {{ .Values.vmImageCache.image | quote }}
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.vmImageCache.region | quote }}
+            - name: GRL_VM_CACHE_DIR
+              value: {{ .Values.vmImageCache.hostPath | quote }}
+            - name: GRL_ACTIVE_DIR
+              value: {{ .Values.manager.activeDir | quote }}
+            - name: GRL_BUNDLE_URI
+              value: {{ .Values.manager.bundleUri | quote }}
+            - name: GRL_TASKS_FILE
+              value: {{ .Values.vmImageCache.hostPath }}/{{ .Values.manager.activeDir }}/tasks.jsonl
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              CACHE_ROOT="${GRL_VM_CACHE_DIR}"
+              ACTIVE="${CACHE_ROOT}/${GRL_ACTIVE_DIR}"
+              TASKS_FILE="${GRL_TASKS_FILE}"
+              mkdir -p "${ACTIVE}"
+              rm -f "${ACTIVE}/.ready"
+              if [ -n "${GRL_BUNDLE_URI}" ]; then
+                echo "syncing bundle ${GRL_BUNDLE_URI} -> ${ACTIVE}/"
+                /s5cmd sync "${GRL_BUNDLE_URI}/*" "${ACTIVE}/"
+              elif [ ! -f "${TASKS_FILE}" ]; then
+                echo "GRL_BUNDLE_URI unset and ${TASKS_FILE} missing; catalog will be empty" >&2
+              fi
+              touch "${ACTIVE}/.ready"
+          volumeMounts:
+            - name: vm-cache
+              mountPath: {{ .Values.vmImageCache.hostPath | quote }}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 1Gi
       containers:
         - name: manager
           image: {{ .Values.manager.image | quote }}
@@ -32,6 +77,16 @@ spec:
               value: 0.0.0.0:{{ .Values.manager.port }}
             - name: GRL_VM_CACHE_DIR
               value: {{ .Values.vmImageCache.hostPath | quote }}
+            - name: GRL_ACTIVE_DIR
+              value: {{ .Values.manager.activeDir | quote }}
+            - name: GRL_BUNDLE_URI
+              value: {{ .Values.manager.bundleUri | quote }}
+            - name: GRL_ENV_ID
+              value: {{ .Values.manager.envId | quote }}
+            - name: GRL_TASKS_FILE
+              value: {{ .Values.vmImageCache.hostPath }}/{{ .Values.manager.activeDir }}/tasks.jsonl
+            - name: GRL_MANIFEST_FILE
+              value: {{ .Values.vmImageCache.hostPath }}/{{ .Values.manager.activeDir }}/manifest.json
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -41,6 +96,8 @@ spec:
             # of relying on the Service connection staying pinned.
             - name: GRL_MANAGER_ADVERTISE_ADDR
               value: "$(POD_IP):{{ .Values.manager.port }}"
+            - name: GRL_MAX_CONCURRENT_ENVS
+              value: {{ .Values.manager.maxConcurrentEnvs | quote }}
           ports:
             - name: grpc
               containerPort: {{ .Values.manager.port }}

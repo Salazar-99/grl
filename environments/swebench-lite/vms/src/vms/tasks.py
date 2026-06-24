@@ -28,13 +28,13 @@ SYSTEM_PROMPT = (
     "repository.\n\n"
     "Use the `bash` tool to explore the codebase, make edits, and run commands. "
     "Shell state (working directory, environment variables) persists across "
-    "tool calls. When you are confident the issue is resolved, stop calling "
-    "tools and give a short summary. Do not run the hidden grading tests "
-    "yourself; they are run automatically after you finish."
+    "tool calls. When you are confident the issue is resolved, call the "
+    "`submit` tool to hand off for grading. Do not run the hidden grading "
+    "tests yourself; they are run automatically after you submit."
 )
 
-# OpenAI/Qwen function-call schema for the only tool the in-VM executor
-# implements today (see environments/swebench-lite/env/src/server.rs::parse_tool).
+# OpenAI/Qwen function-call schema for the in-VM bash executor
+# (see environments/swebench-lite/env/src/server.rs::parse_tool).
 BASH_TOOL = {
     "type": "function",
     "function": {
@@ -61,8 +61,23 @@ BASH_TOOL = {
 }
 
 
+SUBMIT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "submit",
+        "description": (
+            "Submit your solution for grading when you believe the issue is fixed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
+
+
 def tool_schemas() -> list[dict]:
-    return [BASH_TOOL]
+    return [BASH_TOOL, SUBMIT_TOOL]
 
 
 def render_messages(row: dict) -> list[dict]:

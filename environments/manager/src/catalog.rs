@@ -6,8 +6,9 @@
 //! `CreateEnvironment`, hands the matching task's `messages`/`tools` back to the
 //! trainer verbatim. They are opaque JSON to the manager.
 //!
-//! The file is provided locally (an init-container or volume mounts the object
-//! `GRL_TASKS_S3_URI` points at). Its path is given by `GRL_TASKS_FILE`.
+//! The file is synced locally by the manager initContainer from ``GRL_BUNDLE_URI``
+//! into ``{GRL_VM_CACHE_DIR}/{GRL_ACTIVE_DIR}/tasks.jsonl``. Its path is given
+//! by ``GRL_TASKS_FILE``.
 
 use std::collections::HashMap;
 
@@ -18,6 +19,8 @@ pub struct TaskSpec {
     pub initial_messages_json: String,
     /// JSON array of tool/function schemas.
     pub tools_json: String,
+    /// Split label from tasks.jsonl (may be empty).
+    pub split: String,
 }
 
 #[derive(Debug, Default)]
@@ -65,11 +68,17 @@ impl Catalog {
                 .get("tools")
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "[]".to_string());
+            let split = row
+                .get("split")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             tasks.insert(
                 task_id,
                 TaskSpec {
                     initial_messages_json,
                     tools_json,
+                    split,
                 },
             );
         }
@@ -86,6 +95,24 @@ impl Catalog {
 
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty()
+    }
+
+    /// Task index for ListTasks. When ``split_filter`` is set, omit other splits.
+    pub fn list_tasks(&self, split_filter: Option<&str>) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .tasks
+            .iter()
+            .filter_map(|(task_id, spec)| {
+                if let Some(want) = split_filter {
+                    if !want.is_empty() && spec.split != want {
+                        return None;
+                    }
+                }
+                Some((task_id.clone(), spec.split.clone()))
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 }
 
@@ -113,5 +140,22 @@ mod tests {
     #[test]
     fn missing_task_id_is_an_error() {
         assert!(Catalog::from_jsonl(r#"{"messages":[]}"#).is_err());
+    }
+
+    #[test]
+    fn list_tasks_filters_by_split() {
+        let jsonl = concat!(
+            r#"{"task_id":"a","split":"dev","messages":[],"tools":[]}"#,
+            "\n",
+            r#"{"task_id":"b","split":"test","messages":[],"tools":[]}"#,
+            "\n",
+            r#"{"task_id":"c","split":"dev","messages":[],"tools":[]}"#,
+            "\n",
+        );
+        let catalog = Catalog::from_jsonl(jsonl).unwrap();
+        let all = catalog.list_tasks(None);
+        assert_eq!(all.len(), 3);
+        let dev = catalog.list_tasks(Some("dev"));
+        assert_eq!(dev, vec![("a".into(), "dev".into()), ("c".into(), "dev".into())]);
     }
 }
