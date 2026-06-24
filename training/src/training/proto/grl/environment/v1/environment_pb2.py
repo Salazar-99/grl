@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$grl/environment/v1/environment.proto\x12\x12grl.environment.v1\"+\n\x18\x43reateEnvironmentRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"+\n\x19\x43reateEnvironmentResponse\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"K\n\x0e\x45xecuteRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x11\n\ttool_name\x18\x02 \x01(\t\x12\x16\n\x0e\x61rguments_json\x18\x03 \x01(\t\"4\n\x0f\x45xecuteResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\t\x12\x10\n\x08is_error\x18\x02 \x01(\x08\"\x1e\n\x0cResetRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x0f\n\rResetResponse\"\x1e\n\x0c\x43loseRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x0f\n\rCloseResponse2\xf6\x02\n\x12\x45nvironmentService\x12p\n\x11\x43reateEnvironment\x12,.grl.environment.v1.CreateEnvironmentRequest\x1a-.grl.environment.v1.CreateEnvironmentResponse\x12R\n\x07\x45xecute\x12\".grl.environment.v1.ExecuteRequest\x1a#.grl.environment.v1.ExecuteResponse\x12L\n\x05Reset\x12 .grl.environment.v1.ResetRequest\x1a!.grl.environment.v1.ResetResponse\x12L\n\x05\x43lose\x12 .grl.environment.v1.CloseRequest\x1a!.grl.environment.v1.CloseResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$grl/environment/v1/environment.proto\x12\x12grl.environment.v1\"+\n\x18\x43reateEnvironmentRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"t\n\x19\x43reateEnvironmentResponse\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x14\n\x0cmanager_addr\x18\x02 \x01(\t\x12\x1d\n\x15initial_messages_json\x18\x03 \x01(\t\x12\x12\n\ntools_json\x18\x04 \x01(\t\"\x1e\n\x0cScoreRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"4\n\rScoreResponse\x12\x0e\n\x06reward\x18\x01 \x01(\x01\x12\x13\n\x0b\x64\x65tail_json\x18\x02 \x01(\t\"K\n\x0e\x45xecuteRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\x12\x11\n\ttool_name\x18\x02 \x01(\t\x12\x16\n\x0e\x61rguments_json\x18\x03 \x01(\t\"4\n\x0f\x45xecuteResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\t\x12\x10\n\x08is_error\x18\x02 \x01(\x08\"\x1e\n\x0cResetRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x0f\n\rResetResponse\"\x1e\n\x0c\x43loseRequest\x12\x0e\n\x06\x65nv_id\x18\x01 \x01(\t\"\x0f\n\rCloseResponse2\xc4\x03\n\x12\x45nvironmentService\x12p\n\x11\x43reateEnvironment\x12,.grl.environment.v1.CreateEnvironmentRequest\x1a-.grl.environment.v1.CreateEnvironmentResponse\x12R\n\x07\x45xecute\x12\".grl.environment.v1.ExecuteRequest\x1a#.grl.environment.v1.ExecuteResponse\x12L\n\x05Score\x12 .grl.environment.v1.ScoreRequest\x1a!.grl.environment.v1.ScoreResponse\x12L\n\x05Reset\x12 .grl.environment.v1.ResetRequest\x1a!.grl.environment.v1.ResetResponse\x12L\n\x05\x43lose\x12 .grl.environment.v1.CloseRequest\x1a!.grl.environment.v1.CloseResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,19 +34,23 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CREATEENVIRONMENTREQUEST']._serialized_start=60
   _globals['_CREATEENVIRONMENTREQUEST']._serialized_end=103
   _globals['_CREATEENVIRONMENTRESPONSE']._serialized_start=105
-  _globals['_CREATEENVIRONMENTRESPONSE']._serialized_end=148
-  _globals['_EXECUTEREQUEST']._serialized_start=150
-  _globals['_EXECUTEREQUEST']._serialized_end=225
-  _globals['_EXECUTERESPONSE']._serialized_start=227
-  _globals['_EXECUTERESPONSE']._serialized_end=279
-  _globals['_RESETREQUEST']._serialized_start=281
-  _globals['_RESETREQUEST']._serialized_end=311
-  _globals['_RESETRESPONSE']._serialized_start=313
-  _globals['_RESETRESPONSE']._serialized_end=328
-  _globals['_CLOSEREQUEST']._serialized_start=330
-  _globals['_CLOSEREQUEST']._serialized_end=360
-  _globals['_CLOSERESPONSE']._serialized_start=362
-  _globals['_CLOSERESPONSE']._serialized_end=377
-  _globals['_ENVIRONMENTSERVICE']._serialized_start=380
-  _globals['_ENVIRONMENTSERVICE']._serialized_end=754
+  _globals['_CREATEENVIRONMENTRESPONSE']._serialized_end=221
+  _globals['_SCOREREQUEST']._serialized_start=223
+  _globals['_SCOREREQUEST']._serialized_end=253
+  _globals['_SCORERESPONSE']._serialized_start=255
+  _globals['_SCORERESPONSE']._serialized_end=307
+  _globals['_EXECUTEREQUEST']._serialized_start=309
+  _globals['_EXECUTEREQUEST']._serialized_end=384
+  _globals['_EXECUTERESPONSE']._serialized_start=386
+  _globals['_EXECUTERESPONSE']._serialized_end=438
+  _globals['_RESETREQUEST']._serialized_start=440
+  _globals['_RESETREQUEST']._serialized_end=470
+  _globals['_RESETRESPONSE']._serialized_start=472
+  _globals['_RESETRESPONSE']._serialized_end=487
+  _globals['_CLOSEREQUEST']._serialized_start=489
+  _globals['_CLOSEREQUEST']._serialized_end=519
+  _globals['_CLOSERESPONSE']._serialized_start=521
+  _globals['_CLOSERESPONSE']._serialized_end=536
+  _globals['_ENVIRONMENTSERVICE']._serialized_start=539
+  _globals['_ENVIRONMENTSERVICE']._serialized_end=991
 # @@protoc_insertion_point(module_scope)

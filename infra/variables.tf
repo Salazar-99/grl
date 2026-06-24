@@ -94,6 +94,12 @@ variable "environment_nodes" {
   }
 }
 
+variable "vm_images_bucket" {
+  type        = string
+  default     = ""
+  description = "S3 bucket holding Firecracker VM artifacts (kernel/, bases/, tasks/, manifest.json) — must match the VMS_S3_BUCKET used by environments/swebench-lite/vms uploads. Empty disables the vm-image-cache DaemonSet and its IAM policy."
+}
+
 variable "opentelemetry_operator_chart_version" {
   type        = string
   default     = null
@@ -142,10 +148,10 @@ variable "ray_training_image" {
   description = "Ray container image used by training (GPU) worker pods."
 }
 
-variable "ray_environment_image" {
+variable "manager_image" {
   type        = string
-  default     = "grl-training:environment"
-  description = "Ray container image used by environment worker pods."
+  default     = "grl-manager:latest"
+  description = "Environment manager image run as a DaemonSet on environment nodes (environments/manager/Dockerfile)."
 }
 
 variable "ray_version" {

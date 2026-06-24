@@ -18,6 +18,12 @@ variable "node_subnet_ids" {
   description = "Subnets for node groups (typically private)."
 }
 
+variable "vm_images_bucket" {
+  type        = string
+  default     = ""
+  description = "S3 bucket holding Firecracker VM artifacts. When set, the node role gets read access so the vm-image-cache DaemonSet can sync it. Empty skips the policy."
+}
+
 variable "ray" {
   description = "Node group running the Ray head and CPU worker pods."
   type = object({

@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package grl.environment.v1;
+
+// EnvironmentService manages Firecracker-backed SWE-bench environments.
+service EnvironmentService {
+  rpc CreateEnvironment(CreateEnvironmentRequest) returns (CreateEnvironmentResponse);
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  // Score evaluates the current state of an environment and returns the
+  // task reward. The environment is the source of truth for its own reward
+  // (e.g. running the held-out test suite for a SWE-bench task), so scoring
+  // happens inside the env executor and the manager only relays the result.
+  rpc Score(ScoreRequest) returns (ScoreResponse);
+  rpc Reset(ResetRequest) returns (ResetResponse);
+  rpc Close(CloseRequest) returns (CloseResponse);
+}
+
+message CreateEnvironmentRequest {
+  string task_id = 1;
+}
+
+message CreateEnvironmentResponse {
+  string env_id = 1;
+  // Direct address ("host:port") of the manager instance that owns this
+  // environment. Clients re-dial it for all subsequent calls on this env so
+  // routing survives connection resets behind a load-balanced Service.
+  // Empty means: keep using the address you dialed.
+  string manager_addr = 2;
+  // The environment renders the task's opening prompt and tool schemas so the
+  // trainer stays environment-agnostic: it never parses SWE-bench rows, it just
+  // forwards these to the policy. Both are JSON the client hands to the chat
+  // template verbatim.
+  //   initial_messages_json: a JSON array of OpenAI-style chat messages.
+  //   tools_json: a JSON array of tool/function schemas.
+  string initial_messages_json = 3;
+  string tools_json = 4;
+}
+
+message ScoreRequest {
+  string env_id = 1;
+}
+
+message ScoreResponse {
+  // Scalar task reward (e.g. 1.0 if the SWE-bench instance is resolved, else 0.0).
+  double reward = 1;
+  // Optional JSON breakdown for logging/curriculum (per-test results, counts).
+  string detail_json = 2;
+}
+
+message ExecuteRequest {
+  string env_id = 1;
+  string tool_name = 2;
+  string arguments_json = 3;
+}
+
+message ExecuteResponse {
+  string content = 1;
+  bool is_error = 2;
+}
+
+message ResetRequest {
+  string env_id = 1;
+}
+
+message ResetResponse {}
+
+message CloseRequest {
+  string env_id = 1;
+}
+
+message CloseResponse {}

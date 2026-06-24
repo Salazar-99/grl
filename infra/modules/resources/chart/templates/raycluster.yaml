@@ -61,6 +61,10 @@ spec:
                   value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
                 - name: GRL_VLLM_METRICS_PORT
                   value: {{ .Values.rayCluster.workers.rollouts.vllmMetricsPort | quote }}
+                # RolloutWorker opens one gRPC channel per environment to the
+                # manager Service; the connection pins each env to one manager pod.
+                - name: GRL_ENV_SERVER_ADDR
+                  value: {{ .Values.manager.name }}.{{ .Values.manager.namespace }}.svc:{{ .Values.manager.port }}
               ports:
                 - name: vllm-metrics
                   containerPort: {{ .Values.rayCluster.workers.rollouts.vllmMetricsPort }}
@@ -105,28 +109,3 @@ spec:
                   cpu: "4"
                   memory: 16Gi
                   nvidia.com/gpu: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
-    - groupName: environment
-      replicas: 1
-      minReplicas: 1
-      maxReplicas: 3
-      rayStartParams:
-        num-cpus: "1"
-        resources: '{"environment": 1}'
-        metrics-export-port: "8080"
-      template:
-        spec:
-          nodeSelector:
-            role: environment
-          containers:
-            - name: ray-worker
-              image: {{ .Values.rayCluster.images.environment | quote }}
-              env:
-                - name: OTEL_EXPORTER_OTLP_ENDPOINT
-                  value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
-              resources:
-                requests:
-                  cpu: "1"
-                  memory: 2Gi
-                limits:
-                  cpu: "2"
-                  memory: 4Gi

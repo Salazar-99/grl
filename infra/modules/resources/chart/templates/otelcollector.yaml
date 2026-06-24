@@ -88,9 +88,11 @@ spec:
       batch: {}
     exporters:
       # Forward everything to the external collector VM, which owns the
-      # ClickHouse export. TLS (system CAs) + basic auth; queue + retry so
-      # brief VM outages don't drop data.
-      otlp:
+      # ClickHouse export. It only exposes an OTLP/HTTP receiver (gRPC is
+      # disabled there), reached through the otel.gerardosalazar.com ingress:
+      # TLS (system CAs) + basic auth; queue + retry so brief VM outages don't
+      # drop data.
+      otlphttp:
         endpoint: {{ .Values.otelCollector.upstream.endpoint | quote }}
         auth:
           authenticator: basicauth/upstream
@@ -111,7 +113,7 @@ spec:
             - memory_limiter
             - batch
           exporters:
-            - otlp
+            - otlphttp
         metrics:
           receivers:
             - otlp
@@ -120,7 +122,7 @@ spec:
             - memory_limiter
             - batch
           exporters:
-            - otlp
+            - otlphttp
         logs:
           receivers:
             - otlp
@@ -128,4 +130,4 @@ spec:
             - memory_limiter
             - batch
           exporters:
-            - otlp
+            - otlphttp

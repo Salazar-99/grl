@@ -4,7 +4,7 @@ RL loop orchestration (Ray rollouts, rewards, model updates).
 
 ## Proto
 
-Python gRPC stubs are generated from the shared contract at [`../proto/grl/environment/v1/environment.proto`](../proto/grl/environment/v1/environment.proto).
+Python gRPC stubs are generated from the shared contract at [`../environments/proto/grl/environment/v1/environment.proto`](../environments/proto/grl/environment/v1/environment.proto).
 
 ```bash
 uv sync --group dev
@@ -20,7 +20,6 @@ it runs in a container spawned from an image with the minimal dependency set nee
 
 ```sh
 docker build --target head -t grl-training:head .
-docker build --target environment -t grl-training:environment .
 docker build --target training -t grl-training:training .
 docker build --target rollouts -t grl-training:rollouts .
 ```

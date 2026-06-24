@@ -1,0 +1,76 @@
+{{- if .Values.vmImageCache.bucket }}
+# Pre-pulls Firecracker VM artifacts (guest kernel, base/task ext4 images,
+# manifest) from S3 onto each environment node's local disk, so the manager
+# can boot microVMs from local files without touching S3 on the hot path.
+#
+# The sync runs in an initContainer: the pod only reaches Running once the
+# cache is warm, and a failed sync retries from where it left off (s5cmd sync
+# skips objects already on disk). The manager gates its own startup on the
+# .ready sentinel written after a complete sync.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vm-image-cache
+  namespace: {{ .Values.vmImageCache.namespace | quote }}
+  labels:
+    app: vm-image-cache
+spec:
+  selector:
+    matchLabels:
+      app: vm-image-cache
+  template:
+    metadata:
+      labels:
+        app: vm-image-cache
+    spec:
+      nodeSelector:
+        role: environment
+      initContainers:
+        - name: sync
+          image: {{ .Values.vmImageCache.image | quote }}
+          env:
+            # s5cmd resolves credentials from the node role via IMDS, but
+            # does not resolve the region from it; set it explicitly.
+            - name: AWS_REGION
+              value: {{ .Values.vmImageCache.region | quote }}
+            - name: BUCKET
+              value: {{ .Values.vmImageCache.bucket | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              rm -f /data/.ready
+              mkdir -p /data/kernel /data/images/bases /data/images/tasks
+              /s5cmd sync "s3://${BUCKET}/kernel/*" /data/kernel/
+              /s5cmd sync "s3://${BUCKET}/bases/*"  /data/images/bases/
+              /s5cmd sync "s3://${BUCKET}/tasks/*"  /data/images/tasks/
+              /s5cmd cp   "s3://${BUCKET}/manifest.json" /data/
+              touch /data/.ready
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 1Gi
+          volumeMounts:
+            - name: cache
+              mountPath: /data
+      containers:
+        # All work happens in the initContainer; this keeps the pod Running
+        # so `kubectl get pods` shows which nodes have a warm cache.
+        - name: pause
+          image: {{ .Values.vmImageCache.pauseImage | quote }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: cache
+          hostPath:
+            path: {{ .Values.vmImageCache.hostPath | quote }}
+            type: DirectoryOrCreate
+{{- end }}

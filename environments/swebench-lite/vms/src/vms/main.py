@@ -8,10 +8,16 @@ from vms.dataset import DEFAULT_DATASET, load_tasks
 from vms.dockerfile import render_dockerfile, slug
 from vms.manifest import resolve, write_manifest
 from vms.requirements import fetch_requirements
-from vms.upload import upload_all
+from vms.tasks import write_tasks_jsonl
+from vms.upload import upload_all, upload_tasks_file
 from vms.versions import MAP_REPO_VERSION_TO_SPECS_PY
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def split_name(dataset: Path) -> str:
+    """dev.parquet -> "dev"; the tasks.jsonl split label and S3 path segment."""
+    return dataset.stem
 
 
 def load_envs(tasks: list[dict]) -> dict[tuple[str, str], dict]:
@@ -85,6 +91,16 @@ def main() -> None:
     manifest_cmd.add_argument("--base-images-dir", default="base-images")
     manifest_cmd.add_argument("--task-images-dir", default="task-images")
 
+    tasks_jsonl_cmd = sub.add_parser(
+        "tasks", help="render tasks.jsonl (prompts + tools) for the trainer"
+    )
+    tasks_jsonl_cmd.add_argument("--output", type=Path, default=ROOT / "tasks.jsonl")
+    tasks_jsonl_cmd.add_argument(
+        "--upload",
+        action="store_true",
+        help="also upload tasks.jsonl to S3 under datasets/swebench-lite/<split>/",
+    )
+
     lookup = sub.add_parser("resolve", help="look up images for a task id")
     lookup.add_argument("task_id")
     lookup.add_argument("--manifest", type=Path, default=ROOT / "manifest.json")
@@ -133,15 +149,26 @@ def main() -> None:
     base_images = ROOT / "base-images"
     task_images = ROOT / "task-images"
 
+    tasks_jsonl = ROOT / "tasks.jsonl"
+    split = split_name(args.dataset)
+
     if args.command is None:
         generate(tasks, dockerfiles, manifest)
         build_all(dockerfiles, base_images, platform=args.platform, force=args.force)
         build_all_tasks(
             args.dataset, task_images, platform=args.platform, force=args.force
         )
+        write_tasks_jsonl(tasks, split, tasks_jsonl)
         upload_all(base_images, task_images, force=args.force, jobs=args.upload_jobs)
+        upload_tasks_file(tasks_jsonl, split=split, force=args.force)
     elif args.command == "generate":
         generate(tasks, args.output, args.manifest)
+    elif args.command == "tasks":
+        write_tasks_jsonl(tasks, split, args.output)
+        print(f"wrote {args.output}")
+        if args.upload:
+            uri = upload_tasks_file(args.output, split=split)
+            print(f"uploaded {uri}")
     elif args.command == "manifest":
         write_manifest(
             tasks,

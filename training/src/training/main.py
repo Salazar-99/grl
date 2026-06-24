@@ -1,48 +1,56 @@
+import argparse
 import asyncio
+import random
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 import ray
 
-from training.environments import EnvironmentWorker
+from training.config import DEFAULT_CONFIG_PATH, GRLConfig
+from training.dataset import Task, load_tasks
 from training.rollouts import RolloutRequest, RolloutResult, RolloutWorker
+from training.telemetry import init_telemetry
 from training.trainer import TrainingBatch, TrainingWorker
 
 
 @dataclass
 class GRPOGroupRequest:
+    # The environment renders the prompt and tools from this task_id, so the
+    # group request only needs the task identity and sampling knobs.
     task_id: str
-    messages: list[dict[str, Any]]
     num_rollouts: int = 8
     sampling_params: dict[str, Any] | None = None
-    tools: list[dict[str, Any]] | None = None
 
 
 async def _get(ref: ray.ObjectRef) -> Any:
     return await asyncio.to_thread(ray.get, ref)
 
 
-async def rollout_submitter_loop(
+async def rollout_loop(
     pending_tasks: asyncio.Queue[GRPOGroupRequest],
     completed_rollouts: asyncio.Queue[RolloutResult],
-    rollout_worker: ray.actor.ActorHandle,
+    rollout_workers: list[ray.actor.ActorHandle],
     *,
     max_in_flight: int,
 ) -> None:
     in_flight = asyncio.Semaphore(max_in_flight)
+    next_worker = 0
 
-    async def run_one(request: RolloutRequest) -> None:
+    async def run_one(
+        worker: ray.actor.ActorHandle,
+        request: RolloutRequest,
+    ) -> None:
         async with in_flight:
             try:
-                result = await _get(rollout_worker.run_rollout.remote(request))
+                result = await _get(worker.run_rollout.remote(request))
                 await completed_rollouts.put(result)
             except Exception as exc:
                 await completed_rollouts.put(
                     RolloutResult(
                         group_id=request.group_id,
                         task_id=request.task_id,
-                        env_id=request.env_id,
+                        env_id="",
                         rollout_index=request.rollout_index,
                         expected_group_size=request.expected_group_size,
                         policy_version=request.policy_version,
@@ -50,36 +58,61 @@ async def rollout_submitter_loop(
                         prompt_ids=[],
                         response_ids=[],
                         response_mask=[],
+                        inference_logprobs=[],
                         num_turns=0,
                         done_reason=f"error: {exc}",
                     )
                 )
-            finally:
-                await _get(request.env_actor.reset.remote())
 
     while True:
         group = await pending_tasks.get()
+        worker = rollout_workers[next_worker % len(rollout_workers)]
+        next_worker += 1
         group_id = uuid.uuid4().hex
-        policy_version = await _get(rollout_worker.get_policy_version.remote())
+        policy_version = await _get(worker.get_policy_version.remote())
 
         for rollout_index in range(group.num_rollouts):
-            env_id = f"{group.task_id}:{group_id}:{rollout_index}"
-            env_actor = EnvironmentWorker.remote(group.task_id, env_id)
             request = RolloutRequest(
                 group_id=group_id,
                 task_id=group.task_id,
-                env_id=env_id,
-                env_actor=env_actor,
-                messages=group.messages,
                 rollout_index=rollout_index,
                 expected_group_size=group.num_rollouts,
                 policy_version=policy_version,
                 sampling_params=group.sampling_params or {},
-                tools=group.tools,
             )
-            asyncio.create_task(run_one(request))
+            asyncio.create_task(run_one(worker, request))
 
         pending_tasks.task_done()
+
+
+async def task_loop(
+    pending_tasks: asyncio.Queue[GRPOGroupRequest],
+    tasks: list[Task],
+    *,
+    num_rollouts: int,
+    sampling_params: dict[str, Any],
+    seed: int,
+) -> None:
+    """Stream GRPO groups, one per task, reshuffling each epoch.
+
+    Reading the task set as a static index lets us shuffle deterministically and
+    backpressure on ``pending_tasks`` (the queue's maxsize) instead of flooding
+    the rollout workers.
+    """
+    if not tasks:
+        raise RuntimeError("no tasks to train on")
+    rng = random.Random(seed)
+    order = list(tasks)
+    while True:
+        rng.shuffle(order)
+        for task in order:
+            await pending_tasks.put(
+                GRPOGroupRequest(
+                    task_id=task.task_id,
+                    num_rollouts=num_rollouts,
+                    sampling_params=sampling_params,
+                )
+            )
 
 
 async def batcher_loop(
@@ -117,39 +150,87 @@ async def batcher_loop(
 
 async def trainer_loop(
     train_batches: asyncio.Queue[TrainingBatch],
-    training_worker: ray.actor.ActorHandle,
+    training_workers: list[ray.actor.ActorHandle],
     rollout_workers: list[ray.actor.ActorHandle],
 ) -> None:
+    next_worker = 0
     while True:
         batch = await train_batches.get()
-        await _get(training_worker.train_batch.remote(batch, rollout_workers))
+        worker = training_workers[next_worker % len(training_workers)]
+        next_worker += 1
+        await _get(worker.train_batch.remote(batch, rollout_workers))
         train_batches.task_done()
 
 
-async def run() -> None:
-    ray.init(ignore_reinit_error=True)
+async def run(config: GRLConfig, run_id: str) -> None:
+    ray.init(ignore_reinit_error=config.ray.ignore_reinit_error)
 
-    rollout_worker = RolloutWorker.remote()
-    training_worker = TrainingWorker.remote()
+    config_payload = config.model_dump()
+    rollout_workers = [
+        RolloutWorker.remote(config_payload, run_id=run_id)
+        for _ in range(config.workers.num_rollout_workers)
+    ]
+    training_workers = [
+        TrainingWorker.remote(config_payload, run_id=run_id)
+        for _ in range(config.workers.num_training_workers)
+    ]
 
-    pending_tasks: asyncio.Queue[GRPOGroupRequest] = asyncio.Queue(maxsize=64)
-    completed_rollouts: asyncio.Queue[RolloutResult] = asyncio.Queue(maxsize=256)
-    train_batches: asyncio.Queue[TrainingBatch] = asyncio.Queue(maxsize=16)
+    # The environment's tasks.jsonl is the task index; the env itself renders
+    # each task's prompt/tools at CreateEnvironment time.
+    tasks = await asyncio.to_thread(
+        load_tasks,
+        config.dataset.tasks_s3_uri or "",
+        split=config.dataset.split,
+    )
 
+    pipeline = config.pipeline
+    pending_tasks: asyncio.Queue[GRPOGroupRequest] = asyncio.Queue(
+        maxsize=pipeline.pending_tasks_queue_size
+    )
+    completed_rollouts: asyncio.Queue[RolloutResult] = asyncio.Queue(
+        maxsize=pipeline.completed_rollouts_queue_size
+    )
+    train_batches: asyncio.Queue[TrainingBatch] = asyncio.Queue(
+        maxsize=pipeline.train_batches_queue_size
+    )
+
+    grpo = config.grpo
     await asyncio.gather(
-        rollout_submitter_loop(
+        task_loop(
+            pending_tasks,
+            tasks,
+            num_rollouts=grpo.num_rollouts,
+            sampling_params=grpo.sampling_params(),
+            seed=pipeline.seed,
+        ),
+        rollout_loop(
             pending_tasks,
             completed_rollouts,
-            rollout_worker,
-            max_in_flight=32,
+            rollout_workers,
+            max_in_flight=config.workers.max_in_flight_rollouts,
         ),
-        batcher_loop(completed_rollouts, train_batches, groups_per_batch=4),
-        trainer_loop(train_batches, training_worker, [rollout_worker]),
+        batcher_loop(
+            completed_rollouts,
+            train_batches,
+            groups_per_batch=grpo.groups_per_batch,
+        ),
+        trainer_loop(train_batches, training_workers, rollout_workers),
     )
 
 
 def main() -> None:
-    asyncio.run(run())
+    parser = argparse.ArgumentParser(description="Run GRL training")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to the training YAML config",
+    )
+    args = parser.parse_args()
+
+    config = GRLConfig.from_yaml(args.config)
+    run_id = config.resolve_run_id()
+    init_telemetry("head", run_id, otel_endpoint=config.telemetry.otel_endpoint)
+    asyncio.run(run(config, run_id))
 
 
 if __name__ == "__main__":

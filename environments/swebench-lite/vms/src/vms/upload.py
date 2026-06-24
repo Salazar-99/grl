@@ -11,6 +11,9 @@ from botocore.exceptions import ClientError
 
 BASES_PREFIX = "bases"
 TASKS_PREFIX = "tasks"
+# The trainer dataset (tasks.jsonl) lives under its own prefix, separate from
+# the task disk images under TASKS_PREFIX.
+DATASETS_PREFIX = "datasets"
 DEFAULT_UPLOAD_JOBS = 4
 MULTIPART_CHUNK_SIZE = 64 * 1024 * 1024
 
@@ -180,6 +183,26 @@ def upload_dir(
         force=force,
         jobs=default_upload_jobs() if jobs is None else jobs,
     )
+
+
+def upload_tasks_file(path: Path, *, split: str, force: bool = False) -> str:
+    """Upload tasks.jsonl to s3://$VMS_S3_BUCKET/datasets/swebench-lite/<split>/tasks.jsonl.
+
+    Returns the s3:// URI, which is what the trainer's GRL_TASKS_S3_URI points at.
+    """
+    if not path.is_file():
+        raise SystemExit(f"tasks file not found: {path}")
+    bucket, region = s3_config()
+    key = f"{DATASETS_PREFIX}/swebench-lite/{split}/tasks.jsonl"
+    s3 = _s3_client(region)
+    size = path.stat().st_size
+    uri = f"s3://{bucket}/{key}"
+    if not force and _object_exists(s3, bucket, key, size):
+        _log(f"upload: {uri} (skip)")
+        return uri
+    _log(f"upload: {uri} ({_format_size(size)})")
+    s3.upload_file(str(path), bucket, key, Config=_transfer_config)
+    return uri
 
 
 def upload_all(

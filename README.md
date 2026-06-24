@@ -7,31 +7,32 @@ Distributed, async RLVR system for LLM post-training. It trains an open-weights 
 - **Ray (KubeRay on EKS)** for distributed orchestration, each workload type runs as Ray actors on their own node group
 - **vLLM** for rollout generation: async engine with continuous batching driving the agent loops
 - **PyTorch / Hugging Face** for the GRPO trainer and model loading
-- **Rust gRPC server + Firecracker VMs** for stateful environments. We create one microVM per rollout booted from prebuilt images with an in-VM executor for running tool calls
-- **Protobuf** to form a single API contract between rollout workers (Python) and the environment server (Rust)
+- **Rust gRPC manager + Firecracker VMs** for stateful environments. We create one microVM per rollout booted from prebuilt images with an in-VM executor for running tool calls
+- **Protobuf** to form a single API contract between rollout workers (Python) and the environment manager (Rust)
 - **OTel Collector → ClickHouse → Grafana** as an external observability pipeline. We collect metrics from Ray, vLLM, DCGM (GPUs), and manually instrumented training code and forward them to a remote OTel Collector
 
 ## Project Structure
 
 ```
 grl/
-├── proto/
-│   └── grl/environment/v1/    # gRPC API contract (source of truth for both sides)
 ├── environments/
+│   ├── proto/
+│   │   └── grl/environment/v1/  # gRPC API contract (source of truth for both sides)
+│   ├── manager/               # Shared Rust gRPC `manager` to handle the VM lifecycle + tool call dispatch
+│   │                          #   (environment-agnostic; one binary serves every environment)
 │   └── swebench-lite/         # Everything needed to build Firecracker VM environments for this benchmark
 │       ├── data/              # SWE-bench-Lite dataset
 │       ├── vms/               # Python tooling: builds Firecracker ext4 base/task images,
 │       │                      #   writes manifest.json, uploads them to S3
-│       └── server/            # A Rust gRPC `server` to handle the VM lifecycle + tool call dispatch
-│                              #   and in-VM `executor` binary to run the tool calls inside the VM in a persistent TTY
+│       └── env/               # In-VM `env` executor binary that implements this environment's tools
+│                              #   and runs them inside the VM in a persistent TTY
 |
 ├── training/                  # Core RL training loop on Ray
 │   └── src/training/
 │       ├── main.py            # Main async pipeline: submitter → batcher → trainer loops
 │       ├── rollouts.py        # RolloutWorker: vLLM async engine + multi-turn agent loop
 │       ├── trainer.py         # TrainingWorker: GRPO updates, weight publishing
-│       ├── environments.py    # EnvironmentWorker: Ray actor fronting the gRPC server
-│       ├── grpc_client.py     # async gRPC client for EnvironmentService
+│       ├── environments.py    # EnvironmentSession: gRPC client for EnvironmentService (one channel per env)
 │       └── proto/             # generated Python stubs for gRPC client
 |
 └── infra/                     # Terraform module with submodules to provision a VPC, EKS cluster, and Helm charts with grl specific config
@@ -53,10 +54,10 @@ The binding is a **custom Ray resource**: each worker group advertises a uniquel
 | `ray` | `ray` | head group | — | (Ray head) | `head` |
 | `rollouts` | `rollouts` | `rollouts` | `{"rollouts": N}` | `RolloutWorker` (vLLM inference) | `rollouts` |
 | `training` | `training` | `training` | `{"training": N}` | `TrainingWorker` (GRPO) | `training` |
-| `environment` | `environment` | `environment` | `{"environment": 1}` | `EnvironmentWorker` (gRPC → Firecracker) | `environment` |
+| `environment` | `environment` | — (not in the Ray cluster) | — | `manager` DaemonSet (gRPC → Firecracker) | `grl-manager` |
 
 - **GPU groups** (`rollouts`, `training`) carry the `nvidia.com/gpu` taint, so only GPU pods land on them. `N` is the GPUs advertised per node — derived automatically from the chosen instance type via a lookup map in [`infra/locals.tf`](infra/locals.tf), so picking an 8-GPU instance advertises 8 without editing the chart. The `training` group needs ≥2 GPUs (policy on `cuda:0`, reference model on `cuda:1`).
-- **`environment` group** uses bare-metal (`.metal`) instances because Firecracker needs `/dev/kvm`; nodes are labeled `kvm=true` and a variable validation enforces `.metal`.
+- **`environment` group** uses bare-metal (`.metal`) instances because Firecracker needs `/dev/kvm`; nodes are labeled `kvm=true` and a variable validation enforces `.metal`. These nodes don't run Ray: the Rust `manager` runs as a plain Kubernetes DaemonSet (one pod per node) and rollout workers reach it directly over gRPC through the `grl-manager` Service.
 - **Sizing** (instance types, AMI, disk, scaling) for each group is set from the root module via the `ray_nodes`, `rollouts_nodes`, `training_nodes`, and `environment_nodes` variables ([`infra/variables.tf`](infra/variables.tf)).
 
 The mapping is defined in three places that must agree on the names: the EKS node groups ([`infra/modules/cluster`](infra/modules/cluster)), the RayCluster worker groups ([`infra/modules/resources/chart/templates/raycluster.yaml`](infra/modules/resources/chart/templates/raycluster.yaml)), and the actor decorators in [`training/src/training/`](training/src/training/). Per-role images are built from [`training/Dockerfile`](training/Dockerfile) (one build target per role, each installing only that role's `uv` extra).
@@ -67,26 +68,25 @@ The mapping is defined in three places that must agree on the names: the EKS nod
 
 ## Proto
 
-The environment server (Rust) and training workers (Python) communicate over gRPC. The API contract is defined once in protobuf and compiled into language-specific stubs on each side.
+The environment manager (Rust) and training workers (Python) communicate over gRPC. The API contract is defined once in protobuf and compiled into language-specific stubs on each side.
 
-**Source of truth:** [`proto/grl/environment/v1/environment.proto`](proto/grl/environment/v1/environment.proto)
+**Source of truth:** [`environments/proto/grl/environment/v1/environment.proto`](environments/proto/grl/environment/v1/environment.proto)
 
 That file defines `EnvironmentService` — the RPCs used to create environments, execute tools inside a VM, reset, and tear down. Both services depend on this file, not on each other's generated code.
 
 **How it fits together:**
 
 ```
-RolloutWorker (GPU, Python)
-  └─ Ray ─► EnvironmentWorker (CPU, Python)  ──gRPC──►  server (Rust)  ──►  Firecracker VM + executor
+RolloutWorker (GPU, Python)  ──gRPC──►  manager (Rust, DaemonSet)  ──►  Firecracker VM + env executor
 ```
 
-During rollouts, `RolloutWorker` dispatches tool calls to a colocated `EnvironmentWorker` Ray actor. The worker is a gRPC client (`training/grpc_client.py`) that calls the Rust `server` binary, which manages the backing VM.
+During rollouts, `RolloutWorker` creates one environment per trajectory (`EnvironmentSession` in `training/environments.py`) and dispatches tool calls to it over gRPC. Each session holds its own channel, so all calls for an environment reach the manager pod that owns its VM.
 
 **Codegen:**
 
 | Language | Tool | Output |
 |----------|------|--------|
-| Rust | `tonic-build` in `environments/swebench-lite/server/build.rs` | compiled into the server crate at build time |
+| Rust | `tonic-build` in `environments/manager/build.rs` | compiled into the manager crate at build time |
 | Python | `uv run generate-proto` in `training/` | `training/src/training/proto/` (checked in) |
 
 Rust uses a vendored `protoc` binary, so no system install is required. Python codegen uses the `generate-proto` console script in the training package:
@@ -97,22 +97,21 @@ uv sync --group dev
 uv run generate-proto
 ```
 
-**Configuration:** set `GRL_ENV_SERVER_ADDR` to point the Python client at the server (default `localhost:50051`; the server listens on `0.0.0.0:50051`).
+**Configuration:** set `GRL_ENV_SERVER_ADDR` to point the Python client at the manager (default `localhost:50051`; the manager listens on `0.0.0.0:50051`).
 
 **When you change the proto:**
 
-1. Edit `proto/grl/environment/v1/environment.proto`.
+1. Edit `environments/proto/grl/environment/v1/environment.proto`.
 2. Regenerate Python stubs: `uv run generate-proto` (from `training/`).
-3. Rebuild the Rust server: `cargo build --bin server` (runs `tonic-build` automatically).
-4. Update the Rust service impl in `environments/swebench-lite/server/src/environment.rs` and the Python client in `training/src/training/grpc_client.py`.
+3. Rebuild the Rust manager: `cargo build` (from `environments/manager/`; runs `tonic-build` automatically).
+4. Update the Rust service impl in `environments/manager/src/environment.rs` and the Python client in `training/src/training/environments.py`.
 
 For breaking API changes, bump the package version (e.g. `grl.environment.v2`) rather than modifying `v1` in place.
 
 **What to do next:**
 
-- Implement `EnvironmentService` in Rust — wire `CreateEnvironment`, `Execute`, `Reset`, and `Close` to Firecracker VM lifecycle and the in-VM `executor` binary.
-- Call `CreateEnvironment` / `Reset` / `Close` from `EnvironmentWorker` instead of the remaining TODOs in `training/src/training/environments.py`.
-- Add integration tests that start the server and exercise the RPCs from Python.
+- Implement `EnvironmentService` in Rust — wire `CreateEnvironment`, `Execute`, `Reset`, and `Close` to Firecracker VM lifecycle and the in-VM `env` executor binary.
+- Add integration tests that start the manager and exercise the RPCs from Python.
 - Once the API stabilizes, consider adding [Buf](https://buf.build) at the repo root for linting and breaking-change detection.
 
 ## Observability

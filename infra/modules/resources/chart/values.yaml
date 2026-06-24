@@ -6,7 +6,6 @@ rayCluster:
     head: grl-training:head
     rollouts: grl-training:rollouts
     training: grl-training:training
-    environment: grl-training:environment
   workers:
     rollouts:
       gpusPerNode: 1
@@ -22,10 +21,34 @@ otelCollector:
   # External collector VM (owns the ClickHouse export). Always TLS with
   # basic auth; credentials are injected from Terraform variables.
   upstream:
-    endpoint: otel.gerardosalazar.com:4317
+    # OTLP/HTTP via the ingress (TLS on 443, routed to the collector's :4318).
+    # The otlphttp exporter appends /v1/{traces,metrics,logs}.
+    endpoint: https://otel.gerardosalazar.com
     username: ""
     password: ""
 
 dcgmExporter:
   namespace: default
   image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+
+# Environment-agnostic Rust gRPC server (environments/manager/Dockerfile).
+# Runs as a DaemonSet: one pod per environment node, booting Firecracker VMs
+# from the vmImageCache hostPath. Rollout workers reach it through a ClusterIP
+# Service.
+manager:
+  name: grl-manager
+  namespace: default
+  image: grl-manager:latest
+  port: 50051
+
+vmImageCache:
+  namespace: default
+  # S3 bucket holding VM artifacts (the vms tooling's VMS_S3_BUCKET).
+  # Empty disables the DaemonSet; injected from Terraform variables.
+  bucket: ""
+  region: us-west-2
+  image: peakcom/s5cmd:v2.3.0
+  pauseImage: registry.k8s.io/pause:3.10
+  # Node-local cache directory; the manager mounts this read-only and boots
+  # Firecracker VMs from it.
+  hostPath: /var/lib/grl

@@ -13,11 +13,8 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
 
 FROM base AS head
-RUN uv sync --extra environment --no-dev --locked --no-cache
+RUN uv sync --no-dev --locked --no-cache
 CMD ["training"]
-
-FROM base AS environment
-RUN uv sync --extra environment --no-dev --locked --no-cache
 
 FROM base AS training
 RUN uv sync --extra training --no-dev --locked --no-cache

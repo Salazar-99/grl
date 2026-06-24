@@ -1,0 +1,45 @@
+model:
+  path: /models/Qwen2.5-7B
+
+grpo:
+  beta: 0.001
+  epsilon: 0.2
+  learning_rate: 1.0e-6
+  num_rollouts: 8
+  groups_per_batch: 4
+  temperature: 1.0
+  top_p: 1.0
+
+workers:
+  num_rollout_workers: 1
+  num_training_workers: 1
+  max_in_flight_rollouts: 32
+
+rollout:
+  max_model_len: 8192
+  max_num_seqs: 64
+  max_concurrent_trajectories: 32
+  max_tokens_per_turn: 512
+  max_assistant_turns: 8
+  enable_prefix_caching: true
+  vllm_metrics_port: 9090
+
+pipeline:
+  pending_tasks_queue_size: 64
+  completed_rollouts_queue_size: 256
+  train_batches_queue_size: 16
+  seed: 0
+
+dataset:
+  tasks_s3_uri: null
+  split: null
+
+environment:
+  server_addr: localhost:50051
+
+telemetry:
+  run_id: null
+  otel_endpoint: null
+
+ray:
+  ignore_reinit_error: true

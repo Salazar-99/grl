@@ -1,0 +1,80 @@
+# Environment manager: the shared, environment-agnostic gRPC server that owns
+# Firecracker VM lifecycle and tool call dispatch (environments/manager/).
+#
+# One pod per environment node (DaemonSet), since capacity is a property of
+# the node (/dev/kvm, memory for microVMs, the local VM image cache). Rollout
+# workers connect through the ClusterIP Service below with one gRPC channel
+# per environment: a channel is a single TCP connection, so kube-proxy pins
+# each environment to one manager pod while spreading environments across pods.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.manager.name | quote }}
+  namespace: {{ .Values.manager.namespace | quote }}
+  labels:
+    app: {{ .Values.manager.name | quote }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.manager.name | quote }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.manager.name | quote }}
+    spec:
+      nodeSelector:
+        role: environment
+      containers:
+        - name: manager
+          image: {{ .Values.manager.image | quote }}
+          env:
+            - name: GRL_ENV_SERVER_ADDR
+              value: 0.0.0.0:{{ .Values.manager.port }}
+            - name: GRL_VM_CACHE_DIR
+              value: {{ .Values.vmImageCache.hostPath | quote }}
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Returned in CreateEnvironmentResponse.manager_addr; clients
+            # re-dial this pod directly for the environment's lifetime instead
+            # of relying on the Service connection staying pinned.
+            - name: GRL_MANAGER_ADVERTISE_ADDR
+              value: "$(POD_IP):{{ .Values.manager.port }}"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.manager.port }}
+          # Firecracker needs /dev/kvm and tap devices on the host.
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: vm-cache
+              mountPath: {{ .Values.vmImageCache.hostPath | quote }}
+              readOnly: true
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+      volumes:
+        - name: vm-cache
+          hostPath:
+            path: {{ .Values.vmImageCache.hostPath | quote }}
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.manager.name | quote }}
+  namespace: {{ .Values.manager.namespace | quote }}
+  labels:
+    app: {{ .Values.manager.name | quote }}
+spec:
+  selector:
+    app: {{ .Values.manager.name | quote }}
+  ports:
+    - name: grpc
+      port: {{ .Values.manager.port }}
+      targetPort: grpc

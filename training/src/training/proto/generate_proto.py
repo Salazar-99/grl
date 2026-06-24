@@ -10,7 +10,7 @@ from pathlib import Path
 PYTHON_OUT = Path(__file__).resolve().parent
 TRAINING_ROOT = PYTHON_OUT.parents[2]
 REPO_ROOT = TRAINING_ROOT.parent
-PROTO_ROOT = REPO_ROOT / "proto"
+PROTO_ROOT = REPO_ROOT / "environments/proto"
 PROTO_FILE = PROTO_ROOT / "grl/environment/v1/environment.proto"
 GRPC_IMPORT_PREFIX = "from training.proto.grl.environment.v1 import environment_pb2"
 

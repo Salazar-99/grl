@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 import ray
+
+from training.config import GRLConfig
+from training.environments import EnvironmentSession
+from training.telemetry import init_telemetry
 
 # Hermes-style tool call blocks (Qwen2.5 tool format); extend when adding parsers.
 _TOOL_CALL_RE = re.compile(
@@ -38,14 +41,10 @@ class ToolCall:
 class RolloutRequest:
     group_id: str
     task_id: str
-    env_id: str
-    env_actor: ray.actor.ActorHandle
-    messages: list[dict[str, Any]]
     rollout_index: int
     expected_group_size: int
     policy_version: int
     sampling_params: dict[str, Any] = field(default_factory=dict)
-    tools: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -60,9 +59,17 @@ class RolloutResult:
     prompt_ids: list[int]
     response_ids: list[int]
     response_mask: list[int]
+    # Per-token logprobs from vLLM at rollout time; aligned 1:1 with response_ids.
+    inference_logprobs: list[float]
     num_turns: int
     reward: float | None = None
     done_reason: str = "completed"
+
+
+@dataclass
+class GenerationResult:
+    token_ids: list[int]
+    logprobs: list[float]
 
 
 @dataclass
@@ -72,8 +79,7 @@ class Session:
     request_id: str
     group_id: str
     task_id: str
-    env_id: str
-    env_actor: ray.actor.ActorHandle
+    env: EnvironmentSession
     rollout_index: int
     expected_group_size: int
     policy_version: int
@@ -81,6 +87,7 @@ class Session:
     messages: list[dict[str, Any]]
     response_ids: list[int] = field(default_factory=list)
     response_mask: list[int] = field(default_factory=list)
+    inference_logprobs: list[float] = field(default_factory=list)
     assistant_turns: int = 0
     done: bool = False
 
@@ -90,16 +97,14 @@ class Session:
 class RolloutWorker:
     """GPU worker: AsyncLLM inference + asyncio agent-loop orchestration."""
 
-    def __init__(
-        self,
-        model_path: str | None = None,
-        *,
-        max_model_len: int = 8192,
-        max_num_seqs: int = 64,
-        max_concurrent_trajectories: int = 32,
-        max_tokens_per_turn: int = 512,
-        max_assistant_turns: int = 8,
-    ) -> None:
+    def __init__(self, config: dict[str, Any], *, run_id: str = "") -> None:
+        cfg = GRLConfig.model_validate(config)
+        init_telemetry(
+            "rollout",
+            run_id,
+            otel_endpoint=cfg.telemetry.otel_endpoint,
+        )
+
         from transformers import AutoTokenizer
         from vllm import SamplingParams
         from vllm.engine.arg_utils import AsyncEngineArgs
@@ -110,24 +115,24 @@ class RolloutWorker:
         except ImportError:
             from vllm import AsyncLLMEngine as AsyncLLM
 
-        resolved_model = model_path or os.environ.get(
-            "MODEL_PATH", "/models/Qwen2.5-7B"
-        )
+        rollout = cfg.rollout
+        resolved_model = cfg.model.path
 
         self._sampling_params_cls = SamplingParams
         self._tokens_prompt_cls = TokensPrompt
-        self.max_model_len = max_model_len
-        self.max_tokens_per_turn = max_tokens_per_turn
-        self.max_assistant_turns = max_assistant_turns
+        self.max_model_len = rollout.max_model_len
+        self.max_tokens_per_turn = rollout.max_tokens_per_turn
+        self.max_assistant_turns = rollout.max_assistant_turns
+        self.env_server_addr = cfg.environment.server_addr
 
         engine_args = AsyncEngineArgs(
             model=resolved_model,
-            max_model_len=max_model_len,
-            enable_prefix_caching=True,
-            max_num_seqs=max_num_seqs,
+            max_model_len=rollout.max_model_len,
+            enable_prefix_caching=rollout.enable_prefix_caching,
+            max_num_seqs=rollout.max_num_seqs,
         )
         self.engine = AsyncLLM.from_engine_args(engine_args)
-        self._start_metrics_server()
+        self._start_metrics_server(rollout.vllm_metrics_port)
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             resolved_model,
@@ -137,10 +142,10 @@ class RolloutWorker:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self._sem = asyncio.Semaphore(max_concurrent_trajectories)
+        self._sem = asyncio.Semaphore(rollout.max_concurrent_trajectories)
         self.policy_version = 0
 
-    def _start_metrics_server(self) -> None:
+    def _start_metrics_server(self, port: int) -> None:
         """Expose vLLM's in-process Prometheus metrics for the collector scrape job.
 
         vLLM registers its stats in the default prometheus_client registry of
@@ -151,7 +156,6 @@ class RolloutWorker:
 
         from prometheus_client import start_http_server
 
-        port = int(os.environ.get("GRL_VLLM_METRICS_PORT", "9090"))
         try:
             start_http_server(port)
         except OSError as exc:
@@ -178,26 +182,39 @@ class RolloutWorker:
         sampling_params = dict(request.sampling_params or {"temperature": 1.0, "top_p": 1.0})
 
         async with self._sem:
-            prompt_ids = self._tokenize_chat(request.messages, tools=request.tools)
-            session = Session(
-                request_id=uuid.uuid4().hex,
-                group_id=request.group_id,
-                task_id=request.task_id,
-                env_id=request.env_id,
-                env_actor=request.env_actor,
-                rollout_index=request.rollout_index,
-                expected_group_size=request.expected_group_size,
-                policy_version=request.policy_version,
-                prompt_ids=prompt_ids,
-                messages=list(request.messages),
+            env = await EnvironmentSession.create(
+                request.task_id,
+                addr=self.env_server_addr,
             )
-            session = await self._run_trajectory(session, sampling_params)
+            try:
+                # The environment supplies the opening prompt and tool schemas;
+                # the trainer stays task-agnostic.
+                messages = env.initial_messages
+                tools = env.tools
+                prompt_ids = self._tokenize_chat(messages, tools=tools)
+                session = Session(
+                    request_id=uuid.uuid4().hex,
+                    group_id=request.group_id,
+                    task_id=request.task_id,
+                    env=env,
+                    rollout_index=request.rollout_index,
+                    expected_group_size=request.expected_group_size,
+                    policy_version=request.policy_version,
+                    prompt_ids=prompt_ids,
+                    messages=list(messages),
+                )
+                session = await self._run_trajectory(session, sampling_params)
+                # The environment grades the finished trajectory and returns the
+                # reward (e.g. by running the held-out tests in the VM).
+                reward, _detail = await env.score()
+            finally:
+                await env.close()
 
         prompt_len = len(session.prompt_ids) - len(session.response_ids)
         return RolloutResult(
             group_id=session.group_id,
             task_id=session.task_id,
-            env_id=session.env_id,
+            env_id=session.env.env_id,
             rollout_index=session.rollout_index,
             expected_group_size=session.expected_group_size,
             policy_version=session.policy_version,
@@ -205,7 +222,9 @@ class RolloutWorker:
             prompt_ids=session.prompt_ids[:prompt_len],
             response_ids=session.response_ids,
             response_mask=session.response_mask,
+            inference_logprobs=session.inference_logprobs,
             num_turns=session.assistant_turns,
+            reward=reward,
         )
 
     async def generate_batch(
@@ -226,7 +245,7 @@ class RolloutWorker:
             and ``request_id``. ``response_mask`` is 1 for model tokens, 0 for tool tokens.
         """
         raise NotImplementedError(
-            "Use run_rollout() so each concurrent session has its own environment actor."
+            "Use run_rollout() so each concurrent session has its own environment."
         )
 
     async def _run_trajectory(
@@ -239,17 +258,18 @@ class RolloutWorker:
                 session.done = True
                 break
 
-            turn_ids = await self._generate_once(
+            generation = await self._generate_once(
                 request_id=session.request_id,
                 prompt_ids=session.prompt_ids,
                 sampling_params=sampling_params,
             )
             session.assistant_turns += 1
-            session.prompt_ids += turn_ids
-            session.response_ids += turn_ids
-            session.response_mask += [1] * len(turn_ids)
+            session.prompt_ids += generation.token_ids
+            session.response_ids += generation.token_ids
+            session.response_mask += [1] * len(generation.token_ids)
+            session.inference_logprobs += generation.logprobs
 
-            tool_calls = self._parse_tool_calls(turn_ids)
+            tool_calls = self._parse_tool_calls(generation.token_ids)
             if not tool_calls:
                 session.done = True
                 break
@@ -263,6 +283,7 @@ class RolloutWorker:
             session.prompt_ids += tool_token_ids
             session.response_ids += tool_token_ids
             session.response_mask += [0] * len(tool_token_ids)
+            session.inference_logprobs += [0.0] * len(tool_token_ids)
 
         return session
 
@@ -272,7 +293,7 @@ class RolloutWorker:
         request_id: str,
         prompt_ids: list[int],
         sampling_params: dict[str, Any],
-    ) -> list[int]:
+    ) -> GenerationResult:
         max_possible = self.max_model_len - len(prompt_ids)
         if max_possible < 1:
             raise ValueError(
@@ -288,7 +309,7 @@ class RolloutWorker:
             max_tokens = min(int(params.pop("max_new_tokens")), max_possible)
         max_tokens = max(1, max_tokens)
 
-        sp = self._sampling_params_cls(max_tokens=max_tokens, **params)
+        sp = self._sampling_params_cls(max_tokens=max_tokens, logprobs=1, **params)
         prompt = self._tokens_prompt_cls(prompt_token_ids=prompt_ids)
 
         generator = self.engine.generate(
@@ -300,9 +321,34 @@ class RolloutWorker:
         async for output in generator:
             final = output
         if final is None or not final.outputs:
-            return []
+            return GenerationResult(token_ids=[], logprobs=[])
 
-        return list(final.outputs[0].token_ids)
+        completion = final.outputs[0]
+        token_ids = list(completion.token_ids)
+        logprobs = self._extract_sample_logprobs(token_ids, completion.logprobs)
+        return GenerationResult(token_ids=token_ids, logprobs=logprobs)
+
+    def _extract_sample_logprobs(
+        self,
+        token_ids: list[int],
+        logprobs_per_step: list[dict[int, Any]] | None,
+    ) -> list[float]:
+        if logprobs_per_step is None:
+            return [0.0] * len(token_ids)
+
+        result: list[float] = []
+        for i, token_id in enumerate(token_ids):
+            if i >= len(logprobs_per_step) or logprobs_per_step[i] is None:
+                result.append(0.0)
+                continue
+            entry = logprobs_per_step[i].get(token_id)
+            if entry is None:
+                result.append(0.0)
+            elif hasattr(entry, "logprob"):
+                result.append(float(entry.logprob))
+            else:
+                result.append(float(entry))
+        return result
 
     async def _execute_tool(
         self,
@@ -310,14 +356,7 @@ class RolloutWorker:
         tool_call: ToolCall,
     ) -> dict[str, Any]:
         """Dispatch a tool call to the VM owned by this session."""
-        result = await session.env_actor.execute.remote(
-            session.env_id,
-            tool_call.name,
-            tool_call.arguments,
-        )
-        if isinstance(result, dict) and "role" in result:
-            return result
-        return {"role": "tool", "content": str(result)}
+        return await session.env.execute(tool_call.name, tool_call.arguments)
 
     def _parse_tool_calls(self, token_ids: list[int]) -> list[ToolCall]:
         text = self.tokenizer.decode(token_ids, skip_special_tokens=False)

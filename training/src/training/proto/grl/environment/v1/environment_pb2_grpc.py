@@ -45,6 +45,11 @@ class EnvironmentServiceStub:
                 request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteRequest.SerializeToString,
                 response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteResponse.FromString,
                 _registered_method=True)
+        self.Score = channel.unary_unary(
+                '/grl.environment.v1.EnvironmentService/Score',
+                request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreRequest.SerializeToString,
+                response_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreResponse.FromString,
+                _registered_method=True)
         self.Reset = channel.unary_unary(
                 '/grl.environment.v1.EnvironmentService/Reset',
                 request_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ResetRequest.SerializeToString,
@@ -73,6 +78,16 @@ class EnvironmentServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Score(self, request, context):
+        """Score evaluates the current state of an environment and returns the
+        task reward. The environment is the source of truth for its own reward
+        (e.g. running the held-out test suite for a SWE-bench task), so scoring
+        happens inside the env executor and the manager only relays the result.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Reset(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -97,6 +112,11 @@ def add_EnvironmentServiceServicer_to_server(servicer, server):
                     servicer.Execute,
                     request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteRequest.FromString,
                     response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteResponse.SerializeToString,
+            ),
+            'Score': grpc.unary_unary_rpc_method_handler(
+                    servicer.Score,
+                    request_deserializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreRequest.FromString,
+                    response_serializer=grl_dot_environment_dot_v1_dot_environment__pb2.ScoreResponse.SerializeToString,
             ),
             'Reset': grpc.unary_unary_rpc_method_handler(
                     servicer.Reset,
@@ -164,6 +184,33 @@ class EnvironmentService:
             '/grl.environment.v1.EnvironmentService/Execute',
             grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteRequest.SerializeToString,
             grl_dot_environment_dot_v1_dot_environment__pb2.ExecuteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Score(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/grl.environment.v1.EnvironmentService/Score',
+            grl_dot_environment_dot_v1_dot_environment__pb2.ScoreRequest.SerializeToString,
+            grl_dot_environment_dot_v1_dot_environment__pb2.ScoreResponse.FromString,
             options,
             channel_credentials,
             insecure,

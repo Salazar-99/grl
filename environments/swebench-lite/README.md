@@ -1,6 +1,6 @@
 # SWEBench-Lite Environment for grl
 
-This environment consists of a raw `data` directory, a `vms` module to generate firecracker vm images for each problem in the dataset, and an environment management `server` to manage the environments during training and provide an interaction mechanism for the agent rollouts.
+This environment consists of a raw `data` directory, a `vms` module to generate firecracker vm images for each problem in the dataset, and an in-VM `env` executor that implements this environment's tools. VM lifecycle and tool call dispatch during training are handled by the shared, environment-agnostic [`manager`](../manager/) at the root of `environments/`.
 
 ## data/
 This directory just contains the SWEBench-Lite dataset cloned [from HuggingFace here](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite/tree/main).
@@ -14,6 +14,8 @@ Python tooling that builds Firecracker-ready ext4 disks for the SWE-bench-lite d
 **Task images** (`task-images/`) — one per dataset instance. Repo source at `base_commit` on an ext4 disk right-sized to the checkout plus 64 MB headroom (typically a few MB–tens of MB).
 
 **Manifest** (`manifest.json`) — maps each `instance_id` to its base and task image paths.
+
+**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`) plus the opening prompt (`messages`) and tool schemas (`tools`) the manager serves from `CreateEnvironment`. It carries no answer keys: the reward spec (held-out tests, test patch, test command) is baked into each task VM image at `/grl/task.json`, where only the in-VM scorer reads it.
 
 ### Prerequisites
 
@@ -40,6 +42,8 @@ uv run vms generate          # write dockerfiles/ and manifest.json
 uv run vms build             # build base-images/*.ext4 (skips existing)
 uv run vms build-tasks       # build task-images/*.ext4 (skips existing)
 uv run vms upload --jobs 4   # upload to s3://$VMS_S3_BUCKET/bases/ and .../tasks/
+uv run vms tasks             # render tasks.jsonl (prompts + tools) for the trainer
+uv run vms tasks --upload    # also upload to s3://$VMS_S3_BUCKET/datasets/swebench-lite/<split>/tasks.jsonl
 uv run vms resolve <task_id> # look up image paths for a task
 ```
 
@@ -47,25 +51,15 @@ Pass `--force` to rebuild or re-upload images that already exist. Use `--only <n
 
 Uploads land at `s3://$VMS_S3_BUCKET/bases/<env>.ext4` and `s3://$VMS_S3_BUCKET/tasks/<instance_id>.ext4`. Existing objects with matching size are skipped unless `--force` is set, so failed or interrupted uploads can be retried. Uploads run in parallel with `--jobs`, or `VMS_UPLOAD_JOBS`; the default is 4. Large files use S3 multipart upload, so objects appear in the bucket only after all parts complete.
 
-## server/
+## env/
 
-Rust binaries for managing Firecracker VMs and executing tools inside them.
+Rust `env` executor binary that runs inside each Firecracker VM. It implements this environment's tools (a persistent `bash` shell) and computes the task reward (`src/score.rs`): on `Score` it applies the held-out test patch, runs the targeted tests from the baked-in `/grl/task.json`, and returns reward 1.0 only if every `FAIL_TO_PASS` and `PASS_TO_PASS` test passes. It is baked into the VM images and invoked by the shared environment manager.
 
-- `server` — gRPC server called by training workers (`EnvironmentService`)
-- `executor` — runs inside the VM (placeholder)
-
-The gRPC contract lives in [`proto/grl/environment/v1/environment.proto`](../../proto/grl/environment/v1/environment.proto) at the repo root.
+The environment-agnostic gRPC manager that handles VM lifecycle and tool call dispatch lives at [`environments/manager/`](../manager/) — it is shared across all environments and contains no swebench-lite-specific code.
 
 ```bash
-# Rust server
-cd server
-cargo run --bin server
-
-# Regenerate Python stubs after changing the proto
-cd ../../training
-uv sync --group dev
-uv run generate-proto
+# In-VM executor
+cd env
+cargo build
 ```
-
-Set `GRL_ENV_SERVER_ADDR` (default `0.0.0.0:50051` on the server, `localhost:50051` in Python) to point clients at the server.
 

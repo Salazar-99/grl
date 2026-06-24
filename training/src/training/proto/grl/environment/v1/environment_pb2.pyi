@@ -11,10 +11,30 @@ class CreateEnvironmentRequest(_message.Message):
     def __init__(self, task_id: _Optional[str] = ...) -> None: ...
 
 class CreateEnvironmentResponse(_message.Message):
+    __slots__ = ("env_id", "manager_addr", "initial_messages_json", "tools_json")
+    ENV_ID_FIELD_NUMBER: _ClassVar[int]
+    MANAGER_ADDR_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_MESSAGES_JSON_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_JSON_FIELD_NUMBER: _ClassVar[int]
+    env_id: str
+    manager_addr: str
+    initial_messages_json: str
+    tools_json: str
+    def __init__(self, env_id: _Optional[str] = ..., manager_addr: _Optional[str] = ..., initial_messages_json: _Optional[str] = ..., tools_json: _Optional[str] = ...) -> None: ...
+
+class ScoreRequest(_message.Message):
     __slots__ = ("env_id",)
     ENV_ID_FIELD_NUMBER: _ClassVar[int]
     env_id: str
     def __init__(self, env_id: _Optional[str] = ...) -> None: ...
+
+class ScoreResponse(_message.Message):
+    __slots__ = ("reward", "detail_json")
+    REWARD_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_JSON_FIELD_NUMBER: _ClassVar[int]
+    reward: float
+    detail_json: str
+    def __init__(self, reward: _Optional[float] = ..., detail_json: _Optional[str] = ...) -> None: ...
 
 class ExecuteRequest(_message.Message):
     __slots__ = ("env_id", "tool_name", "arguments_json")

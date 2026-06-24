@@ -10,10 +10,9 @@ resource "helm_release" "resources" {
         namespace = var.ray_cluster_namespace
         version   = var.ray_version
         images = {
-          head        = var.ray_head_image
-          rollouts    = var.ray_rollouts_image
-          training    = var.ray_training_image
-          environment = var.ray_environment_image
+          head     = var.ray_head_image
+          rollouts = var.ray_rollouts_image
+          training = var.ray_training_image
         }
         workers = {
           rollouts = {
@@ -32,6 +31,13 @@ resource "helm_release" "resources" {
           username = var.otel_upstream_username
           password = var.otel_upstream_password
         }
+      }
+      manager = {
+        image = var.manager_image
+      }
+      vmImageCache = {
+        bucket = var.vm_images_bucket
+        region = var.vm_images_region
       }
     })
   ]
