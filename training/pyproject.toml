@@ -27,6 +27,7 @@ training = [
     "transformers>=4.46",
 ]
 rollouts = [
+    "renderers>=0.1.6",
     "vllm>=0.8.0",
 ]
 
@@ -37,6 +38,7 @@ generate-proto = "training.proto.generate_proto:main"
 [dependency-groups]
 dev = [
     "grpcio-tools>=1.60",
+    "renderers>=0.1.6",
     "torch>=2.5.0",
     "transformers>=4.46",
 ]

@@ -1,5 +1,7 @@
 use std::sync::Arc;
+use std::time::Instant;
 
+use opentelemetry::KeyValue;
 use tonic::{Request, Response, Status};
 
 use crate::catalog::Catalog;
@@ -10,6 +12,7 @@ use crate::pb::{
     TeardownRequest, TeardownResponse,
 };
 use crate::registry::{Registry, RegistryError, SUBMIT_TOOL};
+use crate::telemetry;
 use crate::vm;
 
 #[derive(Debug)]
@@ -65,17 +68,33 @@ impl EnvironmentServiceImpl {
                 let _ = registry.set_ready(&env_id).await;
                 return;
             }
+            let start = Instant::now();
             match vm::boot(&env_id, &spec).await {
                 Ok(handle) => {
+                    telemetry::histogram("grl.manager.vm.boot.duration")
+                        .record(start.elapsed().as_secs_f64(), &[]);
+                    telemetry::counter("grl.manager.vm.boots")
+                        .add(1, &[KeyValue::new("ok", true)]);
                     registry.attach_vm(&env_id, handle).await;
                     let _ = registry.set_ready(&env_id).await;
                 }
                 Err(err) => {
+                    telemetry::histogram("grl.manager.vm.boot.duration")
+                        .record(start.elapsed().as_secs_f64(), &[]);
+                    telemetry::counter("grl.manager.vm.boots")
+                        .add(1, &[KeyValue::new("ok", false)]);
+                    telemetry::counter("grl.manager.vm.boot.failures").add(1, &[]);
                     eprintln!("VM boot failed for {env_id}: {err}");
                     let _ = registry.mark_failed(&env_id).await;
                 }
             }
         });
+    }
+
+    /// Register the registry's environment-state observable gauges. Called from
+    /// `main` after telemetry init; no-op when telemetry is disabled.
+    pub fn install_metrics(&self) {
+        self.registry.install_metrics();
     }
 }
 
@@ -85,143 +104,195 @@ impl EnvironmentService for EnvironmentServiceImpl {
         &self,
         request: Request<ListTasksRequest>,
     ) -> Result<Response<ListTasksResponse>, Status> {
-        let split = request.into_inner().split;
-        let split_filter = if split.is_empty() {
-            None
-        } else {
-            Some(split.as_str())
-        };
-        let tasks = self
-            .catalog
-            .list_tasks(split_filter)
-            .into_iter()
-            .map(|(task_id, split)| TaskIndexEntry { task_id, split })
-            .collect();
-        Ok(Response::new(ListTasksResponse {
-            tasks,
-            env_name: self.env_name.clone(),
-        }))
+        let start = Instant::now();
+        let result: Result<Response<ListTasksResponse>, Status> = async {
+            let split = request.into_inner().split;
+            let split_filter = if split.is_empty() {
+                None
+            } else {
+                Some(split.as_str())
+            };
+            let tasks = self
+                .catalog
+                .list_tasks(split_filter)
+                .into_iter()
+                .map(|(task_id, split)| TaskIndexEntry { task_id, split })
+                .collect();
+            Ok(Response::new(ListTasksResponse {
+                tasks,
+                env_name: self.env_name.clone(),
+            }))
+        }
+        .await;
+        telemetry::record_rpc("list_tasks", start, &result);
+        result
     }
 
     async fn create_environment(
         &self,
         request: Request<CreateEnvironmentRequest>,
     ) -> Result<Response<CreateEnvironmentResponse>, Status> {
-        let task_id = request.into_inner().task_id;
-        let spec = self.catalog.get(&task_id).ok_or_else(|| {
-            Status::not_found(format!("task {task_id} not in catalog"))
-        })?;
+        let start = Instant::now();
+        let result: Result<Response<CreateEnvironmentResponse>, Status> = async {
+            let task_id = request.into_inner().task_id;
+            let spec = self.catalog.get(&task_id).ok_or_else(|| {
+                Status::not_found(format!("task {task_id} not in catalog"))
+            })?;
 
-        let env_id = self
-            .registry
-            .register_booting(&task_id)
-            .await
-            .map_err(Self::registry_status)?;
+            let env_id = self
+                .registry
+                .register_booting(&task_id)
+                .await
+                .map_err(Self::registry_status)?;
 
-        Self::spawn_boot_task(
-            Arc::clone(&self.registry),
-            env_id.clone(),
-            spec.clone(),
-        );
+            Self::spawn_boot_task(
+                Arc::clone(&self.registry),
+                env_id.clone(),
+                spec.clone(),
+            );
 
-        Ok(Response::new(CreateEnvironmentResponse {
-            env_id,
-            manager_addr: self.manager_addr.clone(),
-            initial_messages_json: spec.initial_messages_json.clone(),
-            tools_json: spec.tools_json.clone(),
-        }))
+            Ok(Response::new(CreateEnvironmentResponse {
+                env_id,
+                manager_addr: self.manager_addr.clone(),
+                initial_messages_json: spec.initial_messages_json.clone(),
+                tools_json: spec.tools_json.clone(),
+            }))
+        }
+        .await;
+        telemetry::record_rpc("create", start, &result);
+        result
     }
 
     async fn execute(
         &self,
         request: Request<ExecuteRequest>,
     ) -> Result<Response<ExecuteResponse>, Status> {
-        let request = request.into_inner();
-        let env_id = request.env_id.clone();
+        let start = Instant::now();
+        let tool_name = request.get_ref().tool_name.clone();
+        let result: Result<Response<ExecuteResponse>, Status> = async {
+            let request = request.into_inner();
+            let env_id = request.env_id.clone();
 
-        if request.tool_name == SUBMIT_TOOL {
-            match self.registry.mark_submitted(&env_id).await {
-                Ok(()) => {
-                    return Ok(Response::new(ExecuteResponse {
-                        content: "Submission received. Your solution will be graded.".into(),
-                        is_error: false,
-                    }));
+            if request.tool_name == SUBMIT_TOOL {
+                match self.registry.mark_submitted(&env_id).await {
+                    Ok(()) => {
+                        telemetry::counter("grl.manager.submit").add(1, &[]);
+                        return Ok(Response::new(ExecuteResponse {
+                            content: "Submission received. Your solution will be graded.".into(),
+                            is_error: false,
+                        }));
+                    }
+                    Err(RegistryError::AlreadySubmitted { .. }) => {
+                        return Ok(Response::new(ExecuteResponse {
+                            content: "already submitted".into(),
+                            is_error: true,
+                        }));
+                    }
+                    Err(err) => return Err(Self::registry_status(err)),
                 }
-                Err(RegistryError::AlreadySubmitted { .. }) => {
-                    return Ok(Response::new(ExecuteResponse {
-                        content: "already submitted".into(),
-                        is_error: true,
-                    }));
-                }
-                Err(err) => return Err(Self::registry_status(err)),
             }
+
+            self.registry
+                .require_execute(&env_id)
+                .await
+                .map_err(Self::registry_status)?;
+
+            let executor = self.registry.executor(&env_id).await.ok_or_else(|| {
+                Status::unavailable(format!("no VM attached for environment {env_id}"))
+            })?;
+
+            let forward_start = Instant::now();
+            let forwarded = executor.forward_execute(request).await;
+            telemetry::histogram("grl.manager.execute.forward.duration")
+                .record(forward_start.elapsed().as_secs_f64(), &[]);
+            let response = forwarded.map_err(|err| Status::internal(err))?;
+            telemetry::counter("grl.manager.execute.calls").add(
+                1,
+                &[
+                    KeyValue::new("tool", tool_name),
+                    KeyValue::new("is_error", response.is_error),
+                ],
+            );
+            Ok(Response::new(response))
         }
-
-        self.registry
-            .require_execute(&env_id)
-            .await
-            .map_err(Self::registry_status)?;
-
-        let executor = self.registry.executor(&env_id).await.ok_or_else(|| {
-            Status::unavailable(format!("no VM attached for environment {env_id}"))
-        })?;
-
-        let response = executor
-            .forward_execute(request)
-            .await
-            .map_err(|err| Status::internal(err))?;
-        Ok(Response::new(response))
+        .await;
+        telemetry::record_rpc("execute", start, &result);
+        result
     }
 
     async fn evaluate(
         &self,
         request: Request<EvaluateRequest>,
     ) -> Result<Response<EvaluateResponse>, Status> {
-        let env_id = request.into_inner().env_id;
+        let start = Instant::now();
+        let result: Result<Response<EvaluateResponse>, Status> = async {
+            let env_id = request.into_inner().env_id;
 
-        self.registry
-            .require_evaluate(&env_id)
-            .await
-            .map_err(Self::registry_status)?;
+            self.registry
+                .require_evaluate(&env_id)
+                .await
+                .map_err(Self::registry_status)?;
 
-        let response = if let Some(executor) = self.registry.executor(&env_id).await {
-            match executor.forward_evaluate(&env_id).await {
-                Ok(response) => response,
-                Err(err) => EvaluateResponse {
+            let response = if let Some(executor) = self.registry.executor(&env_id).await {
+                let eval_start = Instant::now();
+                let forwarded = executor.forward_evaluate(&env_id).await;
+                telemetry::histogram("grl.manager.evaluate.duration")
+                    .record(eval_start.elapsed().as_secs_f64(), &[]);
+                match forwarded {
+                    Ok(response) => response,
+                    Err(err) => EvaluateResponse {
+                        reward: 0.0,
+                        detail_json: serde_json::json!({ "error": err }).to_string(),
+                        infra_error: true,
+                    },
+                }
+            } else {
+                EvaluateResponse {
                     reward: 0.0,
-                    detail_json: serde_json::json!({ "error": err }).to_string(),
+                    detail_json: serde_json::json!({
+                        "error": format!("no VM attached for environment {env_id}")
+                    })
+                    .to_string(),
                     infra_error: true,
-                },
-            }
-        } else {
-            EvaluateResponse {
-                reward: 0.0,
-                detail_json: serde_json::json!({
-                    "error": format!("no VM attached for environment {env_id}")
-                })
-                .to_string(),
-                infra_error: true,
-            }
-        };
+                }
+            };
 
-        self.registry
-            .mark_evaluated(&env_id)
-            .await
-            .map_err(Self::registry_status)?;
+            if response.infra_error {
+                telemetry::counter("grl.manager.evaluate.infra_errors").add(1, &[]);
+            } else {
+                telemetry::histogram("grl.manager.evaluate.reward")
+                    .record(response.reward as f64, &[]);
+            }
 
-        Ok(Response::new(response))
+            self.registry
+                .mark_evaluated(&env_id)
+                .await
+                .map_err(Self::registry_status)?;
+
+            Ok(Response::new(response))
+        }
+        .await;
+        telemetry::record_rpc("evaluate", start, &result);
+        result
     }
 
     async fn teardown(
         &self,
         request: Request<TeardownRequest>,
     ) -> Result<Response<TeardownResponse>, Status> {
-        let env_id = request.into_inner().env_id;
-        if let Some(vm) = self.registry.take_vm(&env_id).await {
-            vm.stop().await;
+        let start = Instant::now();
+        let result: Result<Response<TeardownResponse>, Status> = async {
+            let env_id = request.into_inner().env_id;
+            if let Some(vm) = self.registry.take_vm(&env_id).await {
+                vm.stop().await;
+                telemetry::counter("grl.manager.vm.stops").add(1, &[]);
+            }
+            let _ = self.registry.remove(&env_id).await;
+            Ok(Response::new(TeardownResponse {}))
         }
-        let _ = self.registry.remove(&env_id).await;
-        Ok(Response::new(TeardownResponse {}))
+        .await;
+        telemetry::record_rpc("teardown", start, &result);
+        result
     }
 }
 

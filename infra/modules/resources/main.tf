@@ -39,6 +39,11 @@ resource "helm_release" "resources" {
         bucket = var.vm_images_bucket
         region = var.vm_images_region
       }
+      modelCache = {
+        tag              = var.model_tag
+        revision         = var.model_revision
+        huggingfaceToken = var.huggingface_token
+      }
     })
   ]
 }

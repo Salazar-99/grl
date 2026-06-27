@@ -51,6 +51,10 @@ module "resources" {
   vm_images_bucket = var.vm_images_bucket
   vm_images_region = var.region
 
+  model_tag         = var.model_tag
+  model_revision    = var.model_revision
+  huggingface_token = var.huggingface_token
+
   otel_collector_name      = var.otel_collector_name
   otel_collector_namespace = var.otel_collector_namespace
   otel_upstream_endpoint   = var.otel_upstream_endpoint

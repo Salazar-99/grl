@@ -1,5 +1,4 @@
-model:
-  path: /models/Qwen2.5-7B
+model: Qwen/Qwen3.5-4B
 
 environment:
   id: null
@@ -25,6 +24,7 @@ grpo:
   beta: 0.001
   epsilon: 0.2
   learning_rate: 1.0e-6
+  loss_scale_factor: null
   num_rollouts: 8
   groups_per_batch: 4
   min_rollouts_per_group: 2
@@ -33,7 +33,6 @@ grpo:
 
 workers:
   num_rollout_workers: 1
-  num_training_workers: 1
   max_in_flight_rollouts: 32
 
 rollout:

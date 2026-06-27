@@ -2,21 +2,84 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 import grpc
 
 from training.config import EnvironmentRpcTimeoutsConfig
 from training.proto.grl.environment.v1 import environment_pb2, environment_pb2_grpc
-from training.retry import (
-    CREATE_RETRY_CODES,
-    EVALUATE_RETRY_CODES,
-    EXECUTE_RETRY_CODES,
-    InfraError,
-    grpc_retry,
+from training.telemetry import counter, gauge, record_duration, span
+
+# Open environment sessions on this process (create succeeded, teardown not yet
+# run). asyncio is single-threaded per Ray actor, so a plain int is race-free;
+# the gauge is re-set on every change so it tracks the live count.
+_active_sessions = 0
+
+
+def _set_active_sessions(delta: int) -> None:
+    global _active_sessions
+    _active_sessions += delta
+    gauge("grl.env.active").set(_active_sessions)
+
+T = TypeVar("T")
+
+# Retried while the manager/env is temporarily unavailable (boot, admission).
+_RETRYABLE_CODES = frozenset(
+    {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.RESOURCE_EXHAUSTED,
+    }
 )
+
+# CreateEnvironment while the VM is still booting.
+_CREATE_RETRY_CODES = _RETRYABLE_CODES
+
+# Execute/Evaluate after the env is ready — only admission pressure is retried.
+_EXECUTE_RETRY_CODES = frozenset({grpc.StatusCode.RESOURCE_EXHAUSTED})
+_EVALUATE_RETRY_CODES = _EXECUTE_RETRY_CODES
+
+
+class InfraError(Exception):
+    """Environment infrastructure failure after retries are exhausted."""
+
+
+async def _grpc_retry(
+    coro_factory: Callable[[], Awaitable[T]],
+    *,
+    max_attempts: int,
+    initial_backoff_secs: float,
+    max_backoff_secs: float,
+    retry_codes: frozenset[grpc.StatusCode] = _RETRYABLE_CODES,
+    rpc: str = "",
+) -> T:
+    """Run an async gRPC call, retrying retryable status codes with backoff."""
+    backoff = initial_backoff_secs
+    last_exc: BaseException | None = None
+
+    for attempt in range(max_attempts):
+        try:
+            return await coro_factory()
+        except grpc.aio.AioRpcError as exc:
+            last_exc = exc
+            code = exc.code()
+            if code not in retry_codes or attempt + 1 >= max_attempts:
+                if code in retry_codes:
+                    counter("grl.env.infra_errors").add(1, {"rpc": rpc})
+                    raise InfraError(str(exc)) from exc
+                counter("grl.env.rpc.errors").add(1, {"rpc": rpc, "code": code.name})
+                raise
+            counter("grl.env.rpc.retries").add(1, {"rpc": rpc})
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff_secs)
+
+    assert last_exc is not None
+    counter("grl.env.infra_errors").add(1, {"rpc": rpc})
+    raise InfraError(str(last_exc)) from last_exc
+
 
 SUBMIT_TOOL = "submit"
 DEFAULT_TOOL_TIMEOUT_SECS = 120
@@ -89,10 +152,13 @@ async def list_task_ids(
     channel = grpc.aio.insecure_channel(addr)
     stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
     try:
-        response = await stub.ListTasks(
-            environment_pb2.ListTasksRequest(split=split or ""),
-            timeout=timeouts.list_tasks_secs,
-        )
+        with span("env.list_tasks"), record_duration(
+            "grl.env.rpc.duration", rpc="list_tasks"
+        ):
+            response = await stub.ListTasks(
+                environment_pb2.ListTasksRequest(split=split or ""),
+                timeout=timeouts.list_tasks_secs,
+            )
     finally:
         await channel.close()
     if not response.tasks:
@@ -165,13 +231,17 @@ class EnvironmentSession:
                 raise
             return channel, stub, response
 
-        channel, stub, response = await grpc_retry(
-            _create_once,
-            max_attempts=retry_cfg.max_attempts,
-            initial_backoff_secs=retry_cfg.initial_backoff_secs,
-            max_backoff_secs=retry_cfg.max_backoff_secs,
-            retry_codes=CREATE_RETRY_CODES,
-        )
+        with span("env.create", task_id=task_id), record_duration(
+            "grl.env.rpc.duration", rpc="create"
+        ):
+            channel, stub, response = await _grpc_retry(
+                _create_once,
+                max_attempts=retry_cfg.max_attempts,
+                initial_backoff_secs=retry_cfg.initial_backoff_secs,
+                max_backoff_secs=retry_cfg.max_backoff_secs,
+                retry_codes=_CREATE_RETRY_CODES,
+                rpc="create",
+            )
 
         if response.manager_addr and response.manager_addr != addr:
             await channel.close()
@@ -184,6 +254,7 @@ class EnvironmentSession:
             else []
         )
         tools = json.loads(response.tools_json) if response.tools_json else None
+        _set_active_sessions(1)
         return cls(
             channel,
             stub,
@@ -208,12 +279,19 @@ class EnvironmentSession:
                 timeout=timeout,
             )
 
-        response = await grpc_retry(
-            _execute_once,
-            max_attempts=self._retry.max_attempts,
-            initial_backoff_secs=self._retry.initial_backoff_secs,
-            max_backoff_secs=self._retry.max_backoff_secs,
-            retry_codes=EXECUTE_RETRY_CODES,
+        with span("env.execute", tool=tool_name), record_duration(
+            "grl.env.rpc.duration", rpc="execute"
+        ):
+            response = await _grpc_retry(
+                _execute_once,
+                max_attempts=self._retry.max_attempts,
+                initial_backoff_secs=self._retry.initial_backoff_secs,
+                max_backoff_secs=self._retry.max_backoff_secs,
+                retry_codes=_EXECUTE_RETRY_CODES,
+                rpc="execute",
+            )
+        counter("grl.env.tool.calls").add(
+            1, {"tool": tool_name, "is_error": bool(response.is_error)}
         )
         content = response.content
         if response.is_error:
@@ -229,13 +307,17 @@ class EnvironmentSession:
                 timeout=self._rpc.evaluate_secs,
             )
 
-        response = await grpc_retry(
-            _evaluate_once,
-            max_attempts=self._retry.max_attempts,
-            initial_backoff_secs=self._retry.initial_backoff_secs,
-            max_backoff_secs=self._retry.max_backoff_secs,
-            retry_codes=EVALUATE_RETRY_CODES,
-        )
+        with span("env.evaluate"), record_duration(
+            "grl.env.rpc.duration", rpc="evaluate"
+        ):
+            response = await _grpc_retry(
+                _evaluate_once,
+                max_attempts=self._retry.max_attempts,
+                initial_backoff_secs=self._retry.initial_backoff_secs,
+                max_backoff_secs=self._retry.max_backoff_secs,
+                retry_codes=_EVALUATE_RETRY_CODES,
+                rpc="evaluate",
+            )
         detail = json.loads(response.detail_json) if response.detail_json else {}
         return EvaluateResult(
             reward=response.reward,
@@ -245,11 +327,15 @@ class EnvironmentSession:
 
     async def teardown(self) -> None:
         try:
-            await self._stub.Teardown(
-                environment_pb2.TeardownRequest(env_id=self.env_id),
-                timeout=self._rpc.teardown_secs,
-            )
+            with span("env.teardown"), record_duration(
+                "grl.env.rpc.duration", rpc="teardown"
+            ):
+                await self._stub.Teardown(
+                    environment_pb2.TeardownRequest(env_id=self.env_id),
+                    timeout=self._rpc.teardown_secs,
+                )
         finally:
+            _set_active_sessions(-1)
             await self._channel.close()
 
 

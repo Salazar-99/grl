@@ -7,18 +7,18 @@ from unittest.mock import AsyncMock, patch
 
 import grpc
 
-from training.retry import (
-    CREATE_RETRY_CODES,
-    EXECUTE_RETRY_CODES,
+from training.environments import (
     InfraError,
-    grpc_retry,
+    _CREATE_RETRY_CODES,
+    _EXECUTE_RETRY_CODES,
+    _grpc_retry,
 )
 
 
 class GrpcRetryTests(unittest.IsolatedAsyncioTestCase):
     async def test_succeeds_on_first_attempt(self) -> None:
         factory = AsyncMock(return_value="ok")
-        result = await grpc_retry(
+        result = await _grpc_retry(
             factory,
             max_attempts=3,
             initial_backoff_secs=0.01,
@@ -42,8 +42,8 @@ class GrpcRetryTests(unittest.IsolatedAsyncioTestCase):
                 )
             return "ok"
 
-        with patch("training.retry.asyncio.sleep", new=AsyncMock()):
-            result = await grpc_retry(
+        with patch("training.environments.asyncio.sleep", new=AsyncMock()):
+            result = await _grpc_retry(
                 factory,
                 max_attempts=3,
                 initial_backoff_secs=0.01,
@@ -61,9 +61,9 @@ class GrpcRetryTests(unittest.IsolatedAsyncioTestCase):
                 details="full",
             )
 
-        with patch("training.retry.asyncio.sleep", new=AsyncMock()):
+        with patch("training.environments.asyncio.sleep", new=AsyncMock()):
             with self.assertRaises(InfraError):
-                await grpc_retry(
+                await _grpc_retry(
                     factory,
                     max_attempts=2,
                     initial_backoff_secs=0.01,
@@ -84,12 +84,12 @@ class GrpcRetryTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with self.assertRaises(grpc.aio.AioRpcError):
-            await grpc_retry(
+            await _grpc_retry(
                 factory,
                 max_attempts=3,
                 initial_backoff_secs=0.01,
                 max_backoff_secs=0.02,
-                retry_codes=EXECUTE_RETRY_CODES,
+                retry_codes=_EXECUTE_RETRY_CODES,
             )
         self.assertEqual(calls, 1)
 
@@ -108,13 +108,13 @@ class GrpcRetryTests(unittest.IsolatedAsyncioTestCase):
                 )
             return "ok"
 
-        with patch("training.retry.asyncio.sleep", new=AsyncMock()):
-            result = await grpc_retry(
+        with patch("training.environments.asyncio.sleep", new=AsyncMock()):
+            result = await _grpc_retry(
                 factory,
                 max_attempts=3,
                 initial_backoff_secs=0.01,
                 max_backoff_secs=0.02,
-                retry_codes=CREATE_RETRY_CODES,
+                retry_codes=_CREATE_RETRY_CODES,
             )
         self.assertEqual(result, "ok")
         self.assertEqual(calls, 2)

@@ -1,0 +1,107 @@
+{{- if .Values.modelCache.tag }}
+# Pre-pulls Hugging Face model weights onto each GPU node's local disk so
+# rollouts and training workers can load from /models/<name> without hitting
+# the Hub on the hot path.
+#
+# The sync runs in an initContainer: the pod only reaches Running once the
+# cache is warm, and huggingface-cli resumes partial downloads on retry.
+# A .ready sentinel is written after a complete sync.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: model-cache
+  namespace: {{ .Values.modelCache.namespace | quote }}
+  labels:
+    app: model-cache
+spec:
+  selector:
+    matchLabels:
+      app: model-cache
+  template:
+    metadata:
+      labels:
+        app: model-cache
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - rollouts
+                      - training
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      initContainers:
+        - name: download
+          image: {{ .Values.modelCache.image | quote }}
+          env:
+            - name: MODEL_TAG
+              value: {{ .Values.modelCache.tag | quote }}
+            - name: MODEL_REVISION
+              value: {{ .Values.modelCache.revision | quote }}
+            - name: HOST_PATH
+              value: {{ .Values.modelCache.hostPath | quote }}
+            {{- if .Values.modelCache.huggingfaceToken }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: model-cache-hf-token
+                  key: token
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "1"
+            {{- end }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              pip install -q "huggingface_hub[cli]"
+              if [ -n "${HF_TOKEN:-}" ]; then
+                pip install -q hf_transfer
+              fi
+              model_name="${MODEL_TAG##*/}"
+              dest="${HOST_PATH}/${model_name}"
+              rm -f "${dest}/.ready"
+              mkdir -p "${dest}"
+              if [ -n "${MODEL_REVISION}" ]; then
+                huggingface-cli download "${MODEL_TAG}" \
+                  --local-dir "${dest}" \
+                  --revision "${MODEL_REVISION}"
+              else
+                huggingface-cli download "${MODEL_TAG}" \
+                  --local-dir "${dest}"
+              fi
+              touch "${dest}/.ready"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          volumeMounts:
+            - name: cache
+              mountPath: {{ .Values.modelCache.hostPath | quote }}
+      containers:
+        # All work happens in the initContainer; this keeps the pod Running
+        # so `kubectl get pods` shows which GPU nodes have a warm cache.
+        - name: pause
+          image: {{ .Values.modelCache.pauseImage | quote }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: cache
+          hostPath:
+            path: {{ .Values.modelCache.hostPath | quote }}
+            type: DirectoryOrCreate
+{{- end }}

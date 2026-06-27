@@ -73,6 +73,12 @@ spec:
         - name: manager
           image: {{ .Values.manager.image | quote }}
           env:
+            # Push manager metrics to the same in-cluster collector the Ray
+            # workers use (telemetry.rs no-ops if this is unset). HOSTNAME (the
+            # pod name) and GRL_ENV_ID below become the `pod`/`env.id` resource
+            # attributes the dashboard breaks out by.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
             - name: GRL_ENV_SERVER_ADDR
               value: 0.0.0.0:{{ .Values.manager.port }}
             - name: GRL_VM_CACHE_DIR

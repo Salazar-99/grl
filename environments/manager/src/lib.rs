@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod environment;
 pub mod registry;
+pub mod telemetry;
 pub mod vm;
 
 pub mod pb {

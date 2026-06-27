@@ -27,18 +27,29 @@ providers, so ``span()`` / ``counter()`` / ``histogram()`` stay safe to call.
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import os
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Iterator
+from typing import Any, Callable, Iterator, Sequence
 
 from opentelemetry import metrics, trace
+from opentelemetry._logs import SeverityNumber, set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.metrics import Counter, Histogram
+from opentelemetry.metrics import (
+    CallbackOptions,
+    Counter,
+    Histogram,
+    Observation,
+)
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -49,6 +60,11 @@ from opentelemetry.trace import Span
 logger = logging.getLogger(__name__)
 
 _INITIALIZED = False
+
+# Held so ``log_trajectory`` can emit through a provider whose Resource carries
+# ``run.id`` (the trajectory MV keys on it). ``None`` until ``init_telemetry``
+# runs with an endpoint, which is also how ``log_trajectory`` knows it's disabled.
+_LOGGER_PROVIDER: LoggerProvider | None = None
 
 
 def new_run_id() -> str:
@@ -68,7 +84,7 @@ def init_telemetry(
     ``run_id`` and ``otel_endpoint`` are passed explicitly from the driver so
     every role in one run shares them. No-ops when no endpoint is configured.
     """
-    global _INITIALIZED
+    global _INITIALIZED, _LOGGER_PROVIDER
     if _INITIALIZED:
         return
 
@@ -93,12 +109,19 @@ def init_telemetry(
     )
     metrics.set_meter_provider(meter_provider)
 
-    # Guaranteed delivery: BatchSpanProcessor and PeriodicExportingMetricReader
+    # Logs carry whole trajectories (see ``log_trajectory``); they ride the same
+    # OTLP path and Resource so ``run.id`` is set, which the trajectory MV keys on.
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+    set_logger_provider(logger_provider)
+    _LOGGER_PROVIDER = logger_provider
+
+    # Guaranteed delivery: the batch processors and PeriodicExportingMetricReader
     # buffer in memory and would drop whatever is unflushed when the process
-    # exits. shutdown() force-flushes both before stopping their exporters.
+    # exits. shutdown() force-flushes each before stopping their exporters.
     # atexit fires on graceful interpreter shutdown, including Ray actor
     # teardown; the collector's own sending_queue + retry covers the rest.
-    atexit.register(_shutdown, tracer_provider, meter_provider)
+    atexit.register(_shutdown, tracer_provider, meter_provider, logger_provider)
 
     _INITIALIZED = True
     logger.info(
@@ -109,9 +132,14 @@ def init_telemetry(
     )
 
 
-def _shutdown(tracer_provider: TracerProvider, meter_provider: MeterProvider) -> None:
+def _shutdown(
+    tracer_provider: TracerProvider,
+    meter_provider: MeterProvider,
+    logger_provider: LoggerProvider,
+) -> None:
     tracer_provider.shutdown()
     meter_provider.shutdown()
+    logger_provider.shutdown()
 
 
 def _tracer() -> trace.Tracer:
@@ -141,3 +169,98 @@ def counter(name: str, unit: str = "1", description: str = "") -> Counter:
 def histogram(name: str, unit: str = "1", description: str = "") -> Histogram:
     """A value-distribution histogram, cached across call sites."""
     return _meter().create_histogram(name, unit=unit, description=description)
+
+
+@lru_cache(maxsize=None)
+def gauge(name: str, unit: str = "1", description: str = "") -> Any:
+    """A synchronous gauge for last-value signals (loss, queue depth, …).
+
+    Cached so repeated ``.set()`` call sites share one instrument.
+    """
+    return _meter().create_gauge(name, unit=unit, description=description)
+
+
+_OBSERVABLE_NAMES: set[str] = set()
+
+
+def observable_gauge(
+    name: str,
+    callback: Callable[[CallbackOptions], Sequence[Observation]],
+    *,
+    unit: str = "1",
+    description: str = "",
+) -> None:
+    """Register an async gauge whose ``callback`` is polled on each export.
+
+    Use for sampled state we don't want to push imperatively (queue depths,
+    in-flight counts). Registering the same name twice is ignored so call sites
+    in re-entrant code stay safe.
+    """
+    if name in _OBSERVABLE_NAMES:
+        return
+    _OBSERVABLE_NAMES.add(name)
+    _meter().create_observable_gauge(
+        name, callbacks=[callback], unit=unit, description=description
+    )
+
+
+@contextmanager
+def record_duration(name: str, **attributes: Any) -> Iterator[None]:
+    """Time the wrapped block and record seconds into histogram ``name``."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        histogram(name, unit="s").record(time.perf_counter() - start, attributes)
+
+
+def log_trajectory(
+    *,
+    task_id: str,
+    group_id: str,
+    rollout_index: int,
+    policy_version_start: int,
+    policy_version_current: int,
+    num_turns: int,
+    reward: float | None,
+    done_reason: str,
+    prompt_tokens: int,
+    response_tokens: int,
+    prompt: str = "",
+    response: str = "",
+) -> None:
+    """Emit one finished trajectory as an OTLP log record. No-op when disabled.
+
+    Structured fields go into log attributes (the trajectory MV promotes them
+    into typed columns) under the ``grl.record=trajectory`` marker; the full
+    rendered prompt/response text rides in the body for the trajectory browser.
+    ``run.id`` is inherited from the shared Resource.
+    """
+    if _LOGGER_PROVIDER is None:
+        return
+
+    attributes: dict[str, Any] = {
+        "grl.record": "trajectory",
+        "task_id": task_id,
+        "group_id": group_id,
+        "rollout_index": rollout_index,
+        "policy_version_start": policy_version_start,
+        "policy_version_current": policy_version_current,
+        "num_turns": num_turns,
+        "done_reason": done_reason,
+        "prompt_tokens": prompt_tokens,
+        "response_tokens": response_tokens,
+    }
+    if reward is not None:
+        attributes["reward"] = reward
+
+    body = json.dumps({"prompt": prompt, "response": response})
+    now = time.time_ns()
+    _LOGGER_PROVIDER.get_logger("grl.training").emit(
+        timestamp=now,
+        observed_timestamp=now,
+        severity_number=SeverityNumber.INFO,
+        severity_text="INFO",
+        body=body,
+        attributes=attributes,
+    )

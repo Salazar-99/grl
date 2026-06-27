@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import ray
@@ -10,8 +9,15 @@ if TYPE_CHECKING:
     import torch
 
 from training.config import GRLConfig
-from training.rollouts import RolloutResult
-from training.telemetry import init_telemetry
+from training.rollouts import PolicyWeightsRef, RolloutResult
+from training.telemetry import (
+    counter,
+    gauge,
+    histogram,
+    init_telemetry,
+    record_duration,
+    span,
+)
 
 
 def grpo_valid_rollouts(
@@ -56,10 +62,11 @@ class TrainingWorker:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        model_path = Path(cfg.model.path)
+        model_path = cfg.resolved_model_path()
 
         self.beta = cfg.grpo.beta
         self.epsilon = cfg.grpo.epsilon
+        self.loss_scale_factor = cfg.grpo.loss_scale_factor
         learning_rate = cfg.grpo.learning_rate
         self.min_rollouts_per_group = cfg.grpo.min_rollouts_per_group
 
@@ -85,45 +92,115 @@ class TrainingWorker:
         batch: TrainingBatch,
         rollout_workers: list[ray.actor.ActorHandle],
     ) -> None:
-        rollouts, advantages = self._flatten_rollouts(batch.groups)
-        if not rollouts:
-            return
+        import torch
 
-        self.optimizer.zero_grad()
-        tensors = self._collate_rollouts(rollouts, advantages)
-        trainer_logprobs = self._get_logprobs(
-            tensors["input_ids"],
-            tensors["attention_mask"],
-            tensors["prompt_lens"],
-            tensors["response_lens"],
-        )
-        loss = self._compute_loss(
-            trainer_logprobs=trainer_logprobs,
-            inference_logprobs=tensors["inference_logprobs"],
-            advantages=tensors["advantages"],
-            mask=tensors["response_mask"],
-        )
-        loss.backward()
-        self.optimizer.step()
+        with span(
+            "train_batch",
+            batch_id=batch.batch_id,
+            policy_version=batch.policy_version,
+            num_groups=len(batch.groups),
+        ) as current:
+            rollouts, advantages, rewards = self._flatten_rollouts(batch.groups)
+            if not rollouts:
+                return
 
-        self.policy_version = max(self.policy_version, batch.policy_version) + 1
-        weights_ref = self.send_weights()
+            self.optimizer.zero_grad()
+            tensors = self._collate_rollouts(rollouts, advantages)
+            with record_duration("grl.train.step.duration"):
+                trainer_logprobs = self._get_logprobs(
+                    tensors["input_ids"],
+                    tensors["attention_mask"],
+                    tensors["prompt_lens"],
+                    tensors["response_lens"],
+                )
+                loss, stats = self._compute_loss(
+                    trainer_logprobs=trainer_logprobs,
+                    inference_logprobs=tensors["inference_logprobs"],
+                    advantages=tensors["advantages"],
+                    mask=tensors["response_mask"],
+                )
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), float("inf")
+                )
+                self.optimizer.step()
 
-        for worker in rollout_workers:
-            worker.apply_policy_update.remote(self.policy_version, weights_ref)
+            self.policy_version = max(self.policy_version, batch.policy_version) + 1
+            self._record_train_metrics(
+                loss=float(loss.item()),
+                stats=stats,
+                grad_norm=float(grad_norm),
+                tensors=tensors,
+                advantages=advantages,
+                rewards=rewards,
+                num_rollouts=len(rollouts),
+            )
+            current.set_attribute("loss", float(loss.item()))
+
+            with span("weight_sync"), record_duration("grl.train.weight_sync.duration"):
+                weights_ref = self.send_weights()
+                update_refs = []
+                for worker in rollout_workers:
+                    update_refs.append(
+                        worker.apply_policy_update.remote(
+                            self.policy_version, weights_ref
+                        )
+                    )
+                ray.get(update_refs)
+
+    def _record_train_metrics(
+        self,
+        *,
+        loss: float,
+        stats: dict[str, float],
+        grad_norm: float,
+        tensors: dict[str, "torch.Tensor"],
+        advantages: list["torch.Tensor"],
+        rewards: list[float],
+        num_rollouts: int,
+    ) -> None:
+        pv = {"policy_version": self.policy_version}
+        counter("grl.train.batches").add(1, pv)
+        counter("grl.train.tokens").add(int(tensors["response_mask"].sum().item()), pv)
+        gauge("grl.train.loss").set(loss, pv)
+        gauge("grl.train.pg_loss").set(stats["pg_loss"], pv)
+        gauge("grl.train.kl").set(stats["kl"], pv)
+        gauge("grl.train.clip_fraction").set(stats["clip_fraction"], pv)
+        gauge("grl.train.ratio_mean").set(stats["ratio_mean"], pv)
+        gauge("grl.train.grad_norm").set(grad_norm, pv)
+        gauge("grl.train.rollouts_used").set(num_rollouts, pv)
+        gauge("grl.train.policy_version").set(self.policy_version)
+
+        adv_hist = histogram("grl.train.advantage")
+        for advantage in advantages:
+            adv_hist.record(float(advantage))
+        reward_hist = histogram("grl.train.reward")
+        for reward in rewards:
+            reward_hist.record(reward)
 
     def _flatten_rollouts(
         self,
         groups: list[list[RolloutResult]],
-    ) -> tuple[list[RolloutResult], list[torch.Tensor]]:
+    ) -> tuple[list[RolloutResult], list[torch.Tensor], list[float]]:
         rollouts: list[RolloutResult] = []
         advantages: list[torch.Tensor] = []
+        rewards: list[float] = []
 
         for group in groups:
             valid = grpo_valid_rollouts(
                 group, min_rollouts_per_group=self.min_rollouts_per_group
             )
             if not valid:
+                # Distinguish a group that had no gradeable rollouts at all from
+                # one that simply fell below the GRPO minimum, so the dashboard
+                # can tell infra loss apart from sparse-reward attrition.
+                gradeable = [
+                    r
+                    for r in group
+                    if r.done_reason != "infra_error" and r.reward is not None
+                ]
+                reason = "all_infra" if not gradeable else "below_min"
+                counter("grl.train.groups_dropped").add(1, {"reason": reason})
                 continue
 
             group_advantages = self._compute_group_advantages([r.reward for r in valid])
@@ -137,21 +214,21 @@ class TrainingWorker:
                     )
                 rollouts.append(rollout)
                 advantages.append(advantage)
+                if rollout.reward is not None:
+                    rewards.append(float(rollout.reward))
 
-        return rollouts, advantages
+        return rollouts, advantages, rewards
 
     def _compute_group_advantages(self, rewards: list[float | None]) -> torch.Tensor:
         """
-        Per-rollout scalar advantages for a GRPO group: center rewards by the
-        group mean and scale by the group standard deviation.
+        DrGRPO per-rollout scalar advantages: center rewards by the group mean
+        without standard-deviation scaling.
         """
         import torch
 
         values = [float(r) if r is not None else 0.0 for r in rewards]
         rewards_t = torch.tensor(values, dtype=torch.float32, device=self.model.device)
-        mean = rewards_t.mean()
-        std = rewards_t.std(unbiased=False)
-        return (rewards_t - mean) / (std + 1e-4)
+        return rewards_t - rewards_t.mean()
 
     def _collate_rollouts(
         self,
@@ -246,13 +323,18 @@ class TrainingWorker:
         inference_logprobs: torch.Tensor,
         advantages: torch.Tensor,
         mask: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         """
-        GRPO clipped policy loss with KL against rollout-time logprobs
+        DrGRPO clipped policy loss with KL against rollout-time logprobs
         (prime-rl inference_logprobs path; beta is always applied).
 
-        Each rollout is normalized over its own masked response tokens, then
-        averaged across the batch (one backward pass over the full batch).
+        Token losses are summed and normalized by batch size times a response
+        length constant, avoiding per-rollout token-mean length bias. When
+        ``loss_scale_factor`` is unset, use the current padded response width.
+
+        Returns the differentiable loss plus a dict of scalar telemetry stats
+        (policy-gradient term, KL, mean ratio, clip fraction) computed from the
+        same tensors so observability adds no extra forward pass.
         """
         import torch
 
@@ -269,8 +351,37 @@ class TrainingWorker:
         per_token_loss = per_token_pg + self.beta * per_token_kl
 
         masked = per_token_loss * mask
-        per_rollout_loss = masked.sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-        return per_rollout_loss.mean()
+        loss_scale = self.loss_scale_factor or mask.shape[1]
+        loss = masked.sum() / (mask.shape[0] * loss_scale)
+        stats = self._loss_stats(per_token_pg, per_token_kl, ratio, mask)
+        return loss, stats
+
+    def _loss_stats(
+        self,
+        per_token_pg: torch.Tensor,
+        per_token_kl: torch.Tensor,
+        ratio: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> dict[str, float]:
+        """Mask-weighted scalar summaries of the loss components for telemetry."""
+        import torch
+
+        with torch.no_grad():
+            mask_f = mask.to(ratio.dtype)
+            denom = mask_f.sum().clamp(min=1.0)
+            pg = (per_token_pg * mask_f).sum() / denom
+            kl = (per_token_kl * mask_f).sum() / denom
+            ratio_mean = (ratio * mask_f).sum() / denom
+            clipped = (
+                (ratio < 1 - self.epsilon) | (ratio > 1 + self.epsilon)
+            ) & mask.bool()
+            clip_fraction = clipped.to(ratio.dtype).sum() / denom
+        return {
+            "pg_loss": float(pg.item()),
+            "kl": float(kl.item()),
+            "ratio_mean": float(ratio_mean.item()),
+            "clip_fraction": float(clip_fraction.item()),
+        }
 
     def _compute_kl(
         self,
@@ -283,7 +394,14 @@ class TrainingWorker:
         log_ratio = inference_logprobs - trainer_logprobs
         return torch.exp(log_ratio) - log_ratio - 1
 
-    def send_weights(self) -> ray.ObjectRef | None:
+    def send_weights(self) -> PolicyWeightsRef:
         # TODO: Determine if we can use NCCL on A10 in AWS
         # Determine if we can send just the weight diff like Cursor does
-        return None
+        import torch
+
+        with torch.no_grad():
+            state_dict = {
+                name: tensor.detach().to("cpu", copy=True)
+                for name, tensor in self.model.state_dict().items()
+            }
+        return PolicyWeightsRef(ray.put(state_dict))

@@ -8,20 +8,18 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from training.model import local_model_path
 from training.telemetry import new_run_id
 
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 
 
-class ModelConfig(BaseModel):
-    path: str = "/models/Qwen2.5-7B"
-
-
 class GRPOConfig(BaseModel):
     beta: float = 0.001
     epsilon: float = 0.2
     learning_rate: float = 1e-6
+    loss_scale_factor: int | None = None
     num_rollouts: int = 8
     groups_per_batch: int = 4
     min_rollouts_per_group: int = 2
@@ -34,7 +32,6 @@ class GRPOConfig(BaseModel):
 
 class WorkersConfig(BaseModel):
     num_rollout_workers: int = 1
-    num_training_workers: int = 1
     max_in_flight_rollouts: int = 32
 
 
@@ -138,7 +135,7 @@ class RayConfig(BaseModel):
 
 
 class GRLConfig(BaseModel):
-    model: ModelConfig = Field(default_factory=ModelConfig)
+    model: str
     grpo: GRPOConfig = Field(default_factory=GRPOConfig)
     workers: WorkersConfig = Field(default_factory=WorkersConfig)
     rollout: RolloutConfig = Field(default_factory=RolloutConfig)
@@ -151,24 +148,10 @@ class GRLConfig(BaseModel):
     def from_yaml(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> GRLConfig:
         with Path(path).open() as f:
             data = yaml.safe_load(f) or {}
-        cls._migrate_legacy_dataset_config(data)
         return cls.model_validate(data)
 
-    @staticmethod
-    def _migrate_legacy_dataset_config(data: dict[str, Any]) -> None:
-        """Fold deprecated top-level ``dataset`` keys into ``environment``."""
-        dataset = data.pop("dataset", None)
-        if not dataset:
-            return
-        env = data.setdefault("environment", {})
-        if not isinstance(env, dict):
-            return
-        if not isinstance(dataset, dict):
-            return
-        if tasks_uri := dataset.get("tasks_s3_uri"):
-            env.setdefault("tasks_uri", tasks_uri)
-        if split := dataset.get("split"):
-            env.setdefault("split", split)
+    def resolved_model_path(self, *, cache_root: str | None = None) -> Path:
+        return local_model_path(self.model, cache_root=cache_root)
 
     def resolve_run_id(self) -> str:
         return self.telemetry.run_id or new_run_id()

@@ -1,0 +1,117 @@
+model: Qwen/Qwen3.5-4B
+
+environment:
+  id: swebench-lite
+  bundle_uri: s3://my-bucket/datasets/swebench-lite/dev
+  split: dev
+  server_addr: grl-manager.default.svc:50051
+  tasks_uri: null
+  retry:
+    max_attempts: 10
+    initial_backoff_secs: 0.5
+    max_backoff_secs: 30.0
+  rpc_timeouts:
+    create_secs: 30
+    list_tasks_secs: 30
+    execute_default_secs: 140
+    execute_submit_secs: 10
+    execute_timeout_buffer_secs: 10
+    evaluate_secs: 930
+    teardown_secs: 30
+
+grpo:
+  beta: 0.001
+  epsilon: 0.2
+  learning_rate: 1.0e-6
+  num_rollouts: 8
+  groups_per_batch: 4
+  min_rollouts_per_group: 2
+  temperature: 1.0
+  top_p: 1.0
+
+workers:
+  num_rollout_workers: 1
+  max_in_flight_rollouts: 32
+
+rollout:
+  max_model_len: 8192
+  max_num_seqs: 64
+  max_concurrent_trajectories: 32
+  max_tokens_per_turn: 512
+  max_assistant_turns: 8
+  enable_prefix_caching: true
+  vllm_metrics_port: 9090
+  generation_timeout_secs: 600
+  trajectory_timeout_secs: 3600
+
+pipeline:
+  pending_tasks_queue_size: 64
+  completed_rollouts_queue_size: 256
+  train_batches_queue_size: 16
+  max_policy_staleness: 0
+  seed: 0
+  group_assembly_timeout_secs: 3900
+  group_poll_interval_secs: 5
+
+telemetry:
+  run_id: null
+  otel_endpoint: null
+
+ray:
+  ignore_reinit_error: true
+
+infra:
+  release_name: grl-resources
+  release_namespace: default
+  cluster_name: grl
+  region: us-west-2
+  helm_chart_path: infra/modules/resources/chart
+  ray_address: ray://grl-ray-head:10001
+  ray_cluster:
+    name: grl-ray
+    namespace: default
+    version: 2.55.1
+    images:
+      head: grl-training:head
+      rollouts: grl-training:rollouts
+      training: grl-training:training
+    workers:
+      rollouts:
+        gpus_per_node: 1
+        vllm_metrics_port: 9090
+      training:
+        gpus_per_node: 1
+  otel_collector:
+    name: grl-collector
+    namespace: default
+    upstream:
+      endpoint: https://otel.gerardosalazar.com
+      username: ""
+      password: ""
+  dcgm_exporter:
+    namespace: default
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+  manager:
+    name: grl-manager
+    namespace: default
+    image: grl-manager:latest
+    port: 50051
+    bundle_uri: ""
+    env_id: ""
+    active_dir: active
+    max_concurrent_envs: "32"
+  vm_image_cache:
+    namespace: default
+    bucket: my-bucket
+    region: us-west-2
+    image: peakcom/s5cmd:v2.3.0
+    pause_image: registry.k8s.io/pause:3.10
+    host_path: /var/lib/grl
+  model_cache:
+    namespace: default
+    tag: Qwen/Qwen3.5-4B
+    revision: ""
+    huggingface_token: ""
+    image: python:3.12-slim
+    pause_image: registry.k8s.io/pause:3.10
+    host_path: /models

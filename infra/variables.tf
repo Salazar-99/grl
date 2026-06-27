@@ -100,6 +100,25 @@ variable "vm_images_bucket" {
   description = "S3 bucket holding Firecracker VM artifacts (kernel/, bases/, tasks/, manifest.json) — must match the VMS_S3_BUCKET used by environments/swebench-lite/vms uploads. Empty disables the vm-image-cache DaemonSet and its IAM policy."
 }
 
+variable "model_tag" {
+  type        = string
+  default     = ""
+  description = "Hugging Face model repo id to cache on GPU nodes (e.g. Qwen/Qwen2.5-7B). Weights are stored at /models/<repo-name>. Empty disables the model-cache DaemonSet."
+}
+
+variable "model_revision" {
+  type        = string
+  default     = ""
+  description = "Optional Hugging Face revision (branch, tag, or commit) for model_tag. Empty uses the repo default."
+}
+
+variable "huggingface_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional Hugging Face Hub token for authenticated downloads in the model-cache DaemonSet (higher rate limits, gated models, hf_transfer)."
+}
+
 variable "opentelemetry_operator_chart_version" {
   type        = string
   default     = null
