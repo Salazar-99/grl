@@ -121,7 +121,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.train.loss', 'grl.train.pg_loss', 'grl.train.kl')\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.train.loss', 'grl.train.pg_loss', 'grl.train.kl')\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -214,7 +214,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.train.grad_norm', 'grl.train.clip_fraction', 'grl.train.ratio_mean')\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.train.grad_norm', 'grl.train.clip_fraction', 'grl.train.ratio_mean')\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -307,7 +307,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -400,7 +400,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.advantage'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.advantage'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -462,7 +462,7 @@
           },
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.policy_version'",
+          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.policy_version'",
           "refId": "A"
         }
       ],
@@ -524,7 +524,7 @@
           },
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.rollouts_used'",
+          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.rollouts_used'",
           "refId": "A"
         }
       ],
@@ -617,7 +617,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['reason'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.train.groups_dropped'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['reason'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.train.groups_dropped'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -710,7 +710,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.step.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.step.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -803,7 +803,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.weight_sync.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.train.weight_sync.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -909,7 +909,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['done_reason'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.rollout.completed'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['done_reason'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.rollout.completed'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1002,7 +1002,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['cause'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.rollout.truncated'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['cause'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.rollout.truncated'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1095,7 +1095,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['tool'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.rollout.tool_calls'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['tool'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.rollout.tool_calls'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1188,7 +1188,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1281,7 +1281,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.num_turns'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.num_turns'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1374,7 +1374,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.policy_staleness'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.policy_staleness'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1467,7 +1467,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.gaia_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName = 'grl.rollout.response_tokens'\nGROUP BY time\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName = 'grl.rollout.response_tokens'\nGROUP BY time\nORDER BY time",
           "refId": "A"
         }
       ],
@@ -1560,7 +1560,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -1653,7 +1653,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['grl.role'] AS series, Value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.rollout.in_flight'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['grl.role'] AS series, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.rollout.in_flight'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -1759,7 +1759,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_running'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_running'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -1852,7 +1852,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:gpu_cache_usage_perc'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:gpu_cache_usage_perc'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -1945,7 +1945,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_waiting'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_waiting'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -2038,7 +2038,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['pod'] AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:prompt_tokens_total'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['pod'] AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:prompt_tokens_total'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2131,7 +2131,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['pod'] AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:generation_tokens_total'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['pod'] AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:generation_tokens_total'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2224,7 +2224,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:time_to_first_token_seconds'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:time_to_first_token_seconds'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2317,7 +2317,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:e2e_request_latency_seconds'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'vllm' AND MetricName = 'vllm:e2e_request_latency_seconds'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2423,7 +2423,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.pipeline.pending_tasks.depth', 'grl.pipeline.completed_rollouts.depth', 'grl.pipeline.train_batches.depth')\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.pipeline.pending_tasks.depth', 'grl.pipeline.completed_rollouts.depth', 'grl.pipeline.train_batches.depth')\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -2516,7 +2516,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.pipeline.groups.partial', 'grl.pipeline.groups.ready')\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, MetricName AS metric, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName IN ('grl.pipeline.groups.partial', 'grl.pipeline.groups.ready')\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -2609,7 +2609,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['reason'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.pipeline.batch.emitted'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['reason'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.pipeline.batch.emitted'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2702,7 +2702,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.pipeline.batch.size'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.pipeline.batch.size'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2795,7 +2795,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.pipeline.group.assembly.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.pipeline.group.assembly.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2888,7 +2888,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.pipeline.group.timeout'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.pipeline.group.timeout'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -2994,7 +2994,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "WITH grouped AS (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS k,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.env.rpc.duration'\n  GROUP BY t, k\n)\nSELECT time, series, value FROM (\n  SELECT t AS time, concat(k, ' p50') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n  UNION ALL\n  SELECT t AS time, concat(k, ' p95') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n)\nORDER BY time",
+          "rawSql": "WITH grouped AS (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS k,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.env.rpc.duration'\n  GROUP BY t, k\n)\nSELECT time, series, value FROM (\n  SELECT t AS time, concat(k, ' p50') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n  UNION ALL\n  SELECT t AS time, concat(k, ' p95') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n)\nORDER BY time",
           "refId": "A"
         }
       ],
@@ -3087,7 +3087,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['grl.role'] AS series, Value\nFROM default.gaia_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.env.active'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['grl.role'] AS series, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.env.active'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3180,7 +3180,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.errors'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.errors'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -3273,7 +3273,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.retries'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.retries'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -3366,7 +3366,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.infra_errors'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.infra_errors'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -3459,7 +3459,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['tool'] AS series, max(Value) AS v\n  FROM default.gaia_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.tool.calls'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['tool'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.tool.calls'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -3565,7 +3565,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.active'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.active'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3658,7 +3658,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vms.active'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vms.active'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3751,7 +3751,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['phase'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.by_phase'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['phase'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.by_phase'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3844,7 +3844,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.capacity.utilization'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.capacity.utilization'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3937,7 +3937,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.admission.rejected'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.admission.rejected'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4030,7 +4030,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['ok'] AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vm.boots'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['ok'] AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vm.boots'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4123,7 +4123,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vm.boot.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vm.boot.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4216,7 +4216,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vm.boot.failures'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vm.boot.failures'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4309,7 +4309,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.evaluate.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.evaluate.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4402,7 +4402,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "WITH grouped AS (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS k,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.gaia_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.rpc.duration'\n  GROUP BY t, k\n)\nSELECT time, series, value FROM (\n  SELECT t AS time, concat(k, ' p50') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n  UNION ALL\n  SELECT t AS time, concat(k, ' p95') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n)\nORDER BY time",
+          "rawSql": "WITH grouped AS (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS k,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.rpc.duration'\n  GROUP BY t, k\n)\nSELECT time, series, value FROM (\n  SELECT t AS time, concat(k, ' p50') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n  UNION ALL\n  SELECT t AS time, concat(k, ' p95') AS series, arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS value\n  FROM grouped WHERE arraySum(bc) > 0\n)\nORDER BY time",
           "refId": "A"
         }
       ],
@@ -4495,7 +4495,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.rpc.requests'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.rpc.requests'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4588,7 +4588,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.gaia_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.evaluate.infra_errors'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         '' AS series, max(Value) AS v\n  FROM default.grl_metrics_sum_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.evaluate.infra_errors'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
@@ -4694,7 +4694,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_UTIL'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_UTIL'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4787,7 +4787,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_USED'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_USED'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4880,7 +4880,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_POWER_USAGE'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_POWER_USAGE'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4973,7 +4973,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_TEMP'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_TEMP'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5066,7 +5066,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_SM_CLOCK'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_SM_CLOCK'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5159,7 +5159,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_FREE'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_FREE'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5265,7 +5265,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5358,7 +5358,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_mem_used'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_mem_used'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5451,7 +5451,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_gpus_utilization'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_gpus_utilization'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5544,7 +5544,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_object_store_memory'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_object_store_memory'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5637,7 +5637,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['ray_node_type'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_cluster_active_nodes'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['ray_node_type'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_cluster_active_nodes'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5730,7 +5730,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['ray_group'] AS series, Value\nFROM default.gaia_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_resources'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['ray_group'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_resources'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5893,14 +5893,14 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "definition": "SELECT DISTINCT RunId FROM default.gaia_metrics WHERE RunId != '' ORDER BY RunId DESC",
+        "definition": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
         "hide": 0,
         "includeAll": false,
         "label": "Run",
         "multi": false,
         "name": "run_id",
         "options": [],
-        "query": "SELECT DISTINCT RunId FROM default.gaia_metrics WHERE RunId != '' ORDER BY RunId DESC",
+        "query": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -5913,14 +5913,14 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "definition": "SELECT toString(min(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+        "definition": "SELECT toString(min(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
         "hide": 2,
         "includeAll": false,
         "label": "Run start",
         "multi": false,
         "name": "run_start",
         "options": [],
-        "query": "SELECT toString(min(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+        "query": "SELECT toString(min(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -5933,14 +5933,14 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "definition": "SELECT toString(max(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+        "definition": "SELECT toString(max(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
         "hide": 2,
         "includeAll": false,
         "label": "Run end",
         "multi": false,
         "name": "run_end",
         "options": [],
-        "query": "SELECT toString(max(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+        "query": "SELECT toString(max(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,

@@ -152,7 +152,7 @@ def q_otlp_multi(names: list[str]) -> str:
     lst = ", ".join(f"'{n}'" for n in names)
     return (
         "SELECT TimeUnix AS time, MetricName AS metric, Value\n"
-        "FROM default.gaia_metrics\n"
+        "FROM default.grl_metrics\n"
         "WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n"
         f"  AND MetricName IN ({lst})\n"
         "ORDER BY TimeUnix"
@@ -162,7 +162,7 @@ def q_otlp_multi(names: list[str]) -> str:
 def q_otlp_by_attr(name: str, attr: str) -> str:
     return (
         f"SELECT TimeUnix AS time, Attributes['{attr}'] AS series, Value\n"
-        "FROM default.gaia_metrics\n"
+        "FROM default.grl_metrics\n"
         "WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n"
         f"  AND MetricName = '{name}'\n"
         "ORDER BY TimeUnix"
@@ -172,7 +172,7 @@ def q_otlp_by_attr(name: str, attr: str) -> str:
 def q_otlp_stat(name: str) -> str:
     return (
         "SELECT argMax(Value, TimeUnix) AS value\n"
-        "FROM default.gaia_metrics\n"
+        "FROM default.grl_metrics\n"
         "WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n"
         f"  AND MetricName = '{name}'"
     )
@@ -187,7 +187,7 @@ def q_otlp_counter_rate(name: str, attr: str | None = None) -> str:
         "FROM (\n"
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         f"         {series} AS series, max(Value) AS v\n"
-        "  FROM default.gaia_metrics\n"
+        "  FROM default.grl_metrics\n"
         "  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n"
         f"    AND MetricName = '{name}'\n"
         "  GROUP BY t, series\n"
@@ -213,7 +213,7 @@ def q_otlp_hist_quant(name: str) -> str:
         "FROM (\n"
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         "         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n"
-        "  FROM default.gaia_metrics_histogram_landing\n"
+        "  FROM default.grl_metrics_histogram_landing\n"
         "  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n"
         f"    AND MetricName = '{name}'\n"
         "  GROUP BY t\n"
@@ -237,7 +237,7 @@ def q_otlp_hist_quant_by_attr(name: str, attr: str) -> str:
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         f"         Attributes['{attr}'] AS k,\n"
         "         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n"
-        "  FROM default.gaia_metrics_histogram_landing\n"
+        "  FROM default.grl_metrics_histogram_landing\n"
         "  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n"
         f"    AND MetricName = '{name}'\n"
         "  GROUP BY t, k\n"
@@ -257,7 +257,7 @@ def q_otlp_hist_avg(name: str) -> str:
     return (
         "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n"
         "       sum(Sum) / nullIf(sum(Count), 0) AS mean\n"
-        "FROM default.gaia_metrics_histogram_landing\n"
+        "FROM default.grl_metrics_histogram_landing\n"
         "WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n"
         f"  AND MetricName = '{name}'\n"
         "GROUP BY time\nORDER BY time"
@@ -274,7 +274,7 @@ WINDOW = (
 def q_scraped_gauge(name: str, svc: str, by: str) -> str:
     return (
         f"SELECT TimeUnix AS time, Attributes['{by}'] AS series, Value\n"
-        "FROM default.gaia_metrics_landing\n"
+        "FROM default.grl_metrics_landing\n"
         f"WHERE {WINDOW}\n"
         f"  AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "ORDER BY TimeUnix"
@@ -293,7 +293,7 @@ def q_scraped_counter_rate(name: str, svc: str, by: str | None = None) -> str:
         "FROM (\n"
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         f"         {series} AS series, max(Value) AS v\n"
-        "  FROM default.gaia_metrics_sum_landing\n"
+        "  FROM default.grl_metrics_sum_landing\n"
         f"  WHERE {WINDOW}\n"
         f"    AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "  GROUP BY t, series\n"
@@ -312,7 +312,7 @@ def q_scraped_hist_quant(name: str, svc: str) -> str:
         "FROM (\n"
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         "         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n"
-        "  FROM default.gaia_metrics_histogram_landing\n"
+        "  FROM default.grl_metrics_histogram_landing\n"
         f"  WHERE {WINDOW}\n"
         f"    AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "  GROUP BY t\n"
@@ -330,7 +330,7 @@ def q_scraped_hist_quant_by_attr(name: str, svc: str, attr: str) -> str:
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         f"         Attributes['{attr}'] AS k,\n"
         "         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n"
-        "  FROM default.gaia_metrics_histogram_landing\n"
+        "  FROM default.grl_metrics_histogram_landing\n"
         f"  WHERE {WINDOW}\n"
         f"    AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "  GROUP BY t, k\n"
@@ -533,26 +533,26 @@ dashboard = {
     "templating": {"list": [
         {
             "current": {}, "datasource": DS,
-            "definition": "SELECT DISTINCT RunId FROM default.gaia_metrics WHERE RunId != '' ORDER BY RunId DESC",
+            "definition": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
             "hide": 0, "includeAll": False, "label": "Run", "multi": False,
             "name": "run_id", "options": [],
-            "query": "SELECT DISTINCT RunId FROM default.gaia_metrics WHERE RunId != '' ORDER BY RunId DESC",
+            "query": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
             "refresh": 1, "regex": "", "skipUrlSync": False, "sort": 1, "type": "query",
         },
         {
             "current": {}, "datasource": DS,
-            "definition": "SELECT toString(min(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+            "definition": "SELECT toString(min(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
             "hide": 2, "includeAll": False, "label": "Run start", "multi": False,
             "name": "run_start", "options": [],
-            "query": "SELECT toString(min(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+            "query": "SELECT toString(min(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
             "refresh": 2, "regex": "", "skipUrlSync": False, "sort": 0, "type": "query",
         },
         {
             "current": {}, "datasource": DS,
-            "definition": "SELECT toString(max(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+            "definition": "SELECT toString(max(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
             "hide": 2, "includeAll": False, "label": "Run end", "multi": False,
             "name": "run_end", "options": [],
-            "query": "SELECT toString(max(TimeUnix)) FROM default.gaia_metrics WHERE RunId = '${run_id}'",
+            "query": "SELECT toString(max(TimeUnix)) FROM default.grl_metrics WHERE RunId = '${run_id}'",
             "refresh": 2, "regex": "", "skipUrlSync": False, "sort": 0, "type": "query",
         },
     ]},

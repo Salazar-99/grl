@@ -1,0 +1,111 @@
+# GRL ClickHouse export config for the shared external collector.
+#
+# Merge this into gaia/metrics-pipeline/otel-collector.yaml (same ClickHouse
+# endpoint, same OTLP ingress). Gaia gchat runs tag service.name=gaia; GRL
+# tags service.name=grl-{role} and the in-cluster collector forwards scraped
+# ray/vllm/dcgm series that never touch gaia tables.
+#
+# Routing uses two parallel pipelines per signal with filter processors:
+#   filter/gaia  -> clickhouse/gaia/*  (service.name == "gaia")
+#   filter/grl   -> clickhouse/grl/*   (everything else)
+#
+# Apply infra/observability/schema.sql before pointing the GRL exporters here
+# (create_schema: false on all GRL tables).
+
+processors:
+  filter/gaia:
+    error_mode: ignore
+    metrics:
+      include:
+        match_type: strict
+        resource_attributes:
+          - key: service.name
+            value: gaia
+    logs:
+      include:
+        match_type: strict
+        resource_attributes:
+          - key: service.name
+            value: gaia
+    traces:
+      include:
+        match_type: strict
+        resource_attributes:
+          - key: service.name
+            value: gaia
+  filter/grl:
+    error_mode: ignore
+    metrics:
+      exclude:
+        match_type: strict
+        resource_attributes:
+          - key: service.name
+            value: gaia
+    logs:
+      exclude:
+        match_type: strict
+        resource_attributes:
+          - key: service.name
+            value: gaia
+    traces:
+      exclude:
+        match_type: strict
+        resource_attributes:
+          - key: service.name
+            value: gaia
+
+exporters:
+  clickhouse/grl/metrics:
+    endpoint: tcp://clickhouse-gaia-clickhouse.gaia-metrics.svc.cluster.local:9000?dial_timeout=10s
+    username: otel
+    password: ${env:CLICKHOUSE_PASSWORD}
+    database: default
+    create_schema: false
+    metrics_tables:
+      gauge:
+        name: grl_metrics_landing
+      sum:
+        name: grl_metrics_sum_landing
+      histogram:
+        name: grl_metrics_histogram_landing
+  clickhouse/grl/logs:
+    endpoint: tcp://clickhouse-gaia-clickhouse.gaia-metrics.svc.cluster.local:9000?dial_timeout=10s
+    username: otel
+    password: ${env:CLICKHOUSE_PASSWORD}
+    database: default
+    create_schema: false
+    logs_table_name: grl_logs
+    traces_table_name: grl_traces
+
+# Rename the existing exporters for clarity, then replace the service.pipelines
+# block with the split pipelines below.
+#
+#   clickhouse/metrics  ->  clickhouse/gaia/metrics   (unchanged table names)
+#   clickhouse/traces   ->  clickhouse/gaia/logs      (unchanged table names)
+#
+# service:
+#   pipelines:
+#     metrics/gaia:
+#       receivers: [otlp]
+#       processors: [batch, filter/gaia]
+#       exporters: [clickhouse/gaia/metrics]
+#     metrics/grl:
+#       receivers: [otlp]
+#       processors: [batch, filter/grl]
+#       exporters: [clickhouse/grl/metrics]
+#     traces/gaia:
+#       receivers: [otlp]
+#       processors: [batch, filter/gaia]
+#       exporters: [clickhouse/gaia/logs]
+#     traces/grl:
+#       receivers: [otlp]
+#       processors: [batch, filter/grl]
+#       exporters: [clickhouse/grl/logs]
+#     logs/gaia:
+#       receivers: [otlp]
+#       processors: [batch, filter/gaia]
+#       exporters: [clickhouse/gaia/logs]
+#     logs/grl:
+#       receivers: [otlp]
+#       processors: [batch, filter/grl]
+#       exporters: [clickhouse/grl/logs]

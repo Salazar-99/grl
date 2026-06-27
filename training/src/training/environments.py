@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -12,7 +14,7 @@ import grpc
 
 from training.config import EnvironmentRpcTimeoutsConfig
 from training.proto.grl.environment.v1 import environment_pb2, environment_pb2_grpc
-from training.telemetry import counter, gauge, record_duration, span
+from training.telemetry import counter, gauge, histogram, span
 
 # Open environment sessions on this process (create succeeded, teardown not yet
 # run). asyncio is single-threaded per Ray actor, so a plain int is race-free;
@@ -24,6 +26,23 @@ def _set_active_sessions(delta: int) -> None:
     global _active_sessions
     _active_sessions += delta
     gauge("grl.env.active").set(_active_sessions)
+
+
+@contextmanager
+def _record_env_rpc_duration(rpc: str) -> Iterator[None]:
+    """Time one env RPC and tag the histogram with success vs failure."""
+    start = time.perf_counter()
+    ok = True
+    try:
+        yield
+    except BaseException:
+        ok = False
+        raise
+    finally:
+        histogram("grl.env.rpc.duration", unit="s").record(
+            time.perf_counter() - start, {"rpc": rpc, "ok": ok}
+        )
+
 
 T = TypeVar("T")
 
@@ -152,9 +171,7 @@ async def list_task_ids(
     channel = grpc.aio.insecure_channel(addr)
     stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
     try:
-        with span("env.list_tasks"), record_duration(
-            "grl.env.rpc.duration", rpc="list_tasks"
-        ):
+        with span("env.list_tasks"), _record_env_rpc_duration("list_tasks"):
             response = await stub.ListTasks(
                 environment_pb2.ListTasksRequest(split=split or ""),
                 timeout=timeouts.list_tasks_secs,
@@ -231,9 +248,7 @@ class EnvironmentSession:
                 raise
             return channel, stub, response
 
-        with span("env.create", task_id=task_id), record_duration(
-            "grl.env.rpc.duration", rpc="create"
-        ):
+        with span("env.create", task_id=task_id), _record_env_rpc_duration("create"):
             channel, stub, response = await _grpc_retry(
                 _create_once,
                 max_attempts=retry_cfg.max_attempts,
@@ -279,9 +294,7 @@ class EnvironmentSession:
                 timeout=timeout,
             )
 
-        with span("env.execute", tool=tool_name), record_duration(
-            "grl.env.rpc.duration", rpc="execute"
-        ):
+        with span("env.execute", tool=tool_name), _record_env_rpc_duration("execute"):
             response = await _grpc_retry(
                 _execute_once,
                 max_attempts=self._retry.max_attempts,
@@ -307,9 +320,7 @@ class EnvironmentSession:
                 timeout=self._rpc.evaluate_secs,
             )
 
-        with span("env.evaluate"), record_duration(
-            "grl.env.rpc.duration", rpc="evaluate"
-        ):
+        with span("env.evaluate"), _record_env_rpc_duration("evaluate"):
             response = await _grpc_retry(
                 _evaluate_once,
                 max_attempts=self._retry.max_attempts,
@@ -327,9 +338,7 @@ class EnvironmentSession:
 
     async def teardown(self) -> None:
         try:
-            with span("env.teardown"), record_duration(
-                "grl.env.rpc.duration", rpc="teardown"
-            ):
+            with span("env.teardown"), _record_env_rpc_duration("teardown"):
                 await self._stub.Teardown(
                     environment_pb2.TeardownRequest(env_id=self.env_id),
                     timeout=self._rpc.teardown_secs,

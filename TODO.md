@@ -10,19 +10,9 @@ Create and upload environment bundle for swebench-lite
 
 Observability
 -------------
-See NOTES.md for the pipeline layout, metric catalog, and ClickHouse schema
-notes.
-- [ ] Emit the catalog metrics/spans from real call sites using the
-      `training.telemetry` helpers — they exist but nothing calls them yet. Tag
-      with policy_version (run.id + per-role `init_telemetry` + OTLP export to
-      the in-cluster collector are already wired). Then add equivalent OTel
-      instrumentation to the Rust manager (`environments/manager/`).
-- [ ] Figure out how to store and query trajectories
-- [ ] Implement a single Grafana dashboard as provisioned JSON checked into
-      the repo (e.g. `infra/observability/grafana/grl-dashboard.json`), rows:
-      Training, Rollouts/vLLM, Pipeline, Environment, GPU/Ray, Evals — all
-      panels backed by the ClickHouse datasource. Include a trajectory-
-      browser table panel over `grl.trajectories`.
+Deploy observability changes
+- Add new clickhouse schema to gnode
+- Update otel collector config on gnode
 
 Launcher
 ---------

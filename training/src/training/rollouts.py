@@ -542,6 +542,11 @@ class RolloutWorker:
                 break
 
             turn_prompt_ids = list(session.prompt_ids)
+            if len(turn_prompt_ids) >= self.max_model_len:
+                counter("grl.rollout.truncated").add(1, {"cause": "model_len"})
+                session.done = True
+                break
+
             generation_policy_start = self.policy_version
             if session.assistant_turns == 0:
                 session.policy_version_start = generation_policy_start

@@ -172,6 +172,7 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         worker = object.__new__(worker_cls)
         worker.policy_version = 2
         worker.max_assistant_turns = 4
+        worker.max_model_len = 8192
         worker.generation_timeout_secs = 1.0
         worker.renderer = FakeRenderer()
 
@@ -306,6 +307,53 @@ class InstrumentationTests(unittest.TestCase):
         self.assertEqual(advantages, [])
         self.assertEqual(rewards, [])
         self.assertIn("grl.train.groups_dropped", names)
+
+    def test_record_train_metrics_emits_instruments(self) -> None:
+        from training import telemetry
+        from training.trainer import TrainingWorker
+
+        reader, provider, meter = self._patched_meter()
+        worker_cls = TrainingWorker.__ray_metadata__.modified_class
+        worker = object.__new__(worker_cls)
+        worker.policy_version = 2
+
+        import torch
+
+        tensors = {
+            "response_mask": torch.tensor([[True, True, False], [True, False, False]]),
+        }
+        try:
+            with patch.object(telemetry, "_meter", lambda: meter):
+                self._reset(telemetry)
+                worker._record_train_metrics(
+                    loss=0.42,
+                    stats={
+                        "pg_loss": 0.1,
+                        "kl": 0.02,
+                        "clip_fraction": 0.05,
+                        "ratio_mean": 1.01,
+                    },
+                    grad_norm=1.5,
+                    mean_entropy=2.3,
+                    tensors=tensors,
+                    advantages=[torch.tensor(0.1), torch.tensor(0.2)],
+                    rewards=[0.8, 0.2],
+                    num_rollouts=2,
+                )
+            names = self._names(reader)
+        finally:
+            provider.shutdown()
+
+        for expected in (
+            "grl.train.batches",
+            "grl.train.tokens",
+            "grl.train.loss",
+            "grl.train.entropy",
+            "grl.train.advantage",
+            "grl.train.reward",
+            "grl.train.rollouts_used",
+        ):
+            self.assertIn(expected, names)
 
 
 if __name__ == "__main__":

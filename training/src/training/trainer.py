@@ -104,10 +104,11 @@ class TrainingWorker:
             if not rollouts:
                 return
 
+            current.set_attribute("num_rollouts", len(rollouts))
             self.optimizer.zero_grad()
             tensors = self._collate_rollouts(rollouts, advantages)
             with record_duration("grl.train.step.duration"):
-                trainer_logprobs = self._get_logprobs(
+                trainer_logprobs, mean_entropy = self._get_logprobs(
                     tensors["input_ids"],
                     tensors["attention_mask"],
                     tensors["prompt_lens"],
@@ -130,6 +131,7 @@ class TrainingWorker:
                 loss=float(loss.item()),
                 stats=stats,
                 grad_norm=float(grad_norm),
+                mean_entropy=mean_entropy,
                 tensors=tensors,
                 advantages=advantages,
                 rewards=rewards,
@@ -154,6 +156,7 @@ class TrainingWorker:
         loss: float,
         stats: dict[str, float],
         grad_norm: float,
+        mean_entropy: float,
         tensors: dict[str, "torch.Tensor"],
         advantages: list["torch.Tensor"],
         rewards: list[float],
@@ -165,6 +168,7 @@ class TrainingWorker:
         gauge("grl.train.loss").set(loss, pv)
         gauge("grl.train.pg_loss").set(stats["pg_loss"], pv)
         gauge("grl.train.kl").set(stats["kl"], pv)
+        gauge("grl.train.entropy").set(mean_entropy, pv)
         gauge("grl.train.clip_fraction").set(stats["clip_fraction"], pv)
         gauge("grl.train.ratio_mean").set(stats["ratio_mean"], pv)
         gauge("grl.train.grad_norm").set(grad_norm, pv)
@@ -292,8 +296,8 @@ class TrainingWorker:
         attention_mask: torch.Tensor,
         prompt_lens: torch.Tensor,
         response_lens: torch.Tensor,
-    ) -> torch.Tensor:
-        """Per-response-token logprobs, padded to (batch, max_response_len)."""
+    ) -> tuple["torch.Tensor", float]:
+        """Per-response-token logprobs and mean token entropy over the batch."""
         import torch.nn.functional as F
 
         outputs = self.model(input_ids, attention_mask=attention_mask)
@@ -301,6 +305,7 @@ class TrainingWorker:
         shifted_logits = logits[:, :-1, :]
         shifted_labels = input_ids[:, 1:]
         log_probs = F.log_softmax(shifted_logits, dim=-1)
+        per_token_entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
         gathered = log_probs.gather(-1, shifted_labels.unsqueeze(-1)).squeeze(-1)
 
         batch_size, max_resp = input_ids.shape[0], response_lens.max().item()
@@ -310,12 +315,20 @@ class TrainingWorker:
             dtype=gathered.dtype,
             device=gathered.device,
         )
+        entropy_sum = 0.0
+        token_count = 0
         for i in range(batch_size):
             prompt_len = int(prompt_lens[i])
             resp_len = int(response_lens[i])
-            trainer_logprobs[i, :resp_len] = gathered[i, prompt_len - 1 : prompt_len + resp_len - 1]
+            start = prompt_len - 1
+            end = prompt_len + resp_len - 1
+            trainer_logprobs[i, :resp_len] = gathered[i, start:end]
+            if resp_len > 0:
+                entropy_sum += float(per_token_entropy[i, start:end].sum().item())
+                token_count += resp_len
 
-        return trainer_logprobs
+        mean_entropy = entropy_sum / token_count if token_count else 0.0
+        return trainer_logprobs, mean_entropy
 
     def _compute_loss(
         self,
