@@ -5,19 +5,6 @@ environment:
   bundle_uri: s3://my-bucket/datasets/swebench-lite/dev
   split: dev
   server_addr: grl-manager.default.svc:50051
-  tasks_uri: null
-  retry:
-    max_attempts: 10
-    initial_backoff_secs: 0.5
-    max_backoff_secs: 30.0
-  rpc_timeouts:
-    create_secs: 30
-    list_tasks_secs: 30
-    execute_default_secs: 140
-    execute_submit_secs: 10
-    execute_timeout_buffer_secs: 10
-    evaluate_secs: 930
-    teardown_secs: 30
 
 grpo:
   beta: 0.001
@@ -60,6 +47,40 @@ telemetry:
 ray:
   ignore_reinit_error: true
 
+launch:
+  dry_run: false
+  preflight_only: false
+  tools:
+    auto_install: true
+    terraform: terraform
+    terraform_version: "1.13.0"
+    helm_version: "3.16.4"
+    kubectl_version: "1.32.0"
+  infra:
+    apply: false
+    terraform_dir: infra
+    auto_kubeconfig: true
+  environment:
+    activate: true
+    verify: true
+    refresh_vm_cache: auto
+    purge_cache: false
+  job:
+    submit: true
+    force: false
+    wait: false
+    backend: rayjob
+
+images:
+  mode: published
+  registry: ghcr.io/gerardosalazar/grl
+  tag: "0.1.0"
+  training:
+    head: auto
+    rollouts: auto
+    training: auto
+  manager: auto
+
 infra:
   release_name: grl-resources
   release_namespace: default
@@ -70,7 +91,7 @@ infra:
   ray_cluster:
     name: grl-ray
     namespace: default
-    version: 2.55.1
+    version: "2.55.1"
     images:
       head: grl-training:head
       rollouts: grl-training:rollouts

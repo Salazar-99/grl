@@ -1,0 +1,26 @@
+---
+title: Training telemetry
+navTitle: Telemetry
+eyebrow: Signals
+intro: Training code emits run-level metrics for throughput, queue depth, rewards, policy versions, and optimizer behavior.
+---
+
+## Metrics
+
+Metrics describe rollout throughput, training step duration, reward distributions, and queue pressure.
+
+## Tracing
+
+Trace spans connect launcher actions, rollout execution, environment calls, and training updates.
+
+```python
+meter.record("grl.rollouts.completed", completed_rollouts)
+```
+
+## Logs
+
+Structured logs capture run identifiers and policy versions for later debugging.
+
+## Dashboards
+
+Grafana panels summarize cluster health and training progress during long-running jobs.

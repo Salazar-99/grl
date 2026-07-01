@@ -12,8 +12,9 @@ from typing import Any, TypeVar
 
 import grpc
 
-from training.config import EnvironmentRpcTimeoutsConfig
-from training.proto.grl.environment.v1 import environment_pb2, environment_pb2_grpc
+from grl_config.training import EnvironmentRpcTimeoutsConfig
+from grl_proto.environment_client import list_task_ids as _list_task_ids_raw
+from grl_proto.grl.environment.v1 import environment_pb2, environment_pb2_grpc
 from training.telemetry import counter, gauge, histogram, span
 
 # Open environment sessions on this process (create succeeded, teardown not yet
@@ -168,22 +169,12 @@ async def list_task_ids(
 ) -> list[str]:
     """Fetch task ids from the manager (catalog loaded at manager startup)."""
     timeouts = rpc_timeouts or RpcTimeouts.from_config(EnvironmentRpcTimeoutsConfig())
-    channel = grpc.aio.insecure_channel(addr)
-    stub = environment_pb2_grpc.EnvironmentServiceStub(channel)
-    try:
-        with span("env.list_tasks"), _record_env_rpc_duration("list_tasks"):
-            response = await stub.ListTasks(
-                environment_pb2.ListTasksRequest(split=split or ""),
-                timeout=timeouts.list_tasks_secs,
-            )
-    finally:
-        await channel.close()
-    if not response.tasks:
-        raise RuntimeError(
-            f"manager at {addr} returned no tasks"
-            + (f" for split {split!r}" if split else "")
+    with span("env.list_tasks"), _record_env_rpc_duration("list_tasks"):
+        return await _list_task_ids_raw(
+            addr=addr,
+            split=split,
+            timeout_secs=timeouts.list_tasks_secs,
         )
-    return [entry.task_id for entry in response.tasks]
 
 
 class EnvironmentSession:

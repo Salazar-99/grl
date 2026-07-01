@@ -1,48 +1,53 @@
-"""GRL launcher CLI."""
+"""GRL CLI entrypoint."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from grl.config import GRLConfig, load_config
-
-
-def _launch(config_path: Path) -> int:
-    config = load_config(config_path)
-    _print_config_summary(config)
-    return 0
-
-
-def _print_config_summary(config: GRLConfig) -> None:
-    manager = config.resolved_manager()
-    print(f"Loaded config for run {config.resolve_run_id()}")
-    print(f"  model: {config.model} (local: {config.resolved_model_path()})")
-    print(f"  environment: id={config.environment.id!r} split={config.environment.split!r}")
-    print(f"  manager: bundle_uri={manager.bundle_uri!r} env_id={manager.env_id!r}")
-    model_cache = config.infra.model_cache
-    if model_cache.tag:
-        token_status = "set" if model_cache.huggingface_token else "unset"
-        print(
-            f"  model cache: tag={model_cache.tag!r} "
-            f"revision={model_cache.revision!r} hf_token={token_status}"
-        )
-    print(f"  ray address: {config.infra.ray_address}")
+from grl.config import load_config
+from grl.launcher import launch, write_init_config
+from grl.tools import doctor_tools, ensure_tools, list_installed_tools
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="grl", description="GRL cluster launcher")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    launch_parser = subparsers.add_parser(
-        "launch",
-        help="Load and validate a run config YAML",
+    launch_parser = subparsers.add_parser("launch", help="Launch a GRL training run")
+    launch_parser.add_argument("config", type=Path, help="Path to the run config YAML")
+    launch_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned operations without executing them",
     )
     launch_parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Run preflight checks only",
+    )
+
+    init_parser = subparsers.add_parser("init", help="Write a starter config.yaml")
+    init_parser.add_argument(
+        "destination",
+        type=Path,
+        nargs="?",
+        default=Path("config.yaml"),
+        help="Output path for the starter config",
+    )
+
+    tools_parser = subparsers.add_parser("tools", help="Managed external tools")
+    tools_sub = tools_parser.add_subparsers(dest="tools_command", required=True)
+    tools_sub.add_parser("list", help="List installed managed tools")
+    tools_sub.add_parser("doctor", help="Report managed tool status")
+    install_parser = tools_sub.add_parser("install", help="Install managed tools")
+    install_parser.add_argument(
         "config",
         type=Path,
-        help="Path to the run config YAML file",
+        nargs="?",
+        help="Optional config YAML for tool versions",
     )
 
     args = parser.parse_args(argv)
@@ -51,7 +56,50 @@ def main(argv: list[str] | None = None) -> int:
         if not args.config.is_file():
             print(f"error: config file not found: {args.config}", file=sys.stderr)
             return 1
-        return _launch(args.config)
+        config = load_config(args.config)
+        if args.dry_run:
+            config.launch.dry_run = True
+        if args.preflight_only:
+            config.launch.preflight_only = True
+        try:
+            launch(config, config_path=args.config)
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "init":
+        if args.destination.exists():
+            print(f"error: {args.destination} already exists", file=sys.stderr)
+            return 1
+        write_init_config(args.destination)
+        print(f"Wrote starter config to {args.destination}")
+        return 0
+
+    if args.command == "tools":
+        if args.tools_command == "list":
+            tools = list_installed_tools()
+            print(json.dumps(tools, indent=2))
+            return 0
+        if args.tools_command == "doctor":
+            from grl.config import GRLConfig
+
+            tool_config = GRLConfig.model_validate({"model": "placeholder"})
+            report = doctor_tools(tool_config.launch.tools)
+            for name, path in report.items():
+                print(f"{name}: {path or 'missing'}")
+            return 0
+        if args.tools_command == "install":
+            if args.config and args.config.is_file():
+                tool_config = load_config(args.config).launch.tools
+            else:
+                from grl.config import LaunchToolsConfig
+
+                tool_config = LaunchToolsConfig()
+            paths = ensure_tools(tool_config)
+            for name, path in paths.items():
+                print(f"installed {name}: {path}")
+            return 0
 
     parser.print_help()
     return 1

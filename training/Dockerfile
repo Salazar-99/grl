@@ -3,14 +3,16 @@ FROM python:${PYTHON_VERSION}-slim AS base
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-WORKDIR /app
+WORKDIR /app/training
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    PATH="/app/.venv/bin:${PATH}"
+    PATH="/app/training/.venv/bin:${PATH}"
 
-COPY pyproject.toml uv.lock README.md ./
-COPY src/ ./src/
+COPY training/pyproject.toml training/uv.lock training/README.md ./
+COPY config /app/config
+COPY proto /app/proto
+COPY training/src/ ./src/
 
 FROM base AS head
 RUN uv sync --no-dev --locked --no-cache

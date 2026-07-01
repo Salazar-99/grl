@@ -8,7 +8,7 @@ import ray
 if TYPE_CHECKING:
     import torch
 
-from training.config import GRLConfig
+from grl_config.training import GRLConfig
 from training.rollouts import PolicyWeightsRef, RolloutResult
 from training.telemetry import (
     counter,

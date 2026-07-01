@@ -24,7 +24,7 @@ from renderers import Message, ParsedResponse, ToolSpec
 from renderers import Renderer as BaseRenderer
 from renderers.base import MODEL_RENDERER_MAP, create_renderer
 
-from training.config import GRLConfig
+from grl_config.training import GRLConfig
 from training.environments import (
     EnvironmentSession,
     InfraError,

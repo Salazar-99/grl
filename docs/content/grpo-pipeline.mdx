@@ -1,0 +1,27 @@
+---
+title: GRPO training pipeline
+navTitle: GRPO pipeline
+eyebrow: Training
+intro: The trainer consumes verified trajectories, computes grouped advantages, and updates the policy before publishing fresh weights back to rollout workers.
+---
+
+## Trajectory batches
+
+Training samples are grouped by prompt so relative rewards can be converted into advantages.
+
+## Advantage calculation
+
+GRPO compares completions within the same group instead of relying on a separate value model.
+
+```python
+advantages = rewards - rewards.mean(dim=0)
+loss = policy_loss(logprobs, advantages)
+```
+
+## Optimizer step
+
+The training worker applies gradient updates and records the policy version that produced the batch.
+
+## Versioning
+
+Each update creates a new version that rollout workers can fetch on their refresh cadence.

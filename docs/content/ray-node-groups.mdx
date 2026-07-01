@@ -1,0 +1,28 @@
+---
+title: Ray node groups
+navTitle: Ray node groups
+eyebrow: Scheduling
+intro: Ray resources map actors to the hardware pool they require, keeping scheduling explicit and easy to reason about.
+---
+
+## Head group
+
+The Ray head group owns cluster coordination and should avoid heavyweight training or rollout work.
+
+## Rollout group
+
+Rollout workers request the custom rollout resource so they land on inference GPU nodes.
+
+```python
+@ray.remote(resources={"rollouts": 1})
+class RolloutWorker:
+    pass
+```
+
+## Training group
+
+Training workers request training resources and run with the dependencies needed for optimizer steps.
+
+## Resources
+
+The resource names must agree across Terraform, Helm values, and Python actor declarations.

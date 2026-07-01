@@ -1,0 +1,36 @@
+---
+title: GRL documentation
+navTitle: Overview
+eyebrow: Distributed RLVR
+intro: GRL is a distributed RLVR system for post-training models on software engineering tasks. These docs cover the training loop, infrastructure layout, environment API, and operational workflow.
+---
+
+## Project goals
+
+GRL is built to run full rollout, reward, and GRPO update cycles against isolated software-engineering environments.
+
+- Dedicated runtime boundaries for launch, rollout, training, and environment services
+- Strong contracts between Python training code, Rust environment management, and infrastructure
+- Operational telemetry designed around long-running distributed training jobs
+- Containerized publishing paths for reproducible deploys
+
+## Major components
+
+The system combines Ray actors, vLLM rollout engines, PyTorch training workers, and Firecracker-backed environments.
+
+```python
+from grl import Launcher
+
+launcher = Launcher.from_config("example-config.yaml")
+run = launcher.submit()
+
+print(f"started run {run.id}")
+```
+
+## Deployment shape
+
+Configuration moves through validation, scheduling, environment execution, rewards, and updated policy weights.
+
+## Next steps
+
+Start with the launcher and configuration references before running a cluster-backed training job.

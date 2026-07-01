@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from training.model import local_model_path
+from grl_config.model import local_model_path
 
 
 class ModelPathTests(unittest.TestCase):

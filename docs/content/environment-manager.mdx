@@ -1,0 +1,28 @@
+---
+title: Environment manager
+navTitle: Environment manager
+eyebrow: Environments
+intro: The Rust manager owns Firecracker VM lifecycle and exposes a gRPC service that rollout workers use for tool execution.
+---
+
+## VM lifecycle
+
+The manager creates, resets, and tears down microVMs for rollout sessions.
+
+## gRPC service
+
+Rollout workers call a stable protobuf service instead of depending on manager implementation details.
+
+```protobuf
+service EnvironmentService {
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+}
+```
+
+## Tool execution
+
+Tool calls run inside the VM through an in-guest executor process.
+
+## Cleanup
+
+Sessions are torn down after completion so disk and process resources are reclaimed.

@@ -6,20 +6,26 @@ vLLM — with production-quality correctness, performance, and observability.
 Scaling and fault tolerance are explicitly deferred (see bottom). General
 reference material lives in NOTES.md.
 
-Create and upload environment bundle for swebench-lite
+
+
+Code Review
+-------------
+- Read and review all code in launcher
+- Read and review all code in training
 
 Observability
 -------------
-Deploy observability changes
-- Add new clickhouse schema to gnode
-- Update otel collector config on gnode
 
-Launcher
----------
-- Switching logic to deploy cluster or not
-- Logic to deploy cluster
-- Logic to kickoff training
-- Logic to kickoff new training on existing cluster
+
+
+Initial Testing
+----------------
+- Create and upload environment bundle for swebench-lite
+- Deploy observability changes
+      - Add new clickhouse schema to gnode
+      - Update otel collector config on gnode
+- Use launcher to trigger end-to-end run
+
 
 Deferred (scaling / fault tolerance)
 ------------------------------------

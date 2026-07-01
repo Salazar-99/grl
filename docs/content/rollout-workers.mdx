@@ -1,0 +1,26 @@
+---
+title: Rollout workers
+navTitle: Rollout workers
+eyebrow: Inference
+intro: Rollout workers host vLLM engines, run agent loops, call environment sessions, and stream completed samples into the training queue.
+---
+
+## Engine lifecycle
+
+Each worker owns an inference engine and refreshes policy weights as new versions become available.
+
+## Tool calls
+
+The agent loop sends tool requests to an environment session rather than mutating local state.
+
+```python
+result = await environment.execute_tool(name="bash", arguments={"cmd": "pytest"})
+```
+
+## Sampling
+
+Workers generate multiple completions per prompt so the trainer can compare outcomes within a group.
+
+## Backpressure
+
+Queue sizes and pending environment requests determine when new rollout work should be admitted.

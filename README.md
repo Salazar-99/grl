@@ -33,7 +33,7 @@ grl/
 │       ├── rollouts.py        # RolloutWorker: vLLM async engine + multi-turn agent loop
 │       ├── trainer.py         # TrainingWorker: GRPO updates, weight publishing
 │       ├── environments.py    # EnvironmentSession: gRPC client for EnvironmentService (one channel per env)
-│       └── proto/             # generated Python stubs for gRPC client
+│       └── (uses grl_proto)     # shared Python gRPC stubs for the environment API
 |
 └── infra/                     # Terraform module with submodules to provision a VPC, EKS cluster, and Helm charts with grl specific config
     └── modules/
@@ -87,12 +87,12 @@ During rollouts, `RolloutWorker` creates one environment per trajectory (`Enviro
 | Language | Tool | Output |
 |----------|------|--------|
 | Rust | `tonic-build` in `environments/manager/build.rs` | compiled into the manager crate at build time |
-| Python | `uv run generate-proto` in `training/` | `training/src/training/proto/` (checked in) |
+| Python | `uv run generate-proto` in `proto/` | `proto/src/grl_proto/` (checked in) |
 
-Rust uses a vendored `protoc` binary, so no system install is required. Python codegen uses the `generate-proto` console script in the training package:
+Rust uses a vendored `protoc` binary, so no system install is required. Python codegen uses the `generate-proto` console script in the `grl-proto` package:
 
 ```bash
-cd training
+cd proto
 uv sync --group dev
 uv run generate-proto
 ```
@@ -102,7 +102,7 @@ uv run generate-proto
 **When you change the proto:**
 
 1. Edit `environments/proto/grl/environment/v1/environment.proto`.
-2. Regenerate Python stubs: `uv run generate-proto` (from `training/`).
+2. Regenerate Python stubs: `uv run generate-proto` (from `proto/`).
 3. Rebuild the Rust manager: `cargo build` (from `environments/manager/`; runs `tonic-build` automatically).
 4. Update the Rust service impl in `environments/manager/src/environment.rs` and the Python client in `training/src/training/environments.py`.
 

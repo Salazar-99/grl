@@ -9,7 +9,7 @@ from typing import Any
 import ray
 from opentelemetry.metrics import Observation
 
-from training.config import DEFAULT_CONFIG_PATH, GRLConfig
+from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig
 from training.environments import RpcTimeouts, list_task_ids
 from training.rollouts import RolloutRequest, RolloutResult, RolloutWorker
 from training.telemetry import (

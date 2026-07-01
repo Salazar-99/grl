@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-from training.proto.grl.environment.v1 import environment_pb2 as grl_dot_environment_dot_v1_dot_environment__pb2
+from grl_proto.grl.environment.v1 import environment_pb2 as grl_dot_environment_dot_v1_dot_environment__pb2
 
-GRPC_GENERATED_VERSION = '1.81.0'
+GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 

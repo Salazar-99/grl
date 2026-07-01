@@ -13,13 +13,19 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "ray[default]==2.55.1",
-    "grpcio>=1.60",
+    "grpcio>=1.81.1",
     "boto3>=1.35.0",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-grpc>=1.27",
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "grl-config",
+    "grl-proto",
 ]
+
+[tool.uv.sources]
+grl-config = { path = "../config" }
+grl-proto = { path = "../proto" }
 
 [project.optional-dependencies]
 training = [
@@ -33,12 +39,11 @@ rollouts = [
 
 [project.scripts]
 training = "training.main:main"
-generate-proto = "training.proto.generate_proto:main"
 
 [dependency-groups]
 dev = [
-    "grpcio-tools>=1.60",
     "renderers>=0.1.6",
     "torch>=2.5.0",
     "transformers>=4.46",
+    "pytest>=8.0",
 ]

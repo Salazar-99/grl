@@ -1,0 +1,26 @@
+---
+title: Launcher CLI
+navTitle: Launcher CLI
+eyebrow: Reference
+intro: The launcher validates configuration, builds bundles, verifies external tools, and submits GRL runs to the configured cluster.
+---
+
+## Commands
+
+The launcher groups setup, verification, and run submission into command-line workflows.
+
+## Validation
+
+Configuration is validated before any cluster resources are touched.
+
+```bash
+grl launch --config launcher/example-config.yaml
+```
+
+## Secrets
+
+Secrets are resolved from configured stores and passed only to the components that need them.
+
+## Submission
+
+Submission creates the run resources and records the generated run identifier.

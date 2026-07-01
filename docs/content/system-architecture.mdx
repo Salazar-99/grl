@@ -1,0 +1,43 @@
+---
+title: Multi-node training clusters
+navTitle: System architecture
+eyebrow: Architecture
+intro: GRL coordinates rollout generation, reward collection, and GRPO updates across specialized compute pools. Each workload runs where its dependencies and hardware needs are isolated.
+---
+
+## Cluster compute capability
+
+The cluster is designed around a single Ray control plane with separate Kubernetes node groups for each role.
+
+- Dedicated Ray node groups for head, rollouts, training, and environment services
+- GPU workers running vLLM inference and PyTorch GRPO updates on separate pools
+- Firecracker microVM environments served through a Rust gRPC manager
+- OpenTelemetry metrics exported to ClickHouse and visualized in Grafana
+
+## Actor placement
+
+Ray custom resources bind actors to the node group that matches their responsibility.
+
+```python
+@ray.remote(resources={"rollouts": 1})
+class RolloutWorker:
+    async def generate(self, batch):
+        return await self.engine.rollout(batch)
+
+@ray.remote(resources={"training": 1})
+class TrainingWorker:
+    def step(self, samples):
+        return self.trainer.update(samples)
+```
+
+## Rollout scheduling
+
+Rollout generation is asynchronous by design so the trainer can consume completed trajectories while new prompts are dispatched.
+
+## Environment isolation
+
+Each rollout talks to an environment session backed by an isolated Firecracker microVM.
+
+## Telemetry
+
+The training stack emits metrics for throughput, reward quality, queue pressure, and policy synchronization.

@@ -1,0 +1,27 @@
+---
+title: Asynchronous execution model
+navTitle: Execution model
+eyebrow: Runtime
+intro: The system keeps rollout, reward, and optimizer stages moving independently so expensive GPU resources do not wait on environment execution or test verification.
+---
+
+## Submitter loop
+
+The submitter turns configured tasks into work items that can be batched and routed to rollout workers.
+
+## Batch assembly
+
+Batches are assembled around model state and environment availability so the training loop can stay supplied.
+
+```python
+async for batch in submitter.batches():
+    await rollout_queue.put(batch)
+```
+
+## Reward flow
+
+Completed trajectories are verified in their environments and converted into reward records.
+
+## Policy updates
+
+The trainer consumes reward-bearing samples and publishes a new policy version after each optimizer step.

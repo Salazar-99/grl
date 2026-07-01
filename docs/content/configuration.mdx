@@ -1,0 +1,28 @@
+---
+title: Configuration reference
+navTitle: Configuration
+eyebrow: Reference
+intro: Configuration files define model selection, infrastructure images, environment bundles, training parameters, and telemetry endpoints.
+---
+
+## Model
+
+Model settings identify the policy, tokenizer, precision, and rollout generation parameters.
+
+## Training
+
+Training settings control batch sizes, optimizer behavior, and policy update cadence.
+
+```yaml
+training:
+  learning_rate: 1.0e-6
+  batch_size: 16
+```
+
+## Environment
+
+Environment settings point the launcher at the bundle and service endpoints used during rollouts.
+
+## Images
+
+Image settings select the container artifacts used by Ray, rollout workers, training workers, and managers.

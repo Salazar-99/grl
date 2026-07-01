@@ -2,101 +2,93 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
+from typing import Any, Literal
 
 import yaml
-from grl.model import local_model_path
+from grl.secrets import resolve_secret_fields
+from grl_config.run_id import new_run_id
+from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig as TrainingGRLConfig
 from pydantic import BaseModel, Field, model_validator
 
 
-DEFAULT_CONFIG_PATH = Path("config.yaml")
+class LaunchToolsConfig(BaseModel):
+    auto_install: bool = True
+    terraform: Literal["terraform", "tofu"] = "terraform"
+    terraform_version: str = "1.13.0"
+    helm_version: str = "3.16.4"
+    kubectl_version: str = "1.32.0"
 
 
-# --- Training (matches training/src/training/config.py) ---
+class LaunchInfraConfig(BaseModel):
+    apply: bool = False
+    terraform_dir: str = "infra"
+    auto_kubeconfig: bool = True
 
 
-class GRPOConfig(BaseModel):
-    beta: float = 0.001
-    epsilon: float = 0.2
-    learning_rate: float = 1e-6
-    num_rollouts: int = 8
-    groups_per_batch: int = 4
-    min_rollouts_per_group: int = 2
-    temperature: float = 1.0
-    top_p: float = 1.0
+class LaunchEnvironmentConfig(BaseModel):
+    activate: bool = True
+    verify: bool = True
+    refresh_vm_cache: Literal["auto", "always", "never"] = "auto"
+    purge_cache: bool = False
 
 
-class WorkersConfig(BaseModel):
-    num_rollout_workers: int = 1
-    max_in_flight_rollouts: int = 32
+class LaunchJobConfig(BaseModel):
+    submit: bool = True
+    force: bool = False
+    wait: bool = False
+    backend: Literal["rayjob"] = "rayjob"
 
 
-class RolloutConfig(BaseModel):
-    max_model_len: int = 8192
-    max_num_seqs: int = 64
-    max_concurrent_trajectories: int = 32
-    max_tokens_per_turn: int = 512
-    max_assistant_turns: int = 8
-    enable_prefix_caching: bool = True
-    vllm_metrics_port: int = 9090
-    generation_timeout_secs: float = 600.0
-    trajectory_timeout_secs: float = 3600.0
+class LaunchConfig(BaseModel):
+    dry_run: bool = False
+    preflight_only: bool = False
+    tools: LaunchToolsConfig = Field(default_factory=LaunchToolsConfig)
+    infra: LaunchInfraConfig = Field(default_factory=LaunchInfraConfig)
+    environment: LaunchEnvironmentConfig = Field(default_factory=LaunchEnvironmentConfig)
+    job: LaunchJobConfig = Field(default_factory=LaunchJobConfig)
 
 
-class PipelineConfig(BaseModel):
-    pending_tasks_queue_size: int = 64
-    completed_rollouts_queue_size: int = 256
-    train_batches_queue_size: int = 16
-    max_policy_staleness: int = 0
-    seed: int = 0
-    group_assembly_timeout_secs: float = 3900.0
-    group_poll_interval_secs: float = 5.0
+# --- Runtime images ---
 
 
-class EnvironmentRetryConfig(BaseModel):
-    max_attempts: int = 10
-    initial_backoff_secs: float = 0.5
-    max_backoff_secs: float = 30.0
+class TrainingImagesConfig(BaseModel):
+    head: str = "auto"
+    rollouts: str = "auto"
+    training: str = "auto"
 
 
-class EnvironmentRpcTimeoutsConfig(BaseModel):
-    create_secs: float = 30.0
-    list_tasks_secs: float = 30.0
-    execute_default_secs: float = 140.0
-    execute_submit_secs: float = 10.0
-    execute_timeout_buffer_secs: float = 10.0
-    evaluate_secs: float = 930.0
-    teardown_secs: float = 30.0
+class ImageRegistryConfig(BaseModel):
+    type: Literal["ghcr", "ecr"] = "ghcr"
+    create: bool = False
+    repository_prefix: str = "grl"
 
 
-class EnvironmentConfig(BaseModel):
-    id: str | None = None
-    bundle_uri: str | None = None
-    split: str | None = None
-    server_addr: str = "localhost:50051"
-    tasks_uri: str | None = None
-    retry: EnvironmentRetryConfig = Field(default_factory=EnvironmentRetryConfig)
-    rpc_timeouts: EnvironmentRpcTimeoutsConfig = Field(
-        default_factory=EnvironmentRpcTimeoutsConfig
-    )
-
-    def resolve_tasks_uri(self) -> str:
-        if self.tasks_uri:
-            return self.tasks_uri
-        if self.bundle_uri:
-            return f"{self.bundle_uri.rstrip('/')}/tasks.jsonl"
-        raise ValueError("environment.bundle_uri or environment.tasks_uri is required")
+class ImageBuildConfig(BaseModel):
+    source: Literal["checkout", "git", "path"] = "checkout"
+    context_dir: str = "."
+    docker: str = "auto"
+    platforms: list[str] = Field(default_factory=lambda: ["linux/amd64"])
+    path: str | None = None
 
 
-class TelemetryConfig(BaseModel):
-    run_id: str | None = None
-    otel_endpoint: str | None = None
+class ImagesConfig(BaseModel):
+    mode: Literal["published", "custom", "build_and_push"] = "published"
+    registry: str = "ghcr.io/gerardosalazar/grl"
+    tag: str = "0.1.0"
+    training: TrainingImagesConfig = Field(default_factory=TrainingImagesConfig)
+    manager: str = "auto"
+    push_registry: ImageRegistryConfig = Field(default_factory=ImageRegistryConfig)
+    build: ImageBuildConfig = Field(default_factory=ImageBuildConfig)
 
 
-class RayConfig(BaseModel):
-    ignore_reinit_error: bool = True
+class ResolvedImages(BaseModel):
+    head: str
+    rollouts: str
+    training: str
+    manager: str
 
 
 # --- Infra (matches infra/modules/resources/chart/values.yaml + Terraform vars) ---
@@ -205,7 +197,6 @@ class ModelCacheConfig(BaseModel):
         return f"{self.host_path.rstrip('/')}/{self.local_model_name()}"
 
     def helm_fragment(self) -> dict[str, Any]:
-        """Non-empty Helm modelCache values (camelCase keys)."""
         return {
             key: value
             for key, value in self.model_dump(by_alias=True).items()
@@ -214,8 +205,6 @@ class ModelCacheConfig(BaseModel):
 
 
 class InfraConfig(BaseModel):
-    """Cluster and Helm settings consumed by the launcher."""
-
     release_name: str = "grl-resources"
     release_namespace: str = "default"
     cluster_name: str = "grl"
@@ -230,17 +219,11 @@ class InfraConfig(BaseModel):
     model_cache: ModelCacheConfig = Field(default_factory=ModelCacheConfig)
 
 
-class GRLConfig(BaseModel):
+class GRLConfig(TrainingGRLConfig):
     """Unified run config for training and infra orchestration."""
 
-    model: str
-    grpo: GRPOConfig = Field(default_factory=GRPOConfig)
-    workers: WorkersConfig = Field(default_factory=WorkersConfig)
-    rollout: RolloutConfig = Field(default_factory=RolloutConfig)
-    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
-    environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
-    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
-    ray: RayConfig = Field(default_factory=RayConfig)
+    launch: LaunchConfig = Field(default_factory=LaunchConfig)
+    images: ImagesConfig = Field(default_factory=ImagesConfig)
     infra: InfraConfig = Field(default_factory=InfraConfig)
 
     @model_validator(mode="after")
@@ -259,13 +242,16 @@ class GRLConfig(BaseModel):
     def from_yaml(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> GRLConfig:
         with Path(path).open() as f:
             data = yaml.safe_load(f) or {}
+        data = resolve_secret_fields(data)
         return cls.model_validate(data)
 
-    def resolved_model_path(self, *, cache_root: str | None = None) -> Path:
-        return local_model_path(self.model, cache_root=cache_root)
-
     def resolve_run_id(self) -> str:
-        return self.telemetry.run_id or f"grl-{uuid4().hex[:12]}"
+        return self.telemetry.run_id or new_run_id()
+
+    def config_hash(self) -> str:
+        payload = self.model_dump(mode="json")
+        encoded = json.dumps(payload, sort_keys=True).encode()
+        return hashlib.sha256(encoded).hexdigest()[:16]
 
     def resolved_manager(self) -> ManagerConfig:
         manager = self.infra.manager.model_copy(deep=True)
@@ -275,14 +261,27 @@ class GRLConfig(BaseModel):
             manager.env_id = self.environment.id
         return manager
 
+    def apply_resolved_images(self, resolved: ResolvedImages) -> None:
+        self.infra.ray_cluster.images.head = resolved.head
+        self.infra.ray_cluster.images.rollouts = resolved.rollouts
+        self.infra.ray_cluster.images.training = resolved.training
+        self.infra.manager.image = resolved.manager
+
     def helm_values_overlay(self) -> dict[str, Any]:
-        """Helm values fragment for per-run manager, VM cache, and model cache."""
         manager = self.resolved_manager()
         overlay: dict[str, Any] = {
             "manager": {
                 "bundleUri": manager.bundle_uri,
                 "envId": manager.env_id,
-            }
+                "image": manager.image,
+            },
+            "rayCluster": {
+                "images": {
+                    "head": self.infra.ray_cluster.images.head,
+                    "rollouts": self.infra.ray_cluster.images.rollouts,
+                    "training": self.infra.ray_cluster.images.training,
+                }
+            },
         }
         if self.infra.vm_image_cache.bucket:
             overlay["vmImageCache"] = {
@@ -292,21 +291,34 @@ class GRLConfig(BaseModel):
             overlay["modelCache"] = self.infra.model_cache.helm_fragment()
         return overlay
 
-    def terraform_model_vars(self) -> dict[str, str]:
-        """Terraform variables for the model-cache DaemonSet."""
-        cache = self.infra.model_cache
-        if not cache.enabled:
-            return {}
-        vars_: dict[str, str] = {"model_tag": cache.tag}
-        if cache.revision:
-            vars_["model_revision"] = cache.revision
-        if cache.huggingface_token:
-            vars_["huggingface_token"] = cache.huggingface_token
-        return vars_
+    def terraform_vars(self, resolved: ResolvedImages) -> dict[str, str]:
+        vars_: dict[str, str] = {
+            "cluster_name": self.infra.cluster_name,
+            "region": self.infra.region,
+            "ray_cluster_name": self.infra.ray_cluster.name,
+            "ray_cluster_namespace": self.infra.ray_cluster.namespace,
+            "ray_head_image": resolved.head,
+            "ray_rollouts_image": resolved.rollouts,
+            "ray_training_image": resolved.training,
+            "ray_version": self.infra.ray_cluster.version,
+            "manager_image": resolved.manager,
+            "vm_images_bucket": self.infra.vm_image_cache.bucket,
+            "otel_collector_name": self.infra.otel_collector.name,
+            "otel_collector_namespace": self.infra.otel_collector.namespace,
+            "otel_upstream_endpoint": self.infra.otel_collector.upstream.endpoint,
+            "otel_upstream_username": self.infra.otel_collector.upstream.username,
+            "otel_upstream_password": self.infra.otel_collector.upstream.password,
+        }
+        if self.infra.model_cache.enabled:
+            vars_["model_tag"] = self.infra.model_cache.tag
+            if self.infra.model_cache.revision:
+                vars_["model_revision"] = self.infra.model_cache.revision
+            if self.infra.model_cache.huggingface_token:
+                vars_["huggingface_token"] = self.infra.model_cache.huggingface_token
+        return {key: value for key, value in vars_.items() if value != ""}
 
-    def training_payload(self) -> dict[str, Any]:
-        """Dict suitable for Ray training workers (excludes infra-only fields)."""
-        return self.model_dump(
+    def training_payload(self, run_id: str | None = None) -> dict[str, Any]:
+        payload = self.model_dump(
             include={
                 "model",
                 "grpo",
@@ -318,6 +330,12 @@ class GRLConfig(BaseModel):
                 "ray",
             }
         )
+        resolved_run_id = run_id or self.resolve_run_id()
+        payload["telemetry"] = {**payload.get("telemetry", {}), "run_id": resolved_run_id}
+        return payload
+
+    def training_yaml(self, run_id: str | None = None) -> str:
+        return yaml.safe_dump(self.training_payload(run_id=run_id), sort_keys=False)
 
 
 def load_config(path: str | Path) -> GRLConfig:

@@ -8,9 +8,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from training.model import local_model_path
-from training.telemetry import new_run_id
-
+from grl_config.model import local_model_path
+from grl_config.run_id import new_run_id
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 

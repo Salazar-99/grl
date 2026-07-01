@@ -1,0 +1,28 @@
+---
+title: EKS cluster
+navTitle: EKS cluster
+eyebrow: Infrastructure
+intro: The Kubernetes cluster provides isolated node groups for Ray, GPU inference, GPU training, and bare-metal environment managers.
+---
+
+## Node groups
+
+Each workload class gets a node group sized for its hardware and isolation needs.
+
+## Taints
+
+GPU and environment nodes use taints so incompatible pods do not land on specialized machines.
+
+```yaml
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+```
+
+## Networking
+
+Services expose stable names for Ray workers and the environment manager inside the cluster.
+
+## Storage
+
+Images, bundles, and model artifacts are stored outside the cluster so jobs can be recreated.

@@ -7,12 +7,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-PYTHON_OUT = Path(__file__).resolve().parent
-TRAINING_ROOT = PYTHON_OUT.parents[2]
-REPO_ROOT = TRAINING_ROOT.parent
-PROTO_ROOT = REPO_ROOT / "environments/proto"
-PROTO_FILE = PROTO_ROOT / "grl/environment/v1/environment.proto"
-GRPC_IMPORT_PREFIX = "from training.proto.grl.environment.v1 import environment_pb2"
+PROTO_REL = Path("environments/proto/grl/environment/v1/environment.proto")
+GRPC_IMPORT_PREFIX = "from grl_proto.grl.environment.v1 import environment_pb2"
+
+
+def _repo_root() -> Path:
+    for start in (Path(__file__).resolve(), Path.cwd()):
+        for candidate in (start, *start.parents):
+            if (candidate / PROTO_REL).is_file():
+                return candidate
+    raise FileNotFoundError(
+        f"could not locate {PROTO_REL}; run generate-proto from the grl repo"
+    )
+
+
+def _python_out(repo_root: Path) -> Path:
+    return repo_root / "proto/src/grl_proto"
 
 
 def _ensure_package(path: Path) -> None:
@@ -47,15 +57,16 @@ def _patch_grpc_imports(grpc_file: Path) -> None:
 
 
 def main() -> int:
-    if not PROTO_FILE.is_file():
-        print(f"proto file not found: {PROTO_FILE}", file=sys.stderr)
-        return 1
+    repo_root = _repo_root()
+    proto_root = repo_root / "environments/proto"
+    proto_file = repo_root / PROTO_REL
+    python_out = _python_out(repo_root)
 
     for directory in [
-        PYTHON_OUT,
-        PYTHON_OUT / "grl",
-        PYTHON_OUT / "grl/environment",
-        PYTHON_OUT / "grl/environment/v1",
+        python_out,
+        python_out / "grl",
+        python_out / "grl/environment",
+        python_out / "grl/environment/v1",
     ]:
         _ensure_package(directory)
 
@@ -63,16 +74,16 @@ def main() -> int:
         sys.executable,
         "-m",
         "grpc_tools.protoc",
-        f"-I{PROTO_ROOT}",
-        f"--python_out={PYTHON_OUT}",
-        f"--pyi_out={PYTHON_OUT}",
-        f"--grpc_python_out={PYTHON_OUT}",
-        str(PROTO_FILE),
+        f"-I{proto_root}",
+        f"--python_out={python_out}",
+        f"--pyi_out={python_out}",
+        f"--grpc_python_out={python_out}",
+        str(proto_file),
     ]
     subprocess.run(cmd, check=True)
 
-    _patch_grpc_imports(PYTHON_OUT / "grl/environment/v1/environment_pb2_grpc.py")
-    print(f"Generated Python stubs under {PYTHON_OUT}")
+    _patch_grpc_imports(python_out / "grl/environment/v1/environment_pb2_grpc.py")
+    print(f"Generated Python stubs under {python_out}")
     return 0
 
 

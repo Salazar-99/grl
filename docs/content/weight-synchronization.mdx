@@ -1,0 +1,27 @@
+---
+title: Weight synchronization
+navTitle: Weight synchronization
+eyebrow: Training
+intro: Policy updates are published as versioned weights so rollout workers can refresh without interrupting active trajectories.
+---
+
+## Policy versions
+
+Every optimizer step publishes a monotonic policy version that rollout workers can compare against their local state.
+
+## Refresh cadence
+
+Workers refresh between trajectories so in-flight rollouts finish against the policy version that started them.
+
+```python
+if weights.version > engine.version:
+    await engine.load_weights(weights)
+```
+
+## Consistency
+
+Samples carry their source policy version so training can reason about how fresh each trajectory is.
+
+## Failure handling
+
+If a refresh fails, the worker can continue serving the previous policy version until the next refresh attempt.

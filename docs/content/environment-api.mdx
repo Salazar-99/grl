@@ -1,0 +1,29 @@
+---
+title: Environment API
+navTitle: Environment API
+eyebrow: Reference
+intro: The protobuf environment API is the contract between rollout workers and the Rust manager for create, execute, reset, and teardown operations.
+---
+
+## Service
+
+The service defines the lifecycle and tool execution methods used by rollout workers.
+
+## Requests
+
+Requests carry session identifiers, tool names, arguments, and timeout information.
+
+```protobuf
+message ExecuteToolRequest {
+  string session_id = 1;
+  string tool_name = 2;
+}
+```
+
+## Responses
+
+Responses include stdout, stderr, exit status, and structured error details.
+
+## Errors
+
+Errors distinguish user-command failures from manager, transport, and VM lifecycle failures.

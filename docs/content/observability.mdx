@@ -1,0 +1,28 @@
+---
+title: Observability pipeline
+navTitle: Observability
+eyebrow: Operations
+intro: GRL exports metrics through OpenTelemetry into ClickHouse and Grafana so long training runs can be inspected from cluster to model behavior.
+---
+
+## OTel collector
+
+Collectors receive metrics from cluster components, GPU exporters, and manually instrumented training code.
+
+## ClickHouse
+
+ClickHouse stores time-series data for high-cardinality run and actor dimensions.
+
+```sql
+SELECT run_id, avg(reward)
+FROM grl_rewards
+GROUP BY run_id;
+```
+
+## Grafana
+
+Dashboards expose training progress, GPU health, and queue pressure.
+
+## Alerts
+
+Alerts should focus on stalled training, failed environment managers, and missing telemetry.
