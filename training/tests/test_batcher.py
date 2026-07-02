@@ -8,9 +8,15 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from training.main import GRPOGroupRequest, _flush_expired_groups, _pad_group_timeouts
+from training.main import (
+    GRPOGroupRequest,
+    _flush_expired_groups,
+    _pad_group_timeouts,
+    trainer_loop,
+)
 from training.main import rollout_loop
 from training.rollouts import RolloutResult
+from training.trainer import TrainingBatch
 
 
 def _rollout(*, group_id: str, index: int, expected: int = 2) -> RolloutResult:
@@ -130,6 +136,55 @@ class RolloutLoopSchedulingTests(unittest.IsolatedAsyncioTestCase):
                 loop_task.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await loop_task
+
+
+class TrainerLoopTerminationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_trainer_loop_stops_after_max_train_steps_and_checkpoints(self) -> None:
+        class RemoteMethod:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def remote(self, *args: Any) -> tuple[str, tuple[Any, ...]]:
+                return self.name, args
+
+        class FakeTrainingWorker:
+            def __init__(self) -> None:
+                self.train_batch = RemoteMethod("train")
+                self.save_checkpoint = RemoteMethod("checkpoint")
+
+        train_batches: asyncio.Queue[TrainingBatch] = asyncio.Queue()
+        for index in range(2):
+            await train_batches.put(
+                TrainingBatch(
+                    batch_id=f"batch-{index}",
+                    groups=[[_rollout(group_id=f"g{index}", index=0, expected=1)]],
+                    policy_version=index,
+                )
+            )
+
+        policy_versions = iter([1, 2])
+
+        async def fake_get(ref: tuple[str, tuple[Any, ...]]) -> Any:
+            kind, _args = ref
+            if kind == "train":
+                return next(policy_versions)
+            if kind == "checkpoint":
+                return "/tmp/checkpoint"
+            raise AssertionError(f"unexpected ref kind: {kind}")
+
+        with patch("training.main._get", side_effect=fake_get):
+            updates = await asyncio.wait_for(
+                trainer_loop(
+                    train_batches,
+                    FakeTrainingWorker(),
+                    [],
+                    max_train_steps=2,
+                ),
+                timeout=1.0,
+            )
+
+        self.assertEqual(updates, 2)
+        self.assertEqual(train_batches.qsize(), 0)
 
 
 if __name__ == "__main__":

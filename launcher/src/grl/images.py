@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from grl.config import GRLConfig, ResolvedImages
-from grl.errors import GrlError
+
+
+class GrlError(Exception):
+    """Base error for GRL launcher failures."""
 from grl.paths import repo_root
 
 

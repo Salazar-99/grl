@@ -23,7 +23,7 @@ grl/
 │   └── swebench-lite/         # Everything needed to build Firecracker VM environments for this benchmark
 │       ├── data/              # SWE-bench-Lite dataset
 │       ├── vms/               # Python tooling: builds Firecracker ext4 base/task images,
-│       │                      #   writes manifest.json, uploads them to S3
+│       │                      #   renders tasks.jsonl, uploads them to S3
 │       └── env/               # In-VM `env` executor binary that implements this environment's tools
 │                              #   and runs them inside the VM in a persistent TTY
 |
@@ -54,13 +54,13 @@ The binding is a **custom Ray resource**: each worker group advertises a uniquel
 | `ray` | `ray` | head group | — | (Ray head) | `head` |
 | `rollouts` | `rollouts` | `rollouts` | `{"rollouts": N}` | `RolloutWorker` (vLLM inference) | `rollouts` |
 | `training` | `training` | `training` | `{"training": N}` | `TrainingWorker` (GRPO) | `training` |
-| `environment` | `environment` | — (not in the Ray cluster) | — | `manager` DaemonSet (gRPC → Firecracker) | `grl-manager` |
+| `environments` | `environments` | — (not in the Ray cluster) | — | `manager` DaemonSet (gRPC → Firecracker) | `grl-manager` |
 
-- **GPU groups** (`rollouts`, `training`) carry the `nvidia.com/gpu` taint, so only GPU pods land on them. `N` is the GPUs advertised per node — derived automatically from the chosen instance type via a lookup map in [`infra/locals.tf`](infra/locals.tf), so picking an 8-GPU instance advertises 8 without editing the chart. The `training` group needs ≥2 GPUs (policy on `cuda:0`, reference model on `cuda:1`).
-- **`environment` group** uses bare-metal (`.metal`) instances because Firecracker needs `/dev/kvm`; nodes are labeled `kvm=true` and a variable validation enforces `.metal`. These nodes don't run Ray: the Rust `manager` runs as a plain Kubernetes DaemonSet (one pod per node) and rollout workers reach it directly over gRPC through the `grl-manager` Service.
-- **Sizing** (instance types, AMI, disk, scaling) for each group is set from the root module via the `ray_nodes`, `rollouts_nodes`, `training_nodes`, and `environment_nodes` variables ([`infra/variables.tf`](infra/variables.tf)).
+- **GPU groups** (`rollouts`, `training`) carry the `nvidia.com/gpu` taint, so only GPU pods land on them. `N` is the GPUs advertised per node — derived automatically from the chosen instance type via a lookup map in [`infra/aws/locals.tf`](infra/aws/locals.tf), so picking an 8-GPU instance advertises 8 without editing the chart. The `training` group needs ≥2 GPUs (policy on `cuda:0`, reference model on `cuda:1`).
+- **`environments` group** uses bare-metal (`.metal`) instances because Firecracker needs `/dev/kvm`; nodes are labeled `kvm=true` and a variable validation enforces `.metal`. These nodes don't run Ray: the Rust `manager` runs as a plain Kubernetes DaemonSet (one pod per node) and rollout workers reach it directly over gRPC through the `grl-manager` Service.
+- **Sizing** (instance types, AMI, disk, fixed node count) for each group is set via the role-keyed `node_groups` variable ([`infra/aws/variables.tf`](infra/aws/variables.tf)).
 
-The mapping is defined in three places that must agree on the names: the EKS node groups ([`infra/modules/cluster`](infra/modules/cluster)), the RayCluster worker groups ([`infra/modules/resources/chart/templates/raycluster.yaml`](infra/modules/resources/chart/templates/raycluster.yaml)), and the actor decorators in [`training/src/training/`](training/src/training/). Per-role images are built from [`training/Dockerfile`](training/Dockerfile) (one build target per role, each installing only that role's `uv` extra).
+The mapping is defined in three places that must agree on the names: the EKS node groups ([`infra/aws/modules/cluster`](infra/aws/modules/cluster)), the RayCluster worker groups ([`infra/modules/resources/chart/templates/raycluster.yaml`](infra/modules/resources/chart/templates/raycluster.yaml)), and the actor decorators in [`training/src/training/`](training/src/training/). Per-role images are built from [`training/Dockerfile`](training/Dockerfile) (one build target per role, each installing only that role's `uv` extra).
 
 ## Environments
 

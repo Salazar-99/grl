@@ -14,90 +14,71 @@ variable "cluster_version" {
   description = "Kubernetes version for the EKS control plane and node groups."
 }
 
-variable "ray_nodes" {
-  description = "Instance types, AMI, disk, and scaling config for the Ray node group."
+variable "node_groups" {
+  description = "Instance types, AMI, disk, and fixed node count for each EKS node group."
   type = object({
-    instance_types = list(string)
-    ami_type       = string
-    disk_size      = number
-    desired_size   = number
-    min_size       = number
-    max_size       = number
+    ray = object({
+      instance_types = list(string)
+      ami_type       = string
+      disk_size      = number
+      node_count     = number
+    })
+    rollouts = object({
+      instance_types = list(string)
+      ami_type       = string
+      disk_size      = number
+      node_count     = number
+    })
+    training = object({
+      instance_types = list(string)
+      ami_type       = string
+      disk_size      = number
+      node_count     = number
+    })
+    environments = object({
+      instance_types = list(string)
+      ami_type       = string
+      disk_size      = number
+      node_count     = number
+    })
   })
   default = {
-    instance_types = ["m5.4xlarge"]
-    ami_type       = "AL2023_x86_64_STANDARD"
-    disk_size      = 100
-    desired_size   = 2
-    min_size       = 1
-    max_size       = 10
+    ray = {
+      instance_types = ["m5.4xlarge"]
+      ami_type       = "AL2023_x86_64_STANDARD"
+      disk_size      = 100
+      node_count     = 2
+    }
+    rollouts = {
+      instance_types = ["g4dn.xlarge"]
+      ami_type       = "AL2023_x86_64_NVIDIA"
+      disk_size      = 200
+      node_count     = 1
+    }
+    training = {
+      instance_types = ["g4dn.xlarge"]
+      ami_type       = "AL2023_x86_64_NVIDIA"
+      disk_size      = 200
+      node_count     = 1
+    }
+    environments = {
+      instance_types = ["c5.metal"]
+      ami_type       = "AL2023_x86_64_STANDARD"
+      disk_size      = 200
+      node_count     = 1
+    }
   }
-}
 
-variable "rollouts_nodes" {
-  description = "Instance types, AMI, disk, and scaling config for the rollouts (GPU vLLM inference) node group."
-  type = object({
-    instance_types = list(string)
-    ami_type       = string
-    disk_size      = number
-    desired_size   = number
-    min_size       = number
-    max_size       = number
-  })
-  default = {
-    instance_types = ["g4dn.xlarge"]
-    ami_type       = "AL2023_x86_64_NVIDIA"
-    disk_size      = 200
-    desired_size   = 1
-    min_size       = 0
-    max_size       = 8
-  }
-}
-
-variable "training_nodes" {
-  description = "Instance types, AMI, disk, and scaling config for the training (GPU) node group. TrainingWorker places the policy on cuda:0 and the reference model on cuda:1, so this group needs an instance type with at least 2 GPUs."
-  type = object({
-    instance_types = list(string)
-    ami_type       = string
-    disk_size      = number
-    desired_size   = number
-    min_size       = number
-    max_size       = number
-  })
-  default = {
-    instance_types = ["g4dn.xlarge"]
-    ami_type       = "AL2023_x86_64_NVIDIA"
-    disk_size      = 200
-    desired_size   = 1
-    min_size       = 0
-    max_size       = 8
-  }
-}
-
-variable "environment_nodes" {
-  description = "Instance types, AMI, disk, and scaling config for the environment node group. Instance types must be bare metal (.metal) for Firecracker KVM access."
-  type = object({
-    instance_types = list(string)
-    ami_type       = string
-    disk_size      = number
-    desired_size   = number
-    min_size       = number
-    max_size       = number
-  })
-  default = {
-    instance_types = ["c5.metal"]
-    ami_type       = "AL2023_x86_64_STANDARD"
-    disk_size      = 200
-    desired_size   = 1
-    min_size       = 1
-    max_size       = 10
+  validation {
+    condition     = alltrue([for t in var.node_groups.environments.instance_types : endswith(t, ".metal")])
+    error_message = "node_groups.environments.instance_types must be bare-metal (.metal) instances so /dev/kvm is available for Firecracker."
   }
 }
 
 variable "vm_images_bucket" {
   type        = string
   default     = ""
-  description = "S3 bucket holding Firecracker VM artifacts (kernel/, bases/, tasks/, manifest.json) — must match the VMS_S3_BUCKET used by environments/swebench-lite/vms uploads. Empty disables the vm-image-cache DaemonSet and its IAM policy."
+  description = "S3 bucket holding Firecracker VM artifacts (kernel/, bases/, tasks/) that must match the VMS_S3_BUCKET used by environments/swebench-lite/vms uploads. Empty disables the vm-image-cache DaemonSet and its IAM policy."
 }
 
 variable "model_tag" {
@@ -135,6 +116,18 @@ variable "kuberay_operator_chart_version" {
   type        = string
   default     = null
   description = "Helm chart version for the KubeRay Operator. When null, Helm installs the latest available chart."
+}
+
+variable "release_name" {
+  type        = string
+  default     = "grl-resources"
+  description = "Helm release name for the GRL resources chart."
+}
+
+variable "release_namespace" {
+  type        = string
+  default     = "default"
+  description = "Namespace for the GRL resources Helm release metadata."
 }
 
 variable "ray_cluster_name" {

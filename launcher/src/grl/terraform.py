@@ -8,14 +8,27 @@ from pathlib import Path
 import yaml
 
 from grl.config import GRLConfig, ResolvedImages
-from grl.errors import TerraformError
-from grl.paths import state_dir, terraform_dir
+from grl.paths import byok_terraform_dir, state_dir, terraform_dir
 from grl.tools import run_tool
 
 
-def write_tfvars(config: GRLConfig, resolved: ResolvedImages, run_id: str) -> Path:
-    vars_path = state_dir(run_id) / "terraform.auto.tfvars.json"
-    payload = config.terraform_vars(resolved)
+class TerraformError(Exception):
+    """Terraform operation failed."""
+
+
+def write_tfvars(
+    config: GRLConfig,
+    resolved: ResolvedImages,
+    run_id: str,
+    *,
+    byok: bool = False,
+) -> Path:
+    filename = "byok.auto.tfvars.json" if byok else "terraform.auto.tfvars.json"
+    vars_path = state_dir(run_id) / filename
+    if byok:
+        payload = config.byok_terraform_vars(resolved)
+    else:
+        payload = config.terraform_vars(resolved)
     vars_path.write_text(json.dumps(payload, indent=2))
     return vars_path
 
@@ -66,7 +79,23 @@ def terraform_apply(
         raise TerraformError(f"terraform apply failed: {exc}") from exc
 
 
-def apply_infra(
+def _apply_terraform_root(
+    config: GRLConfig,
+    resolved: ResolvedImages,
+    terraform_bin: Path,
+    run_id: str,
+    tf_root: Path,
+    *,
+    byok: bool = False,
+    dry_run: bool = False,
+) -> Path:
+    tfvars = write_tfvars(config, resolved, run_id, byok=byok)
+    terraform_init(terraform_bin, tf_root, dry_run=dry_run)
+    terraform_apply(terraform_bin, tf_root, tfvars, dry_run=dry_run)
+    return tfvars
+
+
+def apply_full_stack_infra(
     config: GRLConfig,
     resolved: ResolvedImages,
     terraform_bin: Path,
@@ -75,7 +104,68 @@ def apply_infra(
     dry_run: bool = False,
 ) -> Path:
     tf_root = terraform_dir(config.launch.infra.terraform_dir)
-    tfvars = write_tfvars(config, resolved, run_id)
-    terraform_init(terraform_bin, tf_root, dry_run=dry_run)
-    terraform_apply(terraform_bin, tf_root, tfvars, dry_run=dry_run)
+    return _apply_terraform_root(
+        config,
+        resolved,
+        terraform_bin,
+        run_id,
+        tf_root,
+        byok=False,
+        dry_run=dry_run,
+    )
+
+
+def apply_byok_infra(
+    config: GRLConfig,
+    resolved: ResolvedImages,
+    terraform_bin: Path,
+    run_id: str,
+    *,
+    dry_run: bool = False,
+) -> Path:
+    if not config.launch.infra.kubeconfig:
+        raise TerraformError(
+            "launch.infra.kubeconfig is required to apply BYOK Terraform"
+        )
+    tf_root = byok_terraform_dir(config.launch.infra.byok_terraform_dir)
+    return _apply_terraform_root(
+        config,
+        resolved,
+        terraform_bin,
+        run_id,
+        tf_root,
+        byok=True,
+        dry_run=dry_run,
+    )
+
+
+def apply_infra(
+    config: GRLConfig,
+    resolved: ResolvedImages,
+    terraform_bin: Path,
+    run_id: str,
+    *,
+    dry_run: bool = False,
+) -> Path | None:
+    """Apply Terraform phases according to launch.infra settings."""
+    infra = config.launch.infra
+    tfvars: Path | None = None
+
+    if infra.should_apply_cluster():
+        tfvars = apply_full_stack_infra(
+            config,
+            resolved,
+            terraform_bin,
+            run_id,
+            dry_run=dry_run,
+        )
+    elif infra.should_apply_byok():
+        tfvars = apply_byok_infra(
+            config,
+            resolved,
+            terraform_bin,
+            run_id,
+            dry_run=dry_run,
+        )
+
     return tfvars

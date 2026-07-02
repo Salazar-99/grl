@@ -8,7 +8,10 @@ import boto3
 from botocore.exceptions import ClientError
 
 from grl.config import GRLConfig
-from grl.errors import PreflightError
+
+
+class PreflightError(Exception):
+    """Preflight validation failed."""
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -40,10 +43,3 @@ def verify_bundle(config: GRLConfig) -> None:
     tasks_key = f"{prefix}/tasks.jsonl" if prefix else "tasks.jsonl"
     if not head_object_exists(bucket, tasks_key, region=region):
         raise PreflightError(f"missing bundle artifact s3://{bucket}/{tasks_key}")
-
-    if config.infra.vm_image_cache.bucket:
-        manifest_key = "manifest.json"
-        if not head_object_exists(config.infra.vm_image_cache.bucket, manifest_key, region=region):
-            raise PreflightError(
-                f"missing VM cache manifest s3://{config.infra.vm_image_cache.bucket}/{manifest_key}"
-            )

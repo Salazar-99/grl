@@ -1,12 +1,9 @@
 import json
 from pathlib import Path
 
-from vms.build_images import PLATFORM, _shrink_ext4_bash, run
+from vms.build_images import PLATFORM, run
 from vms.dataset import load_tasks
 from vms.tasks import reward_spec
-
-TASK_BUILD_SIZE_MB = 150
-TASK_HEADROOM_MB = 64
 
 # Where the held-out reward spec lands inside the task disk. The in-VM scorer
 # reads it from here; it never leaves the VM (see env/src/score.rs).
@@ -21,11 +18,15 @@ def build_task_image(
     *,
     spec: dict,
     platform: str = PLATFORM,
-    size_mb: int = TASK_BUILD_SIZE_MB,
-    headroom_mb: int = TASK_HEADROOM_MB,
 ) -> Path:
+    """Pack the checked-out repo + reward spec into a read-only squashfs.
+
+    The guest mounts this RO and copies its contents into the writable
+    `/testbed` overlay at boot, so the task image itself is immutable and
+    shareable across the concurrent VMs GRPO fans out per task.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    ext4_path = output_dir / f"{task_id}.ext4"
+    squashfs_path = output_dir / f"{task_id}.squashfs"
 
     # Stage the reward spec on the host and mount it in: writing arbitrary JSON
     # (with patches, quotes, newlines) through the container's shell heredoc
@@ -37,7 +38,6 @@ def build_task_image(
             [
                 "docker",
                 "run",
-                "--privileged",
                 "--rm",
                 "--platform",
                 platform,
@@ -48,26 +48,21 @@ def build_task_image(
                 "-c",
                 f"""
                 set -euo pipefail
-                apt-get update && apt-get install -y git e2fsprogs
+                apt-get update && apt-get install -y git squashfs-tools
                 git clone https://github.com/{repo}.git /tmp/repo
                 cd /tmp/repo
                 git checkout {base_commit}
                 rm -rf .git
-                dd if=/dev/zero of=/workspace/{task_id}.ext4 bs=1M count={size_mb}
-                mkfs.ext4 -F /workspace/{task_id}.ext4
-                mkdir -p /mnt/task
-                mount /workspace/{task_id}.ext4 /mnt/task
-                cp -a /tmp/repo/. /mnt/task/
-                mkdir -p "/mnt/task/$(dirname {REWARD_SPEC_PATH})"
-                cp /workspace/{task_id}.task.json /mnt/task/{REWARD_SPEC_PATH}
-                umount /mnt/task
-                {_shrink_ext4_bash(f"/workspace/{task_id}.ext4", headroom_mb)}
+                mkdir -p "/tmp/repo/$(dirname {REWARD_SPEC_PATH})"
+                cp /workspace/{task_id}.task.json /tmp/repo/{REWARD_SPEC_PATH}
+                rm -f /workspace/{squashfs_path.name}
+                mksquashfs /tmp/repo /workspace/{squashfs_path.name} -comp zstd -noappend
                 """,
             ]
         )
     finally:
         spec_file.unlink(missing_ok=True)
-    return ext4_path
+    return squashfs_path
 
 
 def build_all_tasks(
@@ -86,10 +81,10 @@ def build_all_tasks(
     built: list[Path] = []
     for i, task in enumerate(tasks, start=1):
         task_id = task["instance_id"]
-        ext4_path = output_dir / f"{task_id}.ext4"
-        if ext4_path.exists() and not force:
+        squashfs_path = output_dir / f"{task_id}.squashfs"
+        if squashfs_path.exists() and not force:
             print(f"task image {i}/{total}: {task_id} (skip)")
-            built.append(ext4_path)
+            built.append(squashfs_path)
             continue
         print(f"task image {i}/{total}: {task_id}")
         built.append(

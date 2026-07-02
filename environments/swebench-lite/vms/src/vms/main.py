@@ -6,7 +6,7 @@ from vms.build_images import build_all
 from vms.build_tasks import build_all_tasks
 from vms.dataset import DEFAULT_DATASET, load_tasks
 from vms.dockerfile import render_dockerfile, slug
-from vms.manifest import resolve, resolve_from_tasks_jsonl, write_manifest
+from vms.images import resolve_from_tasks_jsonl
 from vms.requirements import fetch_requirements
 from vms.tasks import write_tasks_jsonl
 from vms.upload import upload_all, upload_tasks_file
@@ -36,7 +36,7 @@ def load_envs(tasks: list[dict]) -> dict[tuple[str, str], dict]:
     return envs
 
 
-def generate(tasks: list[dict], output: Path, manifest: Path) -> None:
+def generate(tasks: list[dict], output: Path) -> None:
     envs = list(load_envs(tasks).values())
     total = len(envs)
     output.mkdir(parents=True, exist_ok=True)
@@ -57,7 +57,6 @@ def generate(tasks: list[dict], output: Path, manifest: Path) -> None:
                 fetch_requirements(env["repo"], env["env_setup_commit"])
             )
         print(f"dockerfile {i}/{total}: {name}")
-    write_manifest(tasks, manifest)
 
 
 def main() -> None:
@@ -72,7 +71,7 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="rebuild images even if the ext4 output already exists",
+        help="rebuild images even if the squashfs output already exists",
     )
     parser.add_argument(
         "--upload-jobs",
@@ -84,12 +83,6 @@ def main() -> None:
 
     gen = sub.add_parser("generate", help="generate Dockerfiles from dataset")
     gen.add_argument("--output", type=Path, default=ROOT / "dockerfiles")
-    gen.add_argument("--manifest", type=Path, default=ROOT / "manifest.json")
-
-    manifest_cmd = sub.add_parser("manifest", help="generate task→image manifest")
-    manifest_cmd.add_argument("--output", type=Path, default=ROOT / "manifest.json")
-    manifest_cmd.add_argument("--base-images-dir", default="base-images")
-    manifest_cmd.add_argument("--task-images-dir", default="task-images")
 
     tasks_jsonl_cmd = sub.add_parser(
         "tasks", help="render tasks.jsonl (prompts + tools) for the trainer"
@@ -103,15 +96,14 @@ def main() -> None:
 
     lookup = sub.add_parser("resolve", help="look up images for a task id")
     lookup.add_argument("task_id")
-    lookup.add_argument("--manifest", type=Path, default=ROOT / "manifest.json")
     lookup.add_argument(
-        "--from-tasks",
+        "--tasks",
         type=Path,
-        default=None,
-        help="read from tasks.jsonl instead of manifest.json",
+        default=ROOT / "tasks.jsonl",
+        help="tasks.jsonl to read image paths from",
     )
 
-    build = sub.add_parser("build", help="build ext4 firecracker base images")
+    build = sub.add_parser("build", help="build squashfs firecracker base images")
     build.add_argument("--dockerfiles", type=Path, default=ROOT / "dockerfiles")
     build.add_argument("--output", type=Path, default=ROOT / "base-images")
     build.add_argument("--platform", default="linux/amd64")
@@ -119,20 +111,20 @@ def main() -> None:
     build.add_argument(
         "--force",
         action="store_true",
-        help="rebuild images even if the ext4 output already exists",
+        help="rebuild images even if the squashfs output already exists",
     )
 
-    tasks_cmd = sub.add_parser("build-tasks", help="build ext4 task repo images")
+    tasks_cmd = sub.add_parser("build-tasks", help="build squashfs task repo images")
     tasks_cmd.add_argument("--output", type=Path, default=ROOT / "task-images")
     tasks_cmd.add_argument("--platform", default="linux/amd64")
     tasks_cmd.add_argument("--only", help="build a single task by instance_id")
     tasks_cmd.add_argument(
         "--force",
         action="store_true",
-        help="rebuild images even if the ext4 output already exists",
+        help="rebuild images even if the squashfs output already exists",
     )
 
-    upload_cmd = sub.add_parser("upload", help="upload ext4 images to S3")
+    upload_cmd = sub.add_parser("upload", help="upload squashfs images to S3")
     upload_cmd.add_argument("--base-images", type=Path, default=ROOT / "base-images")
     upload_cmd.add_argument("--task-images", type=Path, default=ROOT / "task-images")
     upload_cmd.add_argument(
@@ -151,7 +143,6 @@ def main() -> None:
     tasks = load_tasks(args.dataset)
 
     dockerfiles = ROOT / "dockerfiles"
-    manifest = ROOT / "manifest.json"
     base_images = ROOT / "base-images"
     task_images = ROOT / "task-images"
 
@@ -159,7 +150,7 @@ def main() -> None:
     split = split_name(args.dataset)
 
     if args.command is None:
-        generate(tasks, dockerfiles, manifest)
+        generate(tasks, dockerfiles)
         build_all(dockerfiles, base_images, platform=args.platform, force=args.force)
         build_all_tasks(
             args.dataset, task_images, platform=args.platform, force=args.force
@@ -168,25 +159,15 @@ def main() -> None:
         upload_all(base_images, task_images, force=args.force, jobs=args.upload_jobs)
         upload_tasks_file(tasks_jsonl, split=split, force=args.force)
     elif args.command == "generate":
-        generate(tasks, args.output, args.manifest)
+        generate(tasks, args.output)
     elif args.command == "tasks":
         write_tasks_jsonl(tasks, split, args.output)
         print(f"wrote {args.output}")
         if args.upload:
             uri = upload_tasks_file(args.output, split=split)
             print(f"uploaded {uri}")
-    elif args.command == "manifest":
-        write_manifest(
-            tasks,
-            args.output,
-            base_images_dir=args.base_images_dir,
-            task_images_dir=args.task_images_dir,
-        )
     elif args.command == "resolve":
-        if args.from_tasks:
-            row = resolve_from_tasks_jsonl(args.from_tasks, args.task_id)
-        else:
-            row = resolve(args.manifest, args.task_id)
+        row = resolve_from_tasks_jsonl(args.tasks, args.task_id)
         print(json.dumps(row, indent=2))
     elif args.command == "build":
         build_all(

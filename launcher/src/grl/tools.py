@@ -17,10 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from grl.config import LaunchToolsConfig
-from grl.errors import ToolError
+from grl.paths import grl_home
 
 
-TOOLS_CACHE = Path(os.environ.get("GRL_TOOLS_CACHE", Path.home() / ".cache" / "grl" / "tools"))
+class ToolError(Exception):
+    """Managed tool installation or execution failed."""
+
+
+TOOLS_CACHE = Path(os.environ.get("GRL_TOOLS_CACHE", grl_home() / "tools"))
 
 
 @dataclass(frozen=True)

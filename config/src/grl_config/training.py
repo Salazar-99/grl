@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from grl_config.model import local_model_path
 from grl_config.run_id import new_run_id
@@ -53,6 +53,8 @@ class PipelineConfig(BaseModel):
     pending_tasks_queue_size: int = 64
     completed_rollouts_queue_size: int = 256
     train_batches_queue_size: int = 16
+    max_train_steps: int | None = Field(None, ge=1)
+    """Maximum successful policy updates before training exits. None runs indefinitely."""
     # Flush a partial training batch when the oldest queued group is this many
     # policy versions behind the newest completed rollout.
     max_policy_staleness: int = 0
@@ -129,6 +131,17 @@ class TelemetryConfig(BaseModel):
     otel_endpoint: str | None = None
 
 
+class CheckpointConfig(BaseModel):
+    bucket_uri: str | None = None
+    """Object storage URI where final training checkpoints are written."""
+    interval_steps: int | None = Field(None, ge=1)
+    """Save and upload a background checkpoint every N successful policy updates."""
+    staging_dir: Path = Path("/tmp/grl-checkpoints")
+    """Local directory used to stage immutable checkpoints before upload."""
+    max_background_uploads: int = Field(1, ge=1)
+    """Maximum checkpoint uploads allowed to run in the background."""
+
+
 class RayConfig(BaseModel):
     ignore_reinit_error: bool = True
 
@@ -141,7 +154,20 @@ class GRLConfig(BaseModel):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     ray: RayConfig = Field(default_factory=RayConfig)
+
+    @model_validator(mode="after")
+    def validate_checkpoint_destination(self) -> GRLConfig:
+        checkpointing_enabled = (
+            self.pipeline.max_train_steps is not None
+            or self.checkpoint.interval_steps is not None
+        )
+        if checkpointing_enabled and not self.checkpoint.bucket_uri:
+            raise ValueError(
+                "checkpoint.bucket_uri is required when checkpointing is enabled"
+            )
+        return self
 
     @classmethod
     def from_yaml(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> GRLConfig:

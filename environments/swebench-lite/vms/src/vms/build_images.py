@@ -5,26 +5,8 @@ from pathlib import Path
 from vms.env_binary import resolve_grl_env_binary
 
 PLATFORM = "linux/amd64"
-# Preallocate generously during build; filesystem is shrunk after populate.
-BUILD_SIZE_MB = 2048
-# Free space retained for runtime work (pip install -e ., test artifacts, etc.)
-HEADROOM_MB = 512
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
 GRL_INIT = ASSETS_DIR / "grl-init"
-
-
-def _shrink_ext4_bash(path: str, headroom_mb: int) -> str:
-    return f"""
-    e2fsck -fy {path}
-    resize2fs -M {path}
-    block_size=$(tune2fs -l {path} | awk '/Block size/{{print $3}}')
-    block_count=$(tune2fs -l {path} | awk '/Block count/{{print $3}}')
-    fs_bytes=$((block_size * block_count))
-    headroom=$(( {headroom_mb} * 1024 * 1024 ))
-    truncate -s $((fs_bytes + headroom)) {path}
-    e2fsck -fy {path}
-    resize2fs {path}
-    """
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -51,11 +33,16 @@ def build_base_image(
     output_dir: Path,
     *,
     platform: str = PLATFORM,
-    size_mb: int = BUILD_SIZE_MB,
-    headroom_mb: int = HEADROOM_MB,
 ) -> Path:
+    """Build a read-only, zstd-compressed squashfs rootfs from the env Dockerfile.
+
+    The Docker rootfs is exported into a directory, `/init` (grl-init) and
+    `/usr/local/bin/grl-env` are added, then `mksquashfs` packs it. The guest
+    boots this as a read-only lower and stacks a per-VM ext4 overlay on top, so
+    the image itself never needs headroom or a writable filesystem.
+    """
     tag = f"swe-base-{name}"
-    ext4_path = output_dir / f"{name}.ext4"
+    squashfs_path = output_dir / f"{name}.squashfs"
     output_dir.mkdir(parents=True, exist_ok=True)
     grl_env = resolve_grl_env_binary(platform=platform)
 
@@ -74,17 +61,18 @@ def build_base_image(
         ]
     )
 
-    run(["dd", "if=/dev/zero", f"of={ext4_path}", "bs=1M", f"count={size_mb}"])
-
     container = f"swe-export-{name}"
     run(["docker", "create", "--platform", platform, "--name", container, tag])
     try:
         export = subprocess.Popen(["docker", "export", container], stdout=subprocess.PIPE)
+        # Do all filesystem assembly and packing inside a privileged container:
+        # extract the rootfs tar into a dir, drop in the init + env binary, then
+        # mksquashfs it. squashfs-tools + coreutils are all we need — no
+        # e2fsprogs, no loopback mounts.
         populate = subprocess.run(
             [
                 "docker",
                 "run",
-                "--privileged",
                 "--rm",
                 "-i",
                 "--platform",
@@ -100,16 +88,17 @@ def build_base_image(
                 "-c",
                 f"""
                 set -euo pipefail
-                apt-get update && apt-get install -y e2fsprogs
-                mkfs.ext4 -F /output/{ext4_path.name}
-                mkdir -p /mnt/disk
-                mount /output/{ext4_path.name} /mnt/disk
-                tar -xf - -C /mnt/disk
-                install -m 755 /assets/grl-init /mnt/disk/init
-                mkdir -p /mnt/disk/usr/local/bin
-                install -m 755 /assets/grl-env /mnt/disk/usr/local/bin/grl-env
-                umount /mnt/disk
-                {_shrink_ext4_bash(f"/output/{ext4_path.name}", headroom_mb)}
+                apt-get update && apt-get install -y squashfs-tools
+                mkdir -p /rootfs
+                tar -xf - -C /rootfs
+                install -m 755 /assets/grl-init /rootfs/init
+                mkdir -p /rootfs/usr/local/bin
+                install -m 755 /assets/grl-env /rootfs/usr/local/bin/grl-env
+                # grl-init mounts onto these before the root becomes writable,
+                # so they must exist in the read-only squashfs.
+                mkdir -p /rootfs/scratch /rootfs/newroot
+                rm -f /output/{squashfs_path.name}
+                mksquashfs /rootfs /output/{squashfs_path.name} -comp zstd -noappend
                 """,
             ],
             stdin=export.stdout,
@@ -135,7 +124,7 @@ def build_base_image(
             check=False,
         )
 
-    return ext4_path
+    return squashfs_path
 
 
 def build_all(
@@ -154,10 +143,10 @@ def build_all(
     built: list[Path] = []
     for i, dockerfile in enumerate(dockerfiles, start=1):
         name = dockerfile.parent.name
-        ext4_path = output_dir / f"{name}.ext4"
-        if ext4_path.exists() and not force:
+        squashfs_path = output_dir / f"{name}.squashfs"
+        if squashfs_path.exists() and not force:
             print(f"base image {i}/{total}: {name} (skip)")
-            built.append(ext4_path)
+            built.append(squashfs_path)
             continue
         print(f"base image {i}/{total}: {name}")
         built.append(

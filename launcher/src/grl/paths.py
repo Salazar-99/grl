@@ -12,7 +12,7 @@ def repo_root() -> Path | None:
     """Return the GRL repository root when running from a checkout."""
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / "infra" / "main.tf").is_file() and (parent / "training").is_dir():
+        if (parent / "infra" / "modules").is_dir() and (parent / "training").is_dir():
             return parent
     env_root = os.environ.get("GRL_REPO_ROOT")
     if env_root:
@@ -33,17 +33,41 @@ def package_data_root() -> Path:
 
 def terraform_dir(config_dir: str | Path | None = None) -> Path:
     root = repo_root()
-    if root is not None:
-        return root / "infra"
     if config_dir is not None:
-        candidate = Path(config_dir) / "infra"
+        candidate = Path(config_dir)
+        if not candidate.is_absolute() and root is not None:
+            candidate = root / candidate
         if candidate.is_dir():
             return candidate
-    packaged = package_data_root() / "infra"
+    if root is not None:
+        return root / "infra" / "aws"
+    if config_dir is not None:
+        candidate = Path(config_dir)
+        if candidate.is_dir():
+            return candidate
+    packaged = package_data_root() / "infra" / "aws"
     if packaged.is_dir():
         return packaged
     raise FileNotFoundError(
         "Terraform directory not found. Run from a GRL checkout or install the grl package."
+    )
+
+
+def byok_terraform_dir(config_dir: str | Path | None = None) -> Path:
+    root = repo_root()
+    if config_dir is not None:
+        candidate = Path(config_dir)
+        if not candidate.is_absolute() and root is not None:
+            candidate = root / candidate
+        if candidate.is_dir():
+            return candidate
+    if root is not None:
+        return root / "infra" / "byok"
+    packaged = package_data_root() / "infra" / "byok"
+    if packaged.is_dir():
+        return packaged
+    raise FileNotFoundError(
+        "BYOK Terraform directory not found. Run from a GRL checkout or install the grl package."
     )
 
 
@@ -63,8 +87,13 @@ def helm_chart_path(config_path: str | Path | None = None) -> Path:
     )
 
 
+def grl_home() -> Path:
+    """Root directory for local GRL state (runs, cached tools, etc.)."""
+    return Path(os.environ.get("GRL_HOME", Path.home() / ".grl"))
+
+
 def state_dir(run_id: str) -> Path:
-    base = Path(os.environ.get("GRL_STATE_DIR", Path.home() / ".cache" / "grl" / "runs"))
+    base = Path(os.environ.get("GRL_STATE_DIR", grl_home() / "runs"))
     path = base / run_id
     path.mkdir(parents=True, exist_ok=True)
     return path

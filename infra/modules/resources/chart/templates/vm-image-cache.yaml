@@ -1,7 +1,8 @@
 {{- if .Values.vmImageCache.bucket }}
-# Pre-pulls Firecracker VM artifacts (guest kernel, base/task ext4 images,
-# manifest) from S3 onto each environment node's local disk, so the manager
-# can boot microVMs from local files without touching S3 on the hot path.
+# Pre-pulls Firecracker VM artifacts (guest kernel, base/task squashfs images)
+# from S3 onto each environment node's local disk, so the manager can boot
+# microVMs from local files without touching S3 on the hot path. It also stages
+# a node-local ext4 scratch template the manager copies per microVM.
 #
 # The sync runs in an initContainer: the pod only reaches Running once the
 # cache is warm, and a failed sync retries from where it left off (s5cmd sync
@@ -24,7 +25,7 @@ spec:
         app: vm-image-cache
     spec:
       nodeSelector:
-        role: environment
+        role: environments
       initContainers:
         - name: sync
           image: {{ .Values.vmImageCache.image | quote }}
@@ -35,6 +36,8 @@ spec:
               value: {{ .Values.vmImageCache.region | quote }}
             - name: BUCKET
               value: {{ .Values.vmImageCache.bucket | quote }}
+            - name: SCRATCH_GB
+              value: {{ .Values.vmImageCache.scratchGb | quote }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -44,7 +47,17 @@ spec:
               /s5cmd sync "s3://${BUCKET}/kernel/*" /data/kernel/
               /s5cmd sync "s3://${BUCKET}/bases/*"  /data/images/bases/
               /s5cmd sync "s3://${BUCKET}/tasks/*"  /data/images/tasks/
-              /s5cmd cp   "s3://${BUCKET}/manifest.json" /data/
+              # Node-local per-VM scratch template: a pre-formatted, journal-less
+              # ext4 the manager copies per boot as each microVM's writable
+              # overlay upper. Journalless keeps its real footprint at a few MB
+              # (sparse), so the per-VM copy is fast; scratch is ephemeral so
+              # journaling is pointless. Not shipped via S3 (a sparse ext4 would
+              # upload as full-size zeros).
+              if [ ! -f /data/scratch-template.ext4 ]; then
+                apk add --no-cache e2fsprogs
+                truncate -s "${SCRATCH_GB}G" /data/scratch-template.ext4
+                mkfs.ext4 -F -O ^has_journal /data/scratch-template.ext4
+              fi
               touch /data/.ready
           resources:
             requests:

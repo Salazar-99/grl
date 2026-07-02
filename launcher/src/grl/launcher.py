@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,9 +10,8 @@ from pathlib import Path
 import boto3
 import yaml
 
-from grl.bundle import verify_bundle
+from grl.bundle import PreflightError, verify_bundle
 from grl.config import GRLConfig, ResolvedImages
-from grl.errors import GrlError
 from grl.images import resolve_runtime_images
 from grl.k8s import (
     create_or_update_configmap,
@@ -27,7 +27,11 @@ from grl.k8s import (
 from grl.paths import helm_chart_path, state_dir
 from grl.terraform import apply_infra, write_helm_overlay
 from grl.tools import ensure_tools
-from grl.verify import verify_manager_catalog
+from grl_proto.environment_client import ListTasksError, list_task_ids
+
+
+class GrlError(Exception):
+    """Base error for GRL launcher failures."""
 
 
 @dataclass
@@ -92,6 +96,25 @@ def persist_run_metadata(
         )
 
 
+def resolved_kubeconfig(config: GRLConfig) -> Path | None:
+    if config.launch.infra.kubeconfig:
+        return config.launch.infra.resolved_kubeconfig()
+    return None
+
+
+def load_cluster_client(config: GRLConfig):
+    infra = config.launch.infra
+    kubeconfig = resolved_kubeconfig(config)
+    if kubeconfig is not None:
+        return load_kube_client(kubeconfig=kubeconfig)
+    if infra.auto_kubeconfig or infra.should_apply_cluster():
+        return load_kube_client(
+            cluster_name=config.infra.cluster_name,
+            region=config.infra.region,
+        )
+    return load_kube_client()
+
+
 def activate_environment(
     config: GRLConfig,
     tools: dict[str, Path],
@@ -110,6 +133,7 @@ def activate_environment(
         chart,
         config.infra.release_namespace,
         values_files,
+        kubeconfig=resolved_kubeconfig(config),
         dry_run=dry_run,
     )
 
@@ -147,6 +171,19 @@ def activate_environment(
             manager.namespace,
             dry_run=dry_run,
         )
+
+
+def verify_manager_catalog(config: GRLConfig) -> int:
+    addr = config.environment.server_addr
+    split = config.environment.split
+    timeout = config.environment.rpc_timeouts.list_tasks_secs
+    try:
+        task_ids = asyncio.run(
+            list_task_ids(addr=addr, split=split, timeout_secs=timeout)
+        )
+    except ListTasksError as exc:
+        raise PreflightError(str(exc)) from exc
+    return len(task_ids)
 
 
 def submit_training_job(
@@ -202,7 +239,7 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
         print("Preflight complete.")
         return LaunchResult(run_id=run_id, resolved_images=resolved)
 
-    if config.launch.infra.apply:
+    if config.launch.infra.should_apply_cluster() or config.launch.infra.should_apply_byok():
         if "terraform" not in tools:
             tools = ensure_managed_tools(config)
         apply_infra(
@@ -216,13 +253,7 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     api_client = None
     if config.launch.environment.activate or config.launch.job.submit:
         if not dry_run:
-            if config.launch.infra.auto_kubeconfig or config.launch.infra.apply:
-                api_client = load_kube_client(
-                    cluster_name=config.infra.cluster_name,
-                    region=config.infra.region,
-                )
-            else:
-                api_client = load_kube_client()
+            api_client = load_cluster_client(config)
 
     task_count: int | None = None
     if config.launch.environment.activate:

@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     import torch
 
 from grl_config.training import GRLConfig
+from training.checkpoints import BackgroundCheckpointUploader, snapshot_checkpoint_dir
 from training.rollouts import PolicyWeightsRef, RolloutResult
 from training.telemetry import (
     counter,
@@ -69,6 +70,19 @@ class TrainingWorker:
         self.loss_scale_factor = cfg.grpo.loss_scale_factor
         learning_rate = cfg.grpo.learning_rate
         self.min_rollouts_per_group = cfg.grpo.min_rollouts_per_group
+        self.run_id = run_id
+        self.checkpoint_bucket_uri = cfg.checkpoint.bucket_uri
+        self.checkpoint_interval_steps = cfg.checkpoint.interval_steps
+        self.checkpoint_staging_dir = cfg.checkpoint.staging_dir
+        self.checkpoint_uploader = (
+            BackgroundCheckpointUploader(
+                bucket_uri=cfg.checkpoint.bucket_uri,
+                max_background_uploads=cfg.checkpoint.max_background_uploads,
+            )
+            if cfg.checkpoint.bucket_uri
+            else None
+        )
+        self.checkpoint_uris: dict[int, str] = {}
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path, local_files_only=True
@@ -91,7 +105,7 @@ class TrainingWorker:
         self,
         batch: TrainingBatch,
         rollout_workers: list[ray.actor.ActorHandle],
-    ) -> None:
+    ) -> int | None:
         import torch
 
         with span(
@@ -102,7 +116,7 @@ class TrainingWorker:
         ) as current:
             rollouts, advantages, rewards = self._flatten_rollouts(batch.groups)
             if not rollouts:
-                return
+                return None
 
             current.set_attribute("num_rollouts", len(rollouts))
             self.optimizer.zero_grad()
@@ -149,6 +163,42 @@ class TrainingWorker:
                         )
                     )
                 ray.get(update_refs)
+            self.checkpoint()
+            return self.policy_version
+
+    def save_checkpoint(self) -> str:
+        return self.checkpoint(final=True)
+
+    def checkpoint(self, *, final: bool = False) -> str | None:
+        if self.checkpoint_uploader is None:
+            if final:
+                raise RuntimeError("checkpoint.bucket_uri is required to save checkpoints")
+            return None
+        self.checkpoint_uploader.check_completed()
+        should_snapshot = final
+        if self.checkpoint_interval_steps is not None:
+            should_snapshot = (
+                should_snapshot
+                or self.policy_version % self.checkpoint_interval_steps == 0
+            )
+        if not should_snapshot:
+            return None
+        if self.policy_version not in self.checkpoint_uris:
+            checkpoint_dir = snapshot_checkpoint_dir(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                staging_dir=self.checkpoint_staging_dir,
+                run_id=self.run_id,
+                policy_version=self.policy_version,
+            )
+            self.checkpoint_uris[self.policy_version] = self.checkpoint_uploader.enqueue(
+                checkpoint_dir,
+                run_id=self.run_id,
+                policy_version=self.policy_version,
+            )
+        if final:
+            self.checkpoint_uploader.wait_all()
+        return self.checkpoint_uris[self.policy_version]
 
     def _record_train_metrics(
         self,

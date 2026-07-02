@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ENV_CRATE = Path(__file__).resolve().parents[2] / "env"
+ENV_CRATE = Path(__file__).resolve().parents[3] / "env"
 
 
 def rust_target(platform: str) -> str:

@@ -119,6 +119,117 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state_dict["bias"].device.type, "cpu")
         self.assertNotEqual(state_dict["weight"].data_ptr(), original.data_ptr())
 
+    def test_save_checkpoint_writes_model_and_tokenizer(self) -> None:
+        from pathlib import Path
+
+        from training.trainer import TrainingWorker
+
+        class FakeUploader:
+            def __init__(self) -> None:
+                self.enqueued: list[tuple[Path, str, int]] = []
+                self.waited = False
+
+            def enqueue(
+                self,
+                checkpoint_dir: Path,
+                *,
+                run_id: str,
+                policy_version: int,
+            ) -> str:
+                self.enqueued.append((checkpoint_dir, run_id, policy_version))
+                return "s3://bucket/checkpoints/grl-test/step-3"
+
+            def check_completed(self) -> list[str]:
+                return []
+
+            def wait_all(self) -> list[str]:
+                self.waited = True
+                return ["s3://bucket/checkpoints/grl-test/step-3"]
+
+        worker_cls = TrainingWorker.__ray_metadata__.modified_class
+        worker = object.__new__(worker_cls)
+        worker.model = object()
+        worker.tokenizer = object()
+        worker.run_id = "grl-test"
+        worker.policy_version = 3
+        worker.checkpoint_uploader = FakeUploader()
+        worker.checkpoint_interval_steps = None
+        worker.checkpoint_staging_dir = Path("/tmp/checkpoints")
+        worker.checkpoint_uris = {}
+
+        with patch(
+            "training.trainer.snapshot_checkpoint_dir",
+            return_value=Path("/tmp/checkpoints/grl-test/step-3"),
+        ) as snapshot_checkpoint_dir:
+            path = worker.save_checkpoint()
+
+        self.assertEqual(path, "s3://bucket/checkpoints/grl-test/step-3")
+        snapshot_checkpoint_dir.assert_called_once_with(
+            model=worker.model,
+            tokenizer=worker.tokenizer,
+            staging_dir=Path("/tmp/checkpoints"),
+            run_id="grl-test",
+            policy_version=3,
+        )
+        self.assertEqual(
+            worker.checkpoint_uploader.enqueued,
+            [(Path("/tmp/checkpoints/grl-test/step-3"), "grl-test", 3)],
+        )
+        self.assertTrue(worker.checkpoint_uploader.waited)
+
+    def test_checkpoint_enqueues_on_interval(self) -> None:
+        from pathlib import Path
+
+        from training.trainer import TrainingWorker
+
+        class FakeUploader:
+            def __init__(self) -> None:
+                self.completed_checks = 0
+                self.enqueued: list[tuple[Path, str, int]] = []
+
+            def check_completed(self) -> list[str]:
+                self.completed_checks += 1
+                return []
+
+            def enqueue(
+                self,
+                checkpoint_dir: Path,
+                *,
+                run_id: str,
+                policy_version: int,
+            ) -> str:
+                self.enqueued.append((checkpoint_dir, run_id, policy_version))
+                return "s3://bucket/checkpoints/grl-test/step-4"
+
+        worker_cls = TrainingWorker.__ray_metadata__.modified_class
+        worker = object.__new__(worker_cls)
+        worker.model = object()
+        worker.tokenizer = object()
+        worker.run_id = "grl-test"
+        worker.policy_version = 4
+        worker.checkpoint_interval_steps = 2
+        worker.checkpoint_staging_dir = Path("/tmp/checkpoints")
+        worker.checkpoint_uploader = FakeUploader()
+        worker.checkpoint_uris = {}
+
+        with patch(
+            "training.trainer.snapshot_checkpoint_dir",
+            return_value=Path("/tmp/checkpoints/grl-test/step-4"),
+        ) as snapshot_checkpoint_dir:
+            uri = worker.checkpoint()
+
+        self.assertEqual(uri, "s3://bucket/checkpoints/grl-test/step-4")
+        snapshot_checkpoint_dir.assert_called_once()
+        self.assertEqual(worker.checkpoint_uploader.completed_checks, 1)
+        self.assertEqual(
+            worker.checkpoint_uploader.enqueued,
+            [(Path("/tmp/checkpoints/grl-test/step-4"), "grl-test", 4)],
+        )
+        self.assertEqual(
+            worker.checkpoint_uris[4],
+            "s3://bucket/checkpoints/grl-test/step-4",
+        )
+
     async def test_apply_policy_update_loads_weights_from_object_ref(self) -> None:
         import torch
 

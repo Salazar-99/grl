@@ -304,7 +304,7 @@ mod tests {
 
     fn test_catalog() -> Arc<Catalog> {
         let jsonl = concat!(
-            r#"{"task_id":"t1","split":"dev","messages":[{"role":"user","content":"hi"}],"tools":[],"base_image":"images/bases/t.ext4","task_image":"images/tasks/t1.ext4"}"#,
+            r#"{"task_id":"t1","split":"dev","messages":[{"role":"user","content":"hi"}],"tools":[],"base_image":"images/bases/t.squashfs","task_image":"images/tasks/t1.squashfs"}"#,
             "\n",
         );
         Arc::new(Catalog::from_jsonl(jsonl).unwrap())

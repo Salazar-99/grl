@@ -35,10 +35,17 @@ pipeline:
   pending_tasks_queue_size: 64
   completed_rollouts_queue_size: 256
   train_batches_queue_size: 16
+  max_train_steps: null
   max_policy_staleness: 0
   seed: 0
   group_assembly_timeout_secs: 3900
   group_poll_interval_secs: 5
+
+checkpoint:
+  bucket_uri: s3://my-bucket/checkpoints/grl
+  interval_steps: null
+  staging_dir: /tmp/grl-checkpoints
+  max_background_uploads: 1
 
 telemetry:
   run_id: null
@@ -58,7 +65,11 @@ launch:
     kubectl_version: "1.32.0"
   infra:
     apply: false
-    terraform_dir: infra
+    apply_cluster: false
+    apply_byok: true
+    terraform_dir: infra/aws
+    byok_terraform_dir: infra/byok
+    kubeconfig: null
     auto_kubeconfig: true
   environment:
     activate: true
@@ -88,6 +99,27 @@ infra:
   region: us-west-2
   helm_chart_path: infra/modules/resources/chart
   ray_address: ray://grl-ray-head:10001
+  node_groups:
+    ray:
+      instance_types: [m5.4xlarge]
+      ami_type: AL2023_x86_64_STANDARD
+      disk_size: 100
+      node_count: 2
+    rollouts:
+      instance_types: [g4dn.xlarge]
+      ami_type: AL2023_x86_64_NVIDIA
+      disk_size: 200
+      node_count: 1
+    training:
+      instance_types: [g4dn.xlarge]
+      ami_type: AL2023_x86_64_NVIDIA
+      disk_size: 200
+      node_count: 1
+    environments:
+      instance_types: [c5.metal]
+      ami_type: AL2023_x86_64_STANDARD
+      disk_size: 200
+      node_count: 1
   ray_cluster:
     name: grl-ray
     namespace: default

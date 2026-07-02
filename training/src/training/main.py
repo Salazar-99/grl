@@ -316,11 +316,28 @@ async def trainer_loop(
     train_batches: asyncio.Queue[TrainingBatch],
     training_worker: ray.actor.ActorHandle,
     rollout_workers: list[ray.actor.ActorHandle],
-) -> None:
+    *,
+    max_train_steps: int | None,
+) -> int:
+    policy_updates = 0
     while True:
         batch = await train_batches.get()
-        await _get(training_worker.train_batch.remote(batch, rollout_workers))
-        train_batches.task_done()
+        try:
+            policy_version = await _get(
+                training_worker.train_batch.remote(batch, rollout_workers)
+            )
+        finally:
+            train_batches.task_done()
+        if policy_version is None:
+            continue
+        policy_updates += 1
+        if max_train_steps is not None and policy_updates >= max_train_steps:
+            checkpoint_path = await _get(training_worker.save_checkpoint.remote())
+            print(
+                f"Reached max_train_steps={max_train_steps}; "
+                f"wrote final checkpoint to {checkpoint_path}"
+            )
+            return policy_updates
 
 
 async def run(config: GRLConfig, run_id: str) -> None:
@@ -368,31 +385,57 @@ async def run(config: GRLConfig, run_id: str) -> None:
     )
 
     grpo = config.grpo
-    await asyncio.gather(
-        task_loop(
-            pending_tasks,
-            task_ids,
-            num_rollouts=grpo.num_rollouts,
-            sampling_params=grpo.sampling_params(),
-            seed=pipeline.seed,
+    pipeline_tasks = [
+        asyncio.create_task(
+            task_loop(
+                pending_tasks,
+                task_ids,
+                num_rollouts=grpo.num_rollouts,
+                sampling_params=grpo.sampling_params(),
+                seed=pipeline.seed,
+            ),
+            name="task_loop",
         ),
-        rollout_loop(
-            pending_tasks,
-            completed_rollouts,
-            rollout_workers,
-            max_in_flight=config.workers.max_in_flight_rollouts,
-            trajectory_timeout_secs=config.rollout.trajectory_timeout_secs,
+        asyncio.create_task(
+            rollout_loop(
+                pending_tasks,
+                completed_rollouts,
+                rollout_workers,
+                max_in_flight=config.workers.max_in_flight_rollouts,
+                trajectory_timeout_secs=config.rollout.trajectory_timeout_secs,
+            ),
+            name="rollout_loop",
         ),
-        batcher_loop(
-            completed_rollouts,
+        asyncio.create_task(
+            batcher_loop(
+                completed_rollouts,
+                train_batches,
+                groups_per_batch=grpo.groups_per_batch,
+                max_policy_staleness=pipeline.max_policy_staleness,
+                group_assembly_timeout_secs=pipeline.group_assembly_timeout_secs,
+                group_poll_interval_secs=pipeline.group_poll_interval_secs,
+            ),
+            name="batcher_loop",
+        ),
+    ]
+    trainer_task = asyncio.create_task(
+        trainer_loop(
             train_batches,
-            groups_per_batch=grpo.groups_per_batch,
-            max_policy_staleness=pipeline.max_policy_staleness,
-            group_assembly_timeout_secs=pipeline.group_assembly_timeout_secs,
-            group_poll_interval_secs=pipeline.group_poll_interval_secs,
+            training_worker,
+            rollout_workers,
+            max_train_steps=pipeline.max_train_steps,
         ),
-        trainer_loop(train_batches, training_worker, rollout_workers),
+        name="trainer_loop",
     )
+    try:
+        if pipeline.max_train_steps is None:
+            await asyncio.gather(*pipeline_tasks, trainer_task)
+        else:
+            await trainer_task
+    finally:
+        for task in [*pipeline_tasks, trainer_task]:
+            task.cancel()
+        await asyncio.gather(*pipeline_tasks, trainer_task, return_exceptions=True)
 
 
 def main() -> None:

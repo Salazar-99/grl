@@ -42,8 +42,43 @@ grl launch config.yaml --preflight-only
 - AWS credentials configured locally (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or SSO/profile)
 - For `images.mode: published` (default): published GRL container images in your registry
 - For `launch.infra.apply: true`: permission to run Terraform against your AWS account
+- For bring-your-own Kubernetes: a kubeconfig file with access to an existing cluster
 
-The CLI auto-downloads pinned Terraform, Helm, and kubectl binaries into `~/.cache/grl/tools` when `launch.tools.auto_install` is true.
+The CLI stores local state under `~/.grl` (run metadata, Terraform/Helm overlays, and auto-downloaded Terraform/Helm/kubectl binaries when `launch.tools.auto_install` is true). Override with `GRL_HOME`, or set `GRL_STATE_DIR` / `GRL_TOOLS_CACHE` for individual paths.
+
+## Deployment modes
+
+### Full-stack AWS/EKS provisioning
+
+Set `launch.infra.apply: true` (or `launch.infra.apply_cluster: true`) to run the full Terraform root at `infra/aws`. This provisions VPC, EKS, operator Helm charts, and the GRL resources chart.
+
+```yaml
+launch:
+  infra:
+    apply: true
+    auto_kubeconfig: true
+```
+
+After the first apply, the launcher uses AWS EKS auth for Kubernetes API calls when `auto_kubeconfig: true`.
+
+### Bring your own Kubernetes cluster
+
+Set `launch.infra.kubeconfig` to a kubeconfig file path. The launcher uses that file's default/current context for Terraform, Helm, and Kubernetes API calls. It runs the BYOK Terraform root at `infra/byok`, which installs the same operator charts and GRL resources as full-stack provisioning without creating AWS/EKS infrastructure.
+
+```yaml
+launch:
+  infra:
+    apply: false
+    apply_cluster: false
+    apply_byok: true
+    byok_terraform_dir: infra/byok
+    kubeconfig: ~/.kube/config
+    auto_kubeconfig: false
+```
+
+Your cluster must already provide compatible nodes, labels, taints, GPU support, KVM access for environment workers, and any cloud IAM/storage assumptions expected by the GRL chart.
+
+Per-run environment activation still applies a Helm overlay to update images, bundle URI, and caches without re-running the full BYOK Terraform phase.
 
 ## Config layers
 

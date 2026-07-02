@@ -6,17 +6,14 @@ vLLM — with production-quality correctness, performance, and observability.
 Scaling and fault tolerance are explicitly deferred (see bottom). General
 reference material lives in NOTES.md.
 
-
+Environment
+-------------
+- Add more fine grained tools to the swebench-lite environment, it currently has only one bash tool
 
 Code Review
 -------------
 - Read and review all code in launcher
 - Read and review all code in training
-
-Observability
--------------
-
-
 
 Initial Testing
 ----------------
@@ -25,6 +22,11 @@ Initial Testing
       - Add new clickhouse schema to gnode
       - Update otel collector config on gnode
 - Use launcher to trigger end-to-end run
+
+Other
+-------
+- Write blog post
+- Publish docs site
 
 
 Deferred (scaling / fault tolerance)

@@ -28,7 +28,7 @@ spec:
         app: {{ .Values.manager.name | quote }}
     spec:
       nodeSelector:
-        role: environment
+        role: environments
       initContainers:
         - name: sync-bundle
           image: {{ .Values.vmImageCache.image | quote }}

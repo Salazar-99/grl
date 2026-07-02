@@ -14,8 +14,11 @@ from botocore.signers import RequestSigner
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-from grl.errors import KubernetesError
 from grl.tools import run_tool
+
+
+class KubernetesError(Exception):
+    """Kubernetes or Helm operation failed."""
 
 
 def generate_eks_token(cluster_name: str, region: str) -> str:
@@ -66,7 +69,20 @@ def load_kube_client(
     *,
     cluster_name: str | None = None,
     region: str | None = None,
+    kubeconfig: Path | str | None = None,
 ) -> client.ApiClient:
+    if kubeconfig is not None:
+        kubeconfig_path = Path(kubeconfig).expanduser()
+        if not kubeconfig_path.is_file():
+            raise KubernetesError(f"kubeconfig not found: {kubeconfig_path}")
+        try:
+            config.load_kube_config(config_file=str(kubeconfig_path))
+            return client.ApiClient()
+        except config.ConfigException as exc:
+            raise KubernetesError(
+                f"failed to load kubeconfig {kubeconfig_path}; "
+                "ensure the file contains a valid default context"
+            ) from exc
     if cluster_name and region:
         return configure_eks_client(cluster_name, region)
     try:
@@ -74,7 +90,8 @@ def load_kube_client(
         return client.ApiClient()
     except config.ConfigException as exc:
         raise KubernetesError(
-            "no kubeconfig found; set launch.infra.apply or configure kubectl context"
+            "no kubeconfig found; set launch.infra.kubeconfig, "
+            "launch.infra.apply, or configure a local kubectl context"
         ) from exc
 
 
@@ -85,6 +102,7 @@ def helm_upgrade(
     namespace: str,
     values_files: list[Path],
     *,
+    kubeconfig: Path | str | None = None,
     dry_run: bool = False,
 ) -> None:
     args = [
@@ -96,6 +114,8 @@ def helm_upgrade(
         namespace,
         "--create-namespace",
     ]
+    if kubeconfig is not None:
+        args.extend(["--kubeconfig", str(Path(kubeconfig).expanduser())])
     for values_file in values_files:
         args.extend(["-f", str(values_file)])
     if dry_run:

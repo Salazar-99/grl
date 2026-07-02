@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 from vms.dockerfile import slug  # noqa: F401  (kept for parity with other modules)
-from vms.manifest import NODE_BASES_DIR, NODE_TASKS_DIR, image_paths
+from vms.images import NODE_BASES_DIR, NODE_TASKS_DIR, image_paths
 from vms.versions import MAP_REPO_VERSION_TO_SPECS_PY
 
 DEFAULT_TEST_CMD = "pytest -rA"

@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-grl-config = { path = "../config" }
+grl-config = { path = "../config", editable = true }
 grl-proto = { path = "../proto" }
 
 [project.scripts]

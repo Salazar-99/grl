@@ -24,22 +24,22 @@ pub struct TaskSpec {
     pub tools_json: String,
     /// Split label from tasks.jsonl (may be empty).
     pub split: String,
-    /// Base ext4 path relative to `GRL_VM_CACHE_DIR`.
+    /// Base squashfs path relative to `GRL_VM_CACHE_DIR`.
     pub base_image: String,
-    /// Task ext4 path relative to `GRL_VM_CACHE_DIR`.
+    /// Task squashfs path relative to `GRL_VM_CACHE_DIR`.
     pub task_image: String,
 }
 
 impl TaskSpec {
-    /// Resolve absolute kernel and ext4 paths under the node cache root.
+    /// Resolve absolute kernel and image paths under the node cache root.
     pub fn resolve_vm_paths(&self, cache_root: &std::path::Path) -> Result<VmPaths, String> {
         let kernel = resolve_kernel(cache_root)?;
-        let base_ext4 = join_and_verify(cache_root, &self.base_image, "base_image")?;
-        let task_ext4 = join_and_verify(cache_root, &self.task_image, "task_image")?;
+        let base_image = join_and_verify(cache_root, &self.base_image, "base_image")?;
+        let task_image = join_and_verify(cache_root, &self.task_image, "task_image")?;
         Ok(VmPaths {
             kernel,
-            base_ext4,
-            task_ext4,
+            base_image,
+            task_image,
         })
     }
 }
@@ -159,7 +159,7 @@ mod tests {
 
     fn sample_line(task_id: &str, split: &str) -> String {
         format!(
-            r#"{{"task_id":"{task_id}","split":"{split}","messages":[{{"role":"user","content":"hi"}}],"tools":[{{"type":"function"}}],"base_image":"images/bases/base.ext4","task_image":"images/tasks/{task_id}.ext4"}}"#
+            r#"{{"task_id":"{task_id}","split":"{split}","messages":[{{"role":"user","content":"hi"}}],"tools":[{{"type":"function"}}],"base_image":"images/bases/base.squashfs","task_image":"images/tasks/{task_id}.squashfs"}}"#
         )
     }
 
@@ -168,15 +168,15 @@ mod tests {
         let jsonl = format!(
             "{}\n\n{}\n",
             sample_line("a", "dev"),
-            r#"{"task_id":"b","messages":[],"tools":[],"base_image":"images/bases/b.ext4","task_image":"images/tasks/b.ext4"}"#,
+            r#"{"task_id":"b","messages":[],"tools":[],"base_image":"images/bases/b.squashfs","task_image":"images/tasks/b.squashfs"}"#,
         );
         let catalog = Catalog::from_jsonl(&jsonl).unwrap();
         assert_eq!(catalog.len(), 2);
         let a = catalog.get("a").unwrap();
         assert_eq!(a.initial_messages_json, r#"[{"content":"hi","role":"user"}]"#);
         assert_eq!(a.tools_json, r#"[{"type":"function"}]"#);
-        assert_eq!(a.base_image, "images/bases/base.ext4");
-        assert_eq!(a.task_image, "images/tasks/a.ext4");
+        assert_eq!(a.base_image, "images/bases/base.squashfs");
+        assert_eq!(a.task_image, "images/tasks/a.squashfs");
         assert!(catalog.get("missing").is_none());
     }
 
@@ -198,27 +198,27 @@ mod tests {
         std::fs::create_dir_all(dir.join("images/tasks")).unwrap();
         std::fs::create_dir_all(dir.join("kernel")).unwrap();
         std::fs::write(dir.join("kernel/vmlinux-test"), b"k").unwrap();
-        std::fs::write(dir.join("images/bases/base.ext4"), b"b").unwrap();
-        std::fs::write(dir.join("images/tasks/t1.ext4"), b"t").unwrap();
+        std::fs::write(dir.join("images/bases/base.squashfs"), b"b").unwrap();
+        std::fs::write(dir.join("images/tasks/t1.squashfs"), b"t").unwrap();
 
         let jsonl = format!("{}\n", sample_line("t1", "dev"));
         let catalog = Catalog::from_jsonl(&jsonl).unwrap();
         let spec = catalog.get("t1").unwrap();
         let paths = spec.resolve_vm_paths(&dir).unwrap();
         assert!(paths.kernel.ends_with("vmlinux-test"));
-        assert!(paths.base_ext4.ends_with("images/bases/base.ext4"));
-        assert!(paths.task_ext4.ends_with("images/tasks/t1.ext4"));
+        assert!(paths.base_image.ends_with("images/bases/base.squashfs"));
+        assert!(paths.task_image.ends_with("images/tasks/t1.squashfs"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn list_tasks_filters_by_split() {
         let jsonl = concat!(
-            r#"{"task_id":"a","split":"dev","messages":[],"tools":[],"base_image":"images/bases/a.ext4","task_image":"images/tasks/a.ext4"}"#,
+            r#"{"task_id":"a","split":"dev","messages":[],"tools":[],"base_image":"images/bases/a.squashfs","task_image":"images/tasks/a.squashfs"}"#,
             "\n",
-            r#"{"task_id":"b","split":"test","messages":[],"tools":[],"base_image":"images/bases/b.ext4","task_image":"images/tasks/b.ext4"}"#,
+            r#"{"task_id":"b","split":"test","messages":[],"tools":[],"base_image":"images/bases/b.squashfs","task_image":"images/tasks/b.squashfs"}"#,
             "\n",
-            r#"{"task_id":"c","split":"dev","messages":[],"tools":[],"base_image":"images/bases/c.ext4","task_image":"images/tasks/c.ext4"}"#,
+            r#"{"task_id":"c","split":"dev","messages":[],"tools":[],"base_image":"images/bases/c.squashfs","task_image":"images/tasks/c.squashfs"}"#,
             "\n",
         );
         let catalog = Catalog::from_jsonl(jsonl).unwrap();

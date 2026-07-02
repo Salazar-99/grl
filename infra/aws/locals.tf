@@ -33,6 +33,6 @@ locals {
   }
 
   # GPU node groups are homogeneous, so the first instance type sets the count.
-  rollouts_gpu_count = lookup(local.gpus_per_instance, var.rollouts_nodes.instance_types[0], 1)
-  training_gpu_count = lookup(local.gpus_per_instance, var.training_nodes.instance_types[0], 1)
+  rollouts_gpu_count = lookup(local.gpus_per_instance, var.node_groups.rollouts.instance_types[0], 1)
+  training_gpu_count = lookup(local.gpus_per_instance, var.node_groups.training.instance_types[0], 1)
 }

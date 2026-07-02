@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from grl.secrets import resolve_secret_fields
+from grl_config.infra import NodeGroupsConfig
 from grl_config.run_id import new_run_id
 from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig as TrainingGRLConfig
 from pydantic import BaseModel, Field, model_validator
@@ -24,8 +26,39 @@ class LaunchToolsConfig(BaseModel):
 
 class LaunchInfraConfig(BaseModel):
     apply: bool = False
-    terraform_dir: str = "infra"
+    apply_cluster: bool | None = None
+    apply_byok: bool | None = None
+    terraform_dir: str = "infra/aws"
+    byok_terraform_dir: str = "infra/byok"
+    kubeconfig: str | None = None
     auto_kubeconfig: bool = True
+
+    def should_apply_cluster(self) -> bool:
+        """Whether to run the AWS Terraform root (VPC + EKS + cluster resources)."""
+        if self.apply_cluster is not None:
+            return self.apply_cluster
+        if self.kubeconfig:
+            return False
+        return self.apply
+
+    def should_apply_byok(self) -> bool:
+        """Whether to run the BYOK Terraform root (operators + GRL resources)."""
+        if self.apply_byok is not None:
+            return self.apply_byok
+        if self.kubeconfig:
+            return True
+        return self.apply
+
+    def uses_kubeconfig(self) -> bool:
+        return self.kubeconfig is not None
+
+    def resolved_kubeconfig(self) -> Path:
+        if not self.kubeconfig:
+            raise ValueError("launch.infra.kubeconfig is not set")
+        path = Path(self.kubeconfig).expanduser()
+        if not path.is_file():
+            raise ValueError(f"kubeconfig not found: {path}")
+        return path
 
 
 class LaunchEnvironmentConfig(BaseModel):
@@ -211,6 +244,7 @@ class InfraConfig(BaseModel):
     region: str = "us-west-2"
     helm_chart_path: str = "infra/modules/resources/chart"
     ray_address: str = "ray://grl-ray-head:10001"
+    node_groups: NodeGroupsConfig = Field(default_factory=NodeGroupsConfig)
     ray_cluster: RayClusterConfig = Field(default_factory=RayClusterConfig)
     otel_collector: OtelCollectorConfig = Field(default_factory=OtelCollectorConfig)
     dcgm_exporter: DcgmExporterConfig = Field(default_factory=DcgmExporterConfig)
@@ -291,18 +325,24 @@ class GRLConfig(TrainingGRLConfig):
             overlay["modelCache"] = self.infra.model_cache.helm_fragment()
         return overlay
 
-    def terraform_vars(self, resolved: ResolvedImages) -> dict[str, str]:
-        vars_: dict[str, str] = {
+    def terraform_vars(self, resolved: ResolvedImages) -> dict[str, Any]:
+        vars_: dict[str, Any] = {
             "cluster_name": self.infra.cluster_name,
             "region": self.infra.region,
+            "node_groups": self.infra.node_groups.terraform_value(),
             "ray_cluster_name": self.infra.ray_cluster.name,
             "ray_cluster_namespace": self.infra.ray_cluster.namespace,
             "ray_head_image": resolved.head,
             "ray_rollouts_image": resolved.rollouts,
             "ray_training_image": resolved.training,
             "ray_version": self.infra.ray_cluster.version,
+            "ray_rollouts_gpus_per_node": self.infra.ray_cluster.workers.rollouts.gpus_per_node,
+            "ray_training_gpus_per_node": self.infra.ray_cluster.workers.training.gpus_per_node,
             "manager_image": resolved.manager,
+            "release_name": self.infra.release_name,
+            "release_namespace": self.infra.release_namespace,
             "vm_images_bucket": self.infra.vm_image_cache.bucket,
+            "vm_images_region": self.infra.vm_image_cache.region,
             "otel_collector_name": self.infra.otel_collector.name,
             "otel_collector_namespace": self.infra.otel_collector.namespace,
             "otel_upstream_endpoint": self.infra.otel_collector.upstream.endpoint,
@@ -315,10 +355,21 @@ class GRLConfig(TrainingGRLConfig):
                 vars_["model_revision"] = self.infra.model_cache.revision
             if self.infra.model_cache.huggingface_token:
                 vars_["huggingface_token"] = self.infra.model_cache.huggingface_token
-        return {key: value for key, value in vars_.items() if value != ""}
+        return {
+            key: value
+            for key, value in vars_.items()
+            if value != "" and value is not None
+        }
+
+    def byok_terraform_vars(self, resolved: ResolvedImages) -> dict[str, Any]:
+        vars_ = dict(self.terraform_vars(resolved))
+        if self.launch.infra.kubeconfig:
+            vars_["kubeconfig_path"] = str(self.launch.infra.resolved_kubeconfig())
+        return vars_
 
     def training_payload(self, run_id: str | None = None) -> dict[str, Any]:
         payload = self.model_dump(
+            mode="json",
             include={
                 "model",
                 "grpo",
@@ -327,6 +378,7 @@ class GRLConfig(TrainingGRLConfig):
                 "pipeline",
                 "environment",
                 "telemetry",
+                "checkpoint",
                 "ray",
             }
         )
@@ -336,6 +388,32 @@ class GRLConfig(TrainingGRLConfig):
 
     def training_yaml(self, run_id: str | None = None) -> str:
         return yaml.safe_dump(self.training_payload(run_id=run_id), sort_keys=False)
+
+
+ENV_REF_PATTERN = re.compile(r"^\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def resolve_env_ref(value: str) -> str:
+    """Expand ``${env:VAR_NAME}`` to the corresponding environment value."""
+    match = ENV_REF_PATTERN.match(value.strip())
+    if not match:
+        return value
+    var_name = match.group(1)
+    env_value = os.environ.get(var_name)
+    if env_value is None:
+        raise ValueError(f"environment variable {var_name!r} is not set")
+    return env_value
+
+
+def resolve_secret_fields(data: object) -> object:
+    """Recursively resolve ``${env:...}`` strings in config dicts."""
+    if isinstance(data, dict):
+        return {key: resolve_secret_fields(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [resolve_secret_fields(item) for item in data]
+    if isinstance(data, str):
+        return resolve_env_ref(data)
+    return data
 
 
 def load_config(path: str | Path) -> GRLConfig:

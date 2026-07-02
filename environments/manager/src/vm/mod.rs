@@ -8,7 +8,10 @@ mod paths;
 mod vsock;
 
 pub use executor::ExecutorConn;
-pub use paths::{cache_root, join_and_verify, resolve_kernel, run_root, VmPaths};
+pub use paths::{
+    cache_root, join_and_verify, resolve_kernel, run_root, scratch_path,
+    scratch_template_path, VmPaths,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,6 +78,20 @@ pub async fn boot(env_id: &str, spec: &TaskSpec) -> Result<VmHandle, String> {
     let _ = std::fs::remove_file(&api_sock);
     let _ = std::fs::remove_file(&vsock_uds);
 
+    // Per-VM writable scratch: copy the node-local template into the run dir.
+    // std::fs::copy uses copy_file_range on Linux, giving a reflink/CoW copy on
+    // filesystems that support it and a fast sparse copy otherwise — the
+    // journal-less template's real footprint is a few MB.
+    let template = scratch_template_path(&cache);
+    let scratch = scratch_path(&run_dir);
+    std::fs::copy(&template, &scratch).map_err(|e| {
+        format!(
+            "copy scratch template {} -> {}: {e}",
+            template.display(),
+            scratch.display()
+        )
+    })?;
+
     let child = jailer::spawn(env_id, &api_sock).await?;
     firecracker::wait_for_socket(&api_sock, Duration::from_secs(10)).await?;
 
@@ -82,6 +99,7 @@ pub async fn boot(env_id: &str, spec: &TaskSpec) -> Result<VmHandle, String> {
     firecracker::put(&api_sock, "boot-source", &config::boot_source(&paths)).await?;
     firecracker::put(&api_sock, "drives/rootfs", &config::root_drive(&paths)).await?;
     firecracker::put(&api_sock, "drives/task", &config::task_drive(&paths)).await?;
+    firecracker::put(&api_sock, "drives/scratch", &config::scratch_drive(&scratch)).await?;
     firecracker::put(
         &api_sock,
         "vsock",

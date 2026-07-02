@@ -1,13 +1,15 @@
-//! Resolve kernel and ext4 paths under the node-local VM cache.
+//! Resolve kernel and image paths under the node-local VM cache.
 
 use std::path::{Path, PathBuf};
 
-/// Absolute paths passed to Firecracker for one boot.
+/// Absolute paths passed to Firecracker for one boot. `base_image`/`task_image`
+/// are read-only squashfs lowers; the per-VM writable scratch lives in the run
+/// dir and is resolved separately at boot (see [`scratch_path`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VmPaths {
     pub kernel: PathBuf,
-    pub base_ext4: PathBuf,
-    pub task_ext4: PathBuf,
+    pub base_image: PathBuf,
+    pub task_image: PathBuf,
 }
 
 /// Node-local cache root (`GRL_VM_CACHE_DIR`, default `/var/lib/grl`).
@@ -22,6 +24,18 @@ pub fn run_root() -> PathBuf {
     std::env::var("GRL_VM_RUN_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/run/grl/vms"))
+}
+
+/// Per-VM writable scratch disk under the VM's run dir. Copied from the
+/// node-local template before boot and discarded with the run dir on teardown.
+pub fn scratch_path(run_dir: &Path) -> PathBuf {
+    run_dir.join("scratch.ext4")
+}
+
+/// Node-local pre-formatted, journal-less ext4 scratch template. Staged once
+/// per node by the vm-image-cache initContainer.
+pub fn scratch_template_path(cache_root: &Path) -> PathBuf {
+    cache_root.join("scratch-template.ext4")
 }
 
 pub fn resolve_kernel(cache_root: &Path) -> Result<PathBuf, String> {
@@ -85,6 +99,20 @@ mod tests {
             std::env::remove_var("GRL_KERNEL_FILE");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scratch_paths_are_derived_from_dirs() {
+        let run_dir = PathBuf::from("/var/run/grl/vms/env-7");
+        assert_eq!(
+            scratch_path(&run_dir),
+            PathBuf::from("/var/run/grl/vms/env-7/scratch.ext4")
+        );
+        let cache = PathBuf::from("/var/lib/grl");
+        assert_eq!(
+            scratch_template_path(&cache),
+            PathBuf::from("/var/lib/grl/scratch-template.ext4")
+        );
     }
 
     #[test]

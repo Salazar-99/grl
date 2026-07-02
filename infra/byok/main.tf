@@ -1,0 +1,39 @@
+module "charts" {
+  source = "../modules/charts"
+
+  opentelemetry_operator_chart_version = var.opentelemetry_operator_chart_version
+  nvidia_gpu_operator_chart_version    = var.nvidia_gpu_operator_chart_version
+  kuberay_operator_chart_version       = var.kuberay_operator_chart_version
+}
+
+module "resources" {
+  source = "../modules/resources"
+
+  release_name          = var.release_name
+  release_namespace     = var.release_namespace
+  ray_cluster_name      = var.ray_cluster_name
+  ray_cluster_namespace = var.ray_cluster_namespace
+  ray_head_image        = var.ray_head_image
+  ray_rollouts_image    = var.ray_rollouts_image
+  ray_training_image    = var.ray_training_image
+  ray_version           = var.ray_version
+  manager_image         = var.manager_image
+
+  ray_rollouts_gpus_per_node = var.ray_rollouts_gpus_per_node
+  ray_training_gpus_per_node = var.ray_training_gpus_per_node
+
+  vm_images_bucket = var.vm_images_bucket
+  vm_images_region = var.vm_images_region
+
+  model_tag         = var.model_tag
+  model_revision    = var.model_revision
+  huggingface_token = var.huggingface_token
+
+  otel_collector_name      = var.otel_collector_name
+  otel_collector_namespace = var.otel_collector_namespace
+  otel_upstream_endpoint   = var.otel_upstream_endpoint
+  otel_upstream_username   = var.otel_upstream_username
+  otel_upstream_password   = var.otel_upstream_password
+
+  depends_on = [module.charts]
+}

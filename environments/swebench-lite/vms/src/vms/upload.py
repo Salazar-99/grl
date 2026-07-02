@@ -102,9 +102,9 @@ def _list_uploads(local_dir: Path, prefix: str) -> list[UploadItem]:
     if not local_dir.is_dir():
         raise SystemExit(f"directory not found: {local_dir}")
 
-    files = sorted(local_dir.glob("*.ext4"))
+    files = sorted(local_dir.glob("*.squashfs"))
     if not files:
-        raise SystemExit(f"no .ext4 files found in {local_dir}")
+        raise SystemExit(f"no .squashfs files found in {local_dir}")
 
     return [UploadItem(path=path, key=f"{prefix}/{path.name}") for path in files]
 
