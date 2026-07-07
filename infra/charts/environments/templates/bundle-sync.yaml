@@ -1,0 +1,83 @@
+{{- if .Values.bundleUri }}
+# Per-run bundle sync: pulls the active environment bundle (tasks.jsonl) from S3
+# onto each environment node's local cache and touches the .ready sentinel the
+# manager watches to hot-reload its catalog — no manager restart.
+#
+# Owned by the launcher (applied only during the ENVS deployment layer), separate
+# from the Terraform-managed base-image cache (vm-image-cache) so the two never
+# share a Helm release. The bundleUri annotation makes a bundle change alter the
+# pod template, so `helm upgrade` rolls the DaemonSet and re-runs the sync.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: grl-bundle-sync
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    app: grl-bundle-sync
+spec:
+  selector:
+    matchLabels:
+      app: grl-bundle-sync
+  template:
+    metadata:
+      labels:
+        app: grl-bundle-sync
+      annotations:
+        grl.io/bundleUri: {{ .Values.bundleUri | quote }}
+    spec:
+      nodeSelector:
+        role: environments
+      initContainers:
+        - name: sync-bundle
+          image: {{ .Values.image | quote }}
+          env:
+            # s5cmd resolves credentials from the node role via IMDS, but does
+            # not resolve the region from it; set it explicitly.
+            - name: AWS_REGION
+              value: {{ .Values.region | quote }}
+            - name: GRL_VM_CACHE_DIR
+              value: {{ .Values.hostPath | quote }}
+            - name: GRL_ACTIVE_DIR
+              value: {{ .Values.activeDir | quote }}
+            - name: GRL_BUNDLE_URI
+              value: {{ .Values.bundleUri | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              ACTIVE="${GRL_VM_CACHE_DIR}/${GRL_ACTIVE_DIR}"
+              mkdir -p "${ACTIVE}"
+              # Clear the sentinel before syncing so the manager never reloads a
+              # partial bundle; re-touch it only after a complete sync.
+              rm -f "${ACTIVE}/.ready"
+              echo "syncing bundle ${GRL_BUNDLE_URI} -> ${ACTIVE}/"
+              /s5cmd sync "${GRL_BUNDLE_URI}/*" "${ACTIVE}/"
+              touch "${ACTIVE}/.ready"
+          volumeMounts:
+            - name: vm-cache
+              mountPath: {{ .Values.hostPath | quote }}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 1Gi
+      containers:
+        # All work happens in the initContainer; this keeps the pod Running so
+        # `kubectl get pods` shows which nodes have the active bundle staged.
+        - name: pause
+          image: {{ .Values.pauseImage | quote }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: vm-cache
+          hostPath:
+            path: {{ .Values.hostPath | quote }}
+            type: DirectoryOrCreate
+{{- end }}

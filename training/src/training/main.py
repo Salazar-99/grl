@@ -9,6 +9,7 @@ from typing import Any
 import ray
 from opentelemetry.metrics import Observation
 
+from grl_config.infra import ROLLOUTS_RESOURCE, TRAINING_RESOURCE
 from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig
 from training.environments import RpcTimeouts, list_task_ids
 from training.rollouts import RolloutRequest, RolloutResult, RolloutWorker
@@ -344,11 +345,19 @@ async def run(config: GRLConfig, run_id: str) -> None:
     ray.init(ignore_reinit_error=config.ray.ignore_reinit_error)
 
     config_payload = config.model_dump()
+    tp = config.rollout.tensor_parallel_size
+    num_rollout_workers = config.workers.num_rollout_workers or 1
     rollout_workers = [
-        RolloutWorker.remote(config_payload, run_id=run_id)
-        for _ in range(config.workers.num_rollout_workers)
+        RolloutWorker.options(
+            num_gpus=tp,
+            resources={ROLLOUTS_RESOURCE: tp},
+        ).remote(config_payload, run_id=run_id)
+        for _ in range(num_rollout_workers)
     ]
-    training_worker = TrainingWorker.remote(config_payload, run_id=run_id)
+    training_worker = TrainingWorker.options(
+        num_gpus=1,
+        resources={TRAINING_RESOURCE: 1},
+    ).remote(config_payload, run_id=run_id)
 
     rpc_timeouts = RpcTimeouts.from_config(config.environment.rpc_timeouts)
     task_ids = await list_task_ids(

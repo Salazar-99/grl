@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from grl.config import load_config
 from grl.launcher import launch, write_init_config
 from grl.tools import doctor_tools, ensure_tools, list_installed_tools
@@ -56,7 +58,11 @@ def main(argv: list[str] | None = None) -> int:
         if not args.config.is_file():
             print(f"error: config file not found: {args.config}", file=sys.stderr)
             return 1
-        config = load_config(args.config)
+        try:
+            config = load_config(args.config)
+        except (ValidationError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         if args.dry_run:
             config.launch.dry_run = True
         if args.preflight_only:

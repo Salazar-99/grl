@@ -10,10 +10,21 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from grl_config.infra import NodeGroupsConfig
+from grl_config.infra import ComputeConfig
+from grl_config.providers import provider_for_cluster_type
 from grl_config.run_id import new_run_id
 from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig as TrainingGRLConfig
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+# Ordered deployment layers, each building on the one below. A single-layer
+# deployment_type deploys exactly its layer and requires the layer beneath it to
+# already be present; FULL runs all four in order.
+LAYER_ORDER = ("CLUSTER", "RESOURCES", "ENVS", "TRAINING")
+DEPLOYMENT_TYPES = (*LAYER_ORDER, "FULL")
+CLUSTER_TYPES = ("EKS", "BYOK")
+DeploymentType = Literal["CLUSTER", "RESOURCES", "ENVS", "TRAINING", "FULL"]
+ClusterType = Literal["EKS", "BYOK"]
 
 
 class LaunchToolsConfig(BaseModel):
@@ -25,29 +36,10 @@ class LaunchToolsConfig(BaseModel):
 
 
 class LaunchInfraConfig(BaseModel):
-    apply: bool = False
-    apply_cluster: bool | None = None
-    apply_byok: bool | None = None
     terraform_dir: str = "infra/aws"
     byok_terraform_dir: str = "infra/byok"
     kubeconfig: str | None = None
     auto_kubeconfig: bool = True
-
-    def should_apply_cluster(self) -> bool:
-        """Whether to run the AWS Terraform root (VPC + EKS + cluster resources)."""
-        if self.apply_cluster is not None:
-            return self.apply_cluster
-        if self.kubeconfig:
-            return False
-        return self.apply
-
-    def should_apply_byok(self) -> bool:
-        """Whether to run the BYOK Terraform root (operators + GRL resources)."""
-        if self.apply_byok is not None:
-            return self.apply_byok
-        if self.kubeconfig:
-            return True
-        return self.apply
 
     def uses_kubeconfig(self) -> bool:
         return self.kubeconfig is not None
@@ -62,14 +54,12 @@ class LaunchInfraConfig(BaseModel):
 
 
 class LaunchEnvironmentConfig(BaseModel):
-    activate: bool = True
     verify: bool = True
     refresh_vm_cache: Literal["auto", "always", "never"] = "auto"
     purge_cache: bool = False
 
 
 class LaunchJobConfig(BaseModel):
-    submit: bool = True
     force: bool = False
     wait: bool = False
     backend: Literal["rayjob"] = "rayjob"
@@ -78,10 +68,66 @@ class LaunchJobConfig(BaseModel):
 class LaunchConfig(BaseModel):
     dry_run: bool = False
     preflight_only: bool = False
+    deployment_type: DeploymentType = "FULL"
+    cluster_type: ClusterType = "EKS"
     tools: LaunchToolsConfig = Field(default_factory=LaunchToolsConfig)
     infra: LaunchInfraConfig = Field(default_factory=LaunchInfraConfig)
     environment: LaunchEnvironmentConfig = Field(default_factory=LaunchEnvironmentConfig)
     job: LaunchJobConfig = Field(default_factory=LaunchJobConfig)
+
+    @field_validator("deployment_type", mode="before")
+    @classmethod
+    def _validate_deployment_type(cls, value: object) -> object:
+        if value not in DEPLOYMENT_TYPES:
+            raise ValueError(
+                f"invalid deployment_type {value!r}; "
+                f"valid options: {', '.join(DEPLOYMENT_TYPES)}"
+            )
+        return value
+
+    @field_validator("cluster_type", mode="before")
+    @classmethod
+    def _validate_cluster_type(cls, value: object) -> object:
+        if value not in CLUSTER_TYPES:
+            raise ValueError(
+                f"invalid cluster_type {value!r}; "
+                f"valid options: {', '.join(CLUSTER_TYPES)}"
+            )
+        return value
+
+    def layers(self) -> tuple[str, ...]:
+        """Layers this run touches: all four for FULL, else the single mode."""
+        if self.deployment_type == "FULL":
+            return LAYER_ORDER
+        return (self.deployment_type,)
+
+    def runs_cluster(self) -> bool:
+        return "CLUSTER" in self.layers()
+
+    def runs_resources(self) -> bool:
+        return "RESOURCES" in self.layers()
+
+    def runs_envs(self) -> bool:
+        return "ENVS" in self.layers()
+
+    def runs_training(self) -> bool:
+        return "TRAINING" in self.layers()
+
+    def is_eks(self) -> bool:
+        return self.cluster_type == "EKS"
+
+    def is_byok(self) -> bool:
+        return self.cluster_type == "BYOK"
+
+    def required_present_layer(self) -> str | None:
+        """The layer that must already be deployed before this run's first layer.
+
+        None for FULL (it deploys every layer itself, bottom-up).
+        """
+        if self.deployment_type == "FULL":
+            return None
+        idx = LAYER_ORDER.index(self.deployment_type)
+        return LAYER_ORDER[idx - 1] if idx > 0 else None
 
 
 # --- Runtime images ---
@@ -133,34 +179,11 @@ class RayClusterImagesConfig(BaseModel):
     training: str = "grl-training:training"
 
 
-class RayClusterRolloutsWorkerConfig(BaseModel):
-    gpus_per_node: int = Field(default=1, alias="gpusPerNode")
-    vllm_metrics_port: int = Field(default=9090, alias="vllmMetricsPort")
-
-    model_config = {"populate_by_name": True}
-
-
-class RayClusterTrainingWorkerConfig(BaseModel):
-    gpus_per_node: int = Field(default=1, alias="gpusPerNode")
-
-    model_config = {"populate_by_name": True}
-
-
-class RayClusterWorkersConfig(BaseModel):
-    rollouts: RayClusterRolloutsWorkerConfig = Field(
-        default_factory=RayClusterRolloutsWorkerConfig
-    )
-    training: RayClusterTrainingWorkerConfig = Field(
-        default_factory=RayClusterTrainingWorkerConfig
-    )
-
-
 class RayClusterConfig(BaseModel):
     name: str = "grl-ray"
     namespace: str = "default"
     version: str = "2.55.1"
     images: RayClusterImagesConfig = Field(default_factory=RayClusterImagesConfig)
-    workers: RayClusterWorkersConfig = Field(default_factory=RayClusterWorkersConfig)
 
 
 class OtelCollectorUpstreamConfig(BaseModel):
@@ -239,12 +262,12 @@ class ModelCacheConfig(BaseModel):
 
 class InfraConfig(BaseModel):
     release_name: str = "grl-resources"
+    env_release_name: str = "grl-environments"
     release_namespace: str = "default"
     cluster_name: str = "grl"
     region: str = "us-west-2"
     helm_chart_path: str = "infra/modules/resources/chart"
     ray_address: str = "ray://grl-ray-head:10001"
-    node_groups: NodeGroupsConfig = Field(default_factory=NodeGroupsConfig)
     ray_cluster: RayClusterConfig = Field(default_factory=RayClusterConfig)
     otel_collector: OtelCollectorConfig = Field(default_factory=OtelCollectorConfig)
     dcgm_exporter: DcgmExporterConfig = Field(default_factory=DcgmExporterConfig)
@@ -258,6 +281,7 @@ class GRLConfig(TrainingGRLConfig):
 
     launch: LaunchConfig = Field(default_factory=LaunchConfig)
     images: ImagesConfig = Field(default_factory=ImagesConfig)
+    compute: ComputeConfig = Field(default_factory=ComputeConfig)
     infra: InfraConfig = Field(default_factory=InfraConfig)
 
     @model_validator(mode="after")
@@ -270,6 +294,25 @@ class GRLConfig(TrainingGRLConfig):
                 f"model must match infra.model_cache.tag: "
                 f"expected {cache.tag!r}, got {self.model!r}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_deployment(self) -> GRLConfig:
+        # BYOK targets a pre-existing cluster reached via kubeconfig; without one
+        # there is no cluster to connect to. (The bundle_uri requirement for the
+        # ENVS/TRAINING layers is enforced by preflight, so minimal configs stay
+        # constructible.)
+        if self.launch.is_byok() and not self.launch.infra.kubeconfig:
+            raise ValueError(
+                "launch.cluster_type=BYOK requires launch.infra.kubeconfig"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_compute_for_provider(self) -> GRLConfig:
+        provider = provider_for_cluster_type(self.launch.cluster_type)
+        if provider is not None:
+            self.compute.validate_with_provider(provider)
         return self
 
     @classmethod
@@ -301,11 +344,40 @@ class GRLConfig(TrainingGRLConfig):
         self.infra.ray_cluster.images.training = resolved.training
         self.infra.manager.image = resolved.manager
 
+    def _cluster_type(self) -> str:
+        return self.launch.cluster_type
+
+    def rollouts_gpus_per_node(self) -> int:
+        return self.compute.resolved_gpus_per_node("rollouts", self._cluster_type())
+
+    def training_gpus_per_node(self) -> int:
+        return self.compute.resolved_gpus_per_node("training", self._cluster_type())
+
+    def rollout_gpus_total(self) -> int:
+        return self.compute.gpu_capacity("rollouts", self._cluster_type())
+
+    def training_gpus_total(self) -> int:
+        return self.compute.gpu_capacity("training", self._cluster_type())
+
+    def derived_num_rollout_workers(self) -> int:
+        tp = self.rollout.tensor_parallel_size
+        return self.rollout_gpus_total() // tp
+
+    def resolved_num_rollout_workers(self) -> int:
+        if self.workers.num_rollout_workers is not None:
+            return self.workers.num_rollout_workers
+        return self.derived_num_rollout_workers()
+
     def helm_values_overlay(self) -> dict[str, Any]:
+        """Values overlay for the Terraform-owned ``resources`` chart.
+
+        The per-run bundle (``bundleUri``) lives in the separate, launcher-owned
+        ``environments`` chart (see :meth:`env_helm_values`), so it is absent
+        here — the resources chart is stable across runs.
+        """
         manager = self.resolved_manager()
         overlay: dict[str, Any] = {
             "manager": {
-                "bundleUri": manager.bundle_uri,
                 "envId": manager.env_id,
                 "image": manager.image,
             },
@@ -314,7 +386,18 @@ class GRLConfig(TrainingGRLConfig):
                     "head": self.infra.ray_cluster.images.head,
                     "rollouts": self.infra.ray_cluster.images.rollouts,
                     "training": self.infra.ray_cluster.images.training,
-                }
+                },
+                "workers": {
+                    "rollouts": {
+                        "gpusPerNode": self.rollouts_gpus_per_node(),
+                        "replicas": self.compute.rollouts.nodes,
+                        "vllmMetricsPort": self.rollout.vllm_metrics_port,
+                    },
+                    "training": {
+                        "gpusPerNode": self.training_gpus_per_node(),
+                        "replicas": self.compute.training.nodes,
+                    },
+                },
             },
         }
         if self.infra.vm_image_cache.bucket:
@@ -325,19 +408,40 @@ class GRLConfig(TrainingGRLConfig):
             overlay["modelCache"] = self.infra.model_cache.helm_fragment()
         return overlay
 
+    def env_helm_values(self) -> dict[str, Any]:
+        """Values for the launcher-owned ``environments`` chart (bundle-sync).
+
+        ``hostPath``/``activeDir`` must match the resources chart so the manager
+        reads what the bundle-sync DaemonSet writes.
+        """
+        manager = self.resolved_manager()
+        cache = self.infra.vm_image_cache
+        return {
+            "bundleUri": manager.bundle_uri,
+            "envId": manager.env_id,
+            "activeDir": self.infra.manager.active_dir,
+            "namespace": cache.namespace,
+            "hostPath": cache.host_path,
+            "region": cache.region,
+            "image": cache.image,
+        }
+
     def terraform_vars(self, resolved: ResolvedImages) -> dict[str, Any]:
         vars_: dict[str, Any] = {
             "cluster_name": self.infra.cluster_name,
             "region": self.infra.region,
-            "node_groups": self.infra.node_groups.terraform_value(),
+            "deploy_workloads": self.launch.runs_resources(),
+            "node_groups": self.compute.node_groups_terraform_value(self._cluster_type()),
             "ray_cluster_name": self.infra.ray_cluster.name,
             "ray_cluster_namespace": self.infra.ray_cluster.namespace,
             "ray_head_image": resolved.head,
             "ray_rollouts_image": resolved.rollouts,
             "ray_training_image": resolved.training,
             "ray_version": self.infra.ray_cluster.version,
-            "ray_rollouts_gpus_per_node": self.infra.ray_cluster.workers.rollouts.gpus_per_node,
-            "ray_training_gpus_per_node": self.infra.ray_cluster.workers.training.gpus_per_node,
+            "ray_rollouts_gpus_per_node": self.rollouts_gpus_per_node(),
+            "ray_training_gpus_per_node": self.training_gpus_per_node(),
+            "ray_rollouts_replicas": self.compute.rollouts.nodes,
+            "ray_training_replicas": self.compute.training.nodes,
             "manager_image": resolved.manager,
             "release_name": self.infra.release_name,
             "release_namespace": self.infra.release_namespace,
@@ -384,6 +488,10 @@ class GRLConfig(TrainingGRLConfig):
         )
         resolved_run_id = run_id or self.resolve_run_id()
         payload["telemetry"] = {**payload.get("telemetry", {}), "run_id": resolved_run_id}
+        payload["workers"] = {
+            **payload.get("workers", {}),
+            "num_rollout_workers": self.resolved_num_rollout_workers(),
+        }
         return payload
 
     def training_yaml(self, run_id: str | None = None) -> str:

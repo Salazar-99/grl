@@ -1,0 +1,26 @@
+# Values for the launcher-owned `environments` chart (bundle-sync DaemonSet).
+# Written per run by the launcher from env_helm_values() during the ENVS layer.
+#
+# hostPath + activeDir MUST match the resources chart (vmImageCache.hostPath and
+# manager.activeDir) so the manager reads exactly what this DaemonSet writes.
+namespace: default
+
+# S3 URI of the active environment bundle; the DaemonSet syncs {bundleUri}/* into
+# {hostPath}/{activeDir}/. Empty renders nothing (no bundle to sync).
+bundleUri: ""
+
+# Optional environment label (informational; not consumed by the sync).
+envId: ""
+
+# Subdirectory under hostPath for the active bundle's tasks.jsonl + .ready.
+activeDir: active
+
+# Node-local cache root the manager mounts read-only and boots VMs from.
+hostPath: /var/lib/grl
+
+# s5cmd resolves S3 credentials from the node role via IMDS but not the region.
+region: us-west-2
+image: peakcom/s5cmd:v2.3.0
+
+# Keeps the pod Running after the one-shot sync initContainer completes.
+pauseImage: registry.k8s.io/pause:3.10

@@ -37,9 +37,9 @@ spec:
                 memory: 4Gi
   workerGroupSpecs:
     - groupName: rollouts
-      replicas: 1
-      minReplicas: 0
-      maxReplicas: 3
+      replicas: {{ .Values.rayCluster.workers.rollouts.replicas }}
+      minReplicas: {{ .Values.rayCluster.workers.rollouts.replicas }}
+      maxReplicas: {{ .Values.rayCluster.workers.rollouts.replicas }}
       rayStartParams:
         num-gpus: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
         resources: {{ dict "rollouts" (.Values.rayCluster.workers.rollouts.gpusPerNode | int) | toJson | quote }}
@@ -78,9 +78,9 @@ spec:
                   memory: 16Gi
                   nvidia.com/gpu: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
     - groupName: training
-      replicas: 1
-      minReplicas: 0
-      maxReplicas: 3
+      replicas: {{ .Values.rayCluster.workers.training.replicas }}
+      minReplicas: {{ .Values.rayCluster.workers.training.replicas }}
+      maxReplicas: {{ .Values.rayCluster.workers.training.replicas }}
       rayStartParams:
         num-gpus: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
         resources: {{ dict "training" (.Values.rayCluster.workers.training.gpusPerNode | int) | toJson | quote }}

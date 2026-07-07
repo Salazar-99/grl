@@ -21,6 +21,8 @@ module "resources" {
 
   ray_rollouts_gpus_per_node = var.ray_rollouts_gpus_per_node
   ray_training_gpus_per_node = var.ray_training_gpus_per_node
+  ray_rollouts_replicas      = var.ray_rollouts_replicas
+  ray_training_replicas      = var.ray_training_replicas
 
   vm_images_bucket = var.vm_images_bucket
   vm_images_region = var.vm_images_region

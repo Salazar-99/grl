@@ -9,11 +9,13 @@ rayCluster:
   workers:
     rollouts:
       gpusPerNode: 1
+      replicas: 1
       # RolloutWorker starts a prometheus_client server here to expose
       # in-process vLLM engine metrics; scraped by the otel collector.
       vllmMetricsPort: 9090
     training:
       gpusPerNode: 1
+      replicas: 1
 
 otelCollector:
   name: grl-collector
@@ -40,11 +42,12 @@ manager:
   namespace: default
   image: grl-manager:latest
   port: 50051
-  # Per-run environment binding (patched by the launcher before rollout restart).
-  bundleUri: ""
+  # Optional environment label surfaced in metrics/ListTasks (GRL_ENV_ID).
   envId: ""
-  # Subdirectory under vmImageCache.hostPath where the initContainer syncs
-  # tasks.jsonl for the active environment bundle (includes VM image paths).
+  # Subdirectory under vmImageCache.hostPath where the bundle-sync DaemonSet
+  # (the launcher-owned `environments` chart) writes the active bundle's
+  # tasks.jsonl. The manager reads {hostPath}/{activeDir}/tasks.jsonl and
+  # hot-reloads it; this value MUST match the environments chart's activeDir.
   activeDir: active
   # Max rollout environments in flight on this manager pod (admission control).
   maxConcurrentEnvs: "32"

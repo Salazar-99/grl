@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use opentelemetry::KeyValue;
 use tonic::{Request, Response, Status};
 
@@ -17,14 +18,17 @@ use crate::vm;
 
 #[derive(Debug)]
 pub struct EnvironmentServiceImpl {
-    catalog: Arc<Catalog>,
+    // Swappable so the reload watcher can install a new bundle's catalog without
+    // a restart. Read per-request via `load()`; in-flight environments keep the
+    // cloned `TaskSpec` they booted with, so a swap only affects new creates.
+    catalog: Arc<ArcSwap<Catalog>>,
     env_name: String,
     manager_addr: String,
     registry: Arc<Registry>,
 }
 
 impl EnvironmentServiceImpl {
-    pub fn new(catalog: Arc<Catalog>) -> Self {
+    pub fn new(catalog: Arc<ArcSwap<Catalog>>) -> Self {
         let env_name = std::env::var("GRL_ENV_ID").unwrap_or_default();
         let manager_addr = std::env::var("GRL_MANAGER_ADVERTISE_ADDR").unwrap_or_default();
         Self {
@@ -38,7 +42,7 @@ impl EnvironmentServiceImpl {
     /// Test-only constructor with explicit registry and advertise address.
     #[cfg(test)]
     pub fn with_registry(
-        catalog: Arc<Catalog>,
+        catalog: Arc<ArcSwap<Catalog>>,
         registry: Arc<Registry>,
         manager_addr: impl Into<String>,
     ) -> Self {
@@ -91,9 +95,18 @@ impl EnvironmentServiceImpl {
         });
     }
 
-    /// Register the registry's environment-state observable gauges. Called from
-    /// `main` after telemetry init; no-op when telemetry is disabled.
+    /// Register the observable gauges. Called from `main` after telemetry init;
+    /// no-op when telemetry is disabled. The catalog gauge reads the live
+    /// `ArcSwap` on each collection, so it tracks hot-reloads automatically.
     pub fn install_metrics(&self) {
+        let catalog = Arc::clone(&self.catalog);
+        telemetry::meter()
+            .u64_observable_gauge("grl.manager.catalog.tasks")
+            .with_description("Tasks in the active catalog")
+            .with_callback(move |observer| {
+                observer.observe(catalog.load().len() as u64, &[]);
+            })
+            .build();
         self.registry.install_metrics();
     }
 }
@@ -114,6 +127,7 @@ impl EnvironmentService for EnvironmentServiceImpl {
             };
             let tasks = self
                 .catalog
+                .load()
                 .list_tasks(split_filter)
                 .into_iter()
                 .map(|(task_id, split)| TaskIndexEntry { task_id, split })
@@ -135,7 +149,8 @@ impl EnvironmentService for EnvironmentServiceImpl {
         let start = Instant::now();
         let result: Result<Response<CreateEnvironmentResponse>, Status> = async {
             let task_id = request.into_inner().task_id;
-            let spec = self.catalog.get(&task_id).ok_or_else(|| {
+            let catalog = self.catalog.load();
+            let spec = catalog.get(&task_id).ok_or_else(|| {
                 Status::not_found(format!("task {task_id} not in catalog"))
             })?;
 
@@ -302,12 +317,12 @@ mod tests {
     use crate::catalog::Catalog;
     use std::sync::Arc;
 
-    fn test_catalog() -> Arc<Catalog> {
+    fn test_catalog() -> Arc<ArcSwap<Catalog>> {
         let jsonl = concat!(
             r#"{"task_id":"t1","split":"dev","messages":[{"role":"user","content":"hi"}],"tools":[],"base_image":"images/bases/t.squashfs","task_image":"images/tasks/t1.squashfs"}"#,
             "\n",
         );
-        Arc::new(Catalog::from_jsonl(jsonl).unwrap())
+        Arc::new(ArcSwap::from_pointee(Catalog::from_jsonl(jsonl).unwrap()))
     }
 
     fn test_service(max_concurrent: usize) -> EnvironmentServiceImpl {

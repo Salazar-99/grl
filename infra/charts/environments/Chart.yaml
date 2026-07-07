@@ -1,0 +1,10 @@
+apiVersion: v2
+name: grl-environments
+description: >-
+  Per-run environment bundle sync for the GRL environment manager. Applied by the
+  launcher during the ENVS deployment layer only — deliberately separate from the
+  Terraform-owned resources chart so the mutable bundleUri never shares a Helm
+  release with the stable infra.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

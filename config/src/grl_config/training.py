@@ -30,13 +30,16 @@ class GRPOConfig(BaseModel):
 
 
 class WorkersConfig(BaseModel):
-    num_rollout_workers: int = 1
+    num_rollout_workers: int | None = None
+    """Ray RolloutWorker actors. None = derive from compute capacity at launch."""
     max_in_flight_rollouts: int = 32
 
 
 class RolloutConfig(BaseModel):
     max_model_len: int = 8192
     max_num_seqs: int = 64
+    tensor_parallel_size: int = Field(default=1, ge=1)
+    """GPUs per RolloutWorker actor (vLLM tensor parallelism)."""
     max_concurrent_trajectories: int = 32
     max_tokens_per_turn: int = 512
     max_assistant_turns: int = 8

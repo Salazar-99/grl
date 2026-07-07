@@ -17,7 +17,6 @@ Code Review
 
 Initial Testing
 ----------------
-- Create and upload environment bundle for swebench-lite
 - Deploy observability changes
       - Add new clickhouse schema to gnode
       - Update otel collector config on gnode

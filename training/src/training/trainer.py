@@ -44,7 +44,7 @@ class TrainingBatch:
     policy_version: int
 
 
-@ray.remote(num_gpus=1, resources={"training": 1})
+@ray.remote
 class TrainingWorker:
     """
     Take a group of rollouts and their rewards.

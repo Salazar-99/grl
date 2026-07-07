@@ -86,11 +86,12 @@ One YAML drives all layers:
 
 | Section | Purpose |
 |---------|---------|
-| `model`, `grpo`, `workers`, ... | Training hyperparameters (passed to Ray job) |
+| `model`, `grpo`, `workers`, `rollout`, ... | Training hyperparameters (passed to Ray job) |
+| `compute` | Hardware sizing per role (`instance_type`, `nodes`, `disk_size`); drives Terraform, Helm, and derived worker counts |
 | `environment` | Bundle URI, split, manager address |
 | `launch` | Which layers to run (infra apply, env activate, job submit) |
 | `images` | Runtime image resolution (`published`, `custom`, `build_and_push`) |
-| `infra` | Cluster, Helm, and Terraform settings |
+| `infra` | Cluster metadata, Helm release names, OTel, manager, caches |
 
 Secrets can use environment variable references:
 

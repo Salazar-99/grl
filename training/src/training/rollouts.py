@@ -230,7 +230,7 @@ class Session:
     done: bool = False
 
 
-@ray.remote(num_gpus=1, resources={"rollouts": 1})
+@ray.remote
 class RolloutWorker:
     """GPU worker: AsyncLLM inference + asyncio agent-loop orchestration."""
 
@@ -278,6 +278,9 @@ class RolloutWorker:
             enable_prefix_caching=rollout.enable_prefix_caching,
             max_num_seqs=rollout.max_num_seqs,
         )
+        if rollout.tensor_parallel_size > 1:
+            engine_args.tensor_parallel_size = rollout.tensor_parallel_size
+            engine_args.distributed_executor_backend = "mp"
         self.engine = AsyncLLM.from_engine_args(engine_args)
         self._start_metrics_server(rollout.vllm_metrics_port)
 

@@ -150,6 +150,47 @@ def create_or_update_configmap(
         core.create_namespaced_config_map(namespace=namespace, body=body)
 
 
+def cluster_reachable(api_client: client.ApiClient) -> None:
+    """Raise ``KubernetesError`` if the cluster API is not reachable."""
+    core = client.CoreV1Api(api_client)
+    try:
+        core.list_namespace(limit=1)
+    except Exception as exc:
+        raise KubernetesError(f"cluster not reachable: {exc}") from exc
+
+
+def daemonset_exists(
+    api_client: client.ApiClient,
+    name: str,
+    namespace: str,
+) -> bool:
+    apps = client.AppsV1Api(api_client)
+    try:
+        apps.read_namespaced_daemon_set(name=name, namespace=namespace)
+        return True
+    except ApiException as exc:
+        if exc.status == 404:
+            return False
+        raise KubernetesError(f"failed to read DaemonSet {namespace}/{name}: {exc}") from exc
+
+
+def read_configmap_value(
+    api_client: client.ApiClient,
+    name: str,
+    namespace: str,
+    key: str,
+) -> str | None:
+    """Return a single key from a ConfigMap, or ``None`` if absent/missing."""
+    core = client.CoreV1Api(api_client)
+    try:
+        cm = core.read_namespaced_config_map(name=name, namespace=namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            return None
+        raise KubernetesError(f"failed to read ConfigMap {namespace}/{name}: {exc}") from exc
+    return (cm.data or {}).get(key)
+
+
 def restart_daemonset(
     api_client: client.ApiClient,
     name: str,

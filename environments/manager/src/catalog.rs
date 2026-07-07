@@ -7,9 +7,12 @@
 //! trainer verbatim and boots VM images from `base_image`/`task_image`. They are
 //! opaque JSON to the manager.
 //!
-//! The file is synced locally by the manager initContainer from ``GRL_BUNDLE_URI``
-//! into ``{GRL_VM_CACHE_DIR}/{GRL_ACTIVE_DIR}/tasks.jsonl``. Its path is given
-//! by ``GRL_TASKS_FILE``.
+//! The file is synced onto the node by the standalone `bundle-sync` DaemonSet
+//! (the launcher-owned `environments` Helm chart) into
+//! ``{GRL_VM_CACHE_DIR}/{GRL_ACTIVE_DIR}/tasks.jsonl``; its path is given by
+//! ``GRL_TASKS_FILE``. The manager starts even when the file is absent (empty
+//! catalog) and hot-reloads it when the bundle's ``.ready`` sentinel appears —
+//! see [`crate::reload`]. It never restarts to pick up a new bundle.
 
 use std::collections::HashMap;
 
@@ -59,7 +62,14 @@ impl Catalog {
         }
     }
 
+    /// Load from ``path``. A missing file yields an empty catalog (no bundle
+    /// synced yet) so the manager still starts; a file that exists but is
+    /// malformed is still an error so a broken sync never silently empties a
+    /// good catalog on reload.
     pub fn from_file(path: &str) -> Result<Catalog, String> {
+        if !std::path::Path::new(path).exists() {
+            return Ok(Catalog::default());
+        }
         let raw =
             std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
         Catalog::from_jsonl(&raw)
@@ -183,6 +193,28 @@ mod tests {
     #[test]
     fn missing_task_id_is_an_error() {
         assert!(Catalog::from_jsonl(r#"{"messages":[]}"#).is_err());
+    }
+
+    #[test]
+    fn from_file_missing_yields_empty_catalog() {
+        let path = std::env::temp_dir().join(format!(
+            "grl-nonexistent-{}-tasks.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let catalog = Catalog::from_file(path.to_string_lossy().as_ref()).unwrap();
+        assert!(catalog.is_empty());
+    }
+
+    #[test]
+    fn from_file_existing_but_malformed_is_an_error() {
+        let path = std::env::temp_dir().join(format!(
+            "grl-malformed-{}-tasks.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(Catalog::from_file(path.to_string_lossy().as_ref()).is_err());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arc-swap = "1"
 opentelemetry = "0.27"
 opentelemetry-otlp = { version = "0.27", default-features = false, features = ["grpc-tonic", "metrics"] }
 opentelemetry-semantic-conventions = "0.27"

@@ -1,9 +1,13 @@
+"""Launcher config tests."""
+
 import os
 
 import pytest
+from pydantic import ValidationError
 
 from grl.config import GRLConfig, load_config, resolve_env_ref, resolve_secret_fields
 from grl.images import resolve_custom, resolve_published
+from grl.launcher import CapacityError, validate_capacity
 
 
 def test_load_example_config():
@@ -11,6 +15,7 @@ def test_load_example_config():
     assert config.model == "Qwen/Qwen3.5-4B"
     assert config.launch.job.backend == "rayjob"
     assert config.images.mode == "published"
+    assert config.compute.rollouts.instance_type == "g5.xlarge"
 
 
 def test_resolve_env_ref():
@@ -30,10 +35,29 @@ def test_training_payload_excludes_infra():
     payload = config.training_payload(run_id="grl-test")
     assert "infra" not in payload
     assert "launch" not in payload
+    assert "compute" not in payload
     assert payload["telemetry"]["run_id"] == "grl-test"
+    assert payload["workers"]["num_rollout_workers"] == 1
 
 
-def test_helm_values_overlay_includes_images():
+def test_training_payload_derives_rollout_workers():
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "compute": {
+                "rollouts": {
+                    "instance_type": "g5.12xlarge",
+                    "nodes": 2,
+                    "disk_size": 20,
+                }
+            },
+        }
+    )
+    payload = config.training_payload(run_id="grl-test")
+    assert payload["workers"]["num_rollout_workers"] == 8
+
+
+def test_helm_values_overlay_excludes_bundle_uri():
     config = GRLConfig.model_validate(
         {
             "model": "org/model",
@@ -42,9 +66,25 @@ def test_helm_values_overlay_includes_images():
         }
     )
     overlay = config.helm_values_overlay()
-    assert overlay["manager"]["bundleUri"] == "s3://b/e"
+    assert "bundleUri" not in overlay["manager"]
     assert overlay["manager"]["envId"] == "env-a"
     assert overlay["vmImageCache"]["bucket"] == "my-bucket"
+    assert overlay["rayCluster"]["workers"]["rollouts"]["replicas"] == 1
+    assert overlay["rayCluster"]["workers"]["rollouts"]["gpusPerNode"] == 1
+
+
+def test_env_helm_values_carries_bundle():
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "environment": {"bundle_uri": "s3://b/e", "id": "env-a"},
+        }
+    )
+    values = config.env_helm_values()
+    assert values["bundleUri"] == "s3://b/e"
+    assert values["envId"] == "env-a"
+    assert values["activeDir"] == "active"
+    assert values["hostPath"] == "/var/lib/grl"
 
 
 def test_terraform_vars_from_resolved_images():
@@ -53,14 +93,11 @@ def test_terraform_vars_from_resolved_images():
     config = GRLConfig.model_validate(
         {
             "model": "org/model",
-            "infra": {
-                "node_groups": {
-                    "training": {
-                        "instance_types": ["g5.12xlarge"],
-                        "ami_type": "AL2023_x86_64_NVIDIA",
-                        "disk_size": 300,
-                        "node_count": 2,
-                    }
+            "compute": {
+                "training": {
+                    "instance_type": "g5.12xlarge",
+                    "nodes": 2,
+                    "disk_size": 300,
                 }
             },
         }
@@ -76,6 +113,8 @@ def test_terraform_vars_from_resolved_images():
     assert vars_["manager_image"] == "reg/manager:1"
     assert vars_["node_groups"]["training"]["instance_types"] == ["g5.12xlarge"]
     assert vars_["node_groups"]["environments"]["instance_types"] == ["c5.metal"]
+    assert vars_["ray_training_gpus_per_node"] == 4
+    assert vars_["ray_training_replicas"] == 2
 
 
 def test_resolve_published_images():
@@ -109,35 +148,103 @@ def test_training_payload_validates_under_shared_training_config():
     assert validated.telemetry.run_id == "grl-contract-test"
 
 
-def test_launch_infra_kubeconfig_parsing(tmp_path):
+def _launch(deployment_type):
+    return GRLConfig.model_validate(
+        {"model": "org/model", "launch": {"deployment_type": deployment_type}}
+    ).launch
+
+
+def test_deployment_type_layers_and_prereqs():
+    full = _launch("FULL")
+    assert full.runs_cluster()
+    assert full.runs_resources()
+    assert full.runs_envs()
+    assert full.runs_training()
+    assert full.required_present_layer() is None
+
+    cluster = _launch("CLUSTER")
+    assert cluster.runs_cluster() and not cluster.runs_resources()
+    assert cluster.required_present_layer() is None
+
+    resources = _launch("RESOURCES")
+    assert resources.runs_resources() and not resources.runs_envs()
+    assert resources.required_present_layer() == "CLUSTER"
+
+    envs = _launch("ENVS")
+    assert envs.runs_envs() and not envs.runs_training()
+    assert envs.required_present_layer() == "RESOURCES"
+
+    training = _launch("TRAINING")
+    assert training.runs_training() and not training.runs_cluster()
+    assert training.required_present_layer() == "ENVS"
+
+
+def test_invalid_deployment_type_lists_options():
+    with pytest.raises(ValidationError) as exc:
+        GRLConfig.model_validate(
+            {"model": "org/model", "launch": {"deployment_type": "BOGUS"}}
+        )
+    message = str(exc.value)
+    assert "valid options" in message
+    assert "TRAINING" in message
+
+
+def test_invalid_cluster_type_lists_options():
+    with pytest.raises(ValidationError) as exc:
+        GRLConfig.model_validate(
+            {"model": "org/model", "launch": {"cluster_type": "GKE"}}
+        )
+    assert "EKS" in str(exc.value)
+
+
+def test_byok_requires_kubeconfig():
+    with pytest.raises(ValidationError):
+        GRLConfig.model_validate(
+            {"model": "org/model", "launch": {"cluster_type": "BYOK"}}
+        )
+
+
+def test_byok_kubeconfig_parsing(tmp_path):
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n")
     config = GRLConfig.model_validate(
         {
             "model": "org/model",
             "launch": {
-                "infra": {
-                    "kubeconfig": str(kubeconfig),
-                    "apply": False,
-                }
+                "cluster_type": "BYOK",
+                "infra": {"kubeconfig": str(kubeconfig)},
+            },
+            "compute": {
+                "rollouts": {
+                    "instance_type": "g5.xlarge",
+                    "nodes": 1,
+                    "disk_size": 20,
+                    "gpus_per_node": 1,
+                },
+                "training": {
+                    "instance_type": "g5.xlarge",
+                    "nodes": 1,
+                    "disk_size": 20,
+                    "gpus_per_node": 1,
+                },
             },
         }
     )
     assert config.launch.infra.resolved_kubeconfig() == kubeconfig
-    assert config.launch.infra.should_apply_cluster() is False
-    assert config.launch.infra.should_apply_byok() is True
+    assert config.launch.is_byok() is True
     assert config.launch.infra.uses_kubeconfig() is True
 
 
-def test_launch_infra_apply_backward_compat():
-    config = GRLConfig.model_validate(
-        {
-            "model": "org/model",
-            "launch": {"infra": {"apply": True}},
-        }
+def test_deploy_workloads_gated_by_resources_layer():
+    from grl.config import ResolvedImages
+
+    resolved = ResolvedImages(head="h", rollouts="r", training="t", manager="m")
+    cluster = GRLConfig.model_validate(
+        {"model": "org/model", "launch": {"deployment_type": "CLUSTER"}}
     )
-    assert config.launch.infra.should_apply_cluster() is True
-    assert config.launch.infra.should_apply_byok() is True
+    assert cluster.terraform_vars(resolved)["deploy_workloads"] is False
+    full = GRLConfig.model_validate({"model": "org/model"})
+    assert full.terraform_vars(resolved)["deploy_workloads"] is True
 
 
 def test_byok_terraform_vars_include_kubeconfig(tmp_path):
@@ -149,6 +256,20 @@ def test_byok_terraform_vars_include_kubeconfig(tmp_path):
         {
             "model": "org/model",
             "launch": {"infra": {"kubeconfig": str(kubeconfig)}},
+            "compute": {
+                "rollouts": {
+                    "instance_type": "g5.xlarge",
+                    "nodes": 1,
+                    "disk_size": 20,
+                    "gpus_per_node": 1,
+                },
+                "training": {
+                    "instance_type": "g5.xlarge",
+                    "nodes": 1,
+                    "disk_size": 20,
+                    "gpus_per_node": 1,
+                },
+            },
         }
     )
     resolved = ResolvedImages(
@@ -160,3 +281,45 @@ def test_byok_terraform_vars_include_kubeconfig(tmp_path):
     vars_ = config.byok_terraform_vars(resolved)
     assert vars_["kubeconfig_path"] == str(kubeconfig)
     assert vars_["ray_rollouts_gpus_per_node"] == 1
+
+
+def test_validate_capacity_warns_on_env_admission(capsys):
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "compute": {
+                "rollouts": {
+                    "instance_type": "g5.12xlarge",
+                    "nodes": 2,
+                    "disk_size": 20,
+                },
+                "environments": {
+                    "instance_type": "c5.metal",
+                    "nodes": 1,
+                    "disk_size": 20,
+                },
+            },
+            "rollout": {"max_concurrent_trajectories": 32},
+        }
+    )
+    warnings = validate_capacity(config)
+    assert warnings
+    assert "environment admission" in warnings[0]
+
+
+def test_validate_capacity_rejects_excess_workers():
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "workers": {"num_rollout_workers": 99},
+            "compute": {
+                "rollouts": {
+                    "instance_type": "g5.xlarge",
+                    "nodes": 1,
+                    "disk_size": 20,
+                }
+            },
+        }
+    )
+    with pytest.raises(CapacityError, match="exceeds rollout GPU capacity"):
+        validate_capacity(config)

@@ -87,6 +87,27 @@ def helm_chart_path(config_path: str | Path | None = None) -> Path:
     )
 
 
+def env_chart_path(config_path: str | Path | None = None) -> Path:
+    """Path to the launcher-owned ``environments`` chart (bundle-sync DaemonSet).
+
+    Applied by the launcher during the ENVS layer only — deliberately outside
+    ``infra/modules`` since it is not a Terraform module.
+    """
+    root = repo_root()
+    if root is not None:
+        return root / "infra" / "charts" / "environments"
+    if config_path is not None:
+        candidate = Path(config_path).parent / "infra" / "charts" / "environments"
+        if candidate.is_dir():
+            return candidate
+    packaged = package_data_root() / "environments-chart"
+    if packaged.is_dir():
+        return packaged
+    raise FileNotFoundError(
+        "environments chart not found. Run from a GRL checkout or install the grl package."
+    )
+
+
 def grl_home() -> Path:
     """Root directory for local GRL state (runs, cached tools, etc.)."""
     return Path(os.environ.get("GRL_HOME", Path.home() / ".grl"))

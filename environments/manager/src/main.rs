@@ -1,10 +1,12 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use manager::catalog::Catalog;
 use manager::environment::EnvironmentServiceImpl;
 use manager::pb::environment_service_server::EnvironmentServiceServer;
-use manager::telemetry;
+use manager::{reload, telemetry};
 use tonic::transport::Server;
 use tower::timeout::TimeoutLayer;
 
@@ -22,13 +24,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(960);
 
-    let catalog = Arc::new(Catalog::from_env()?);
+    // The catalog is swappable so a newly synced bundle can be hot-reloaded
+    // without restarting the manager (see `reload`). It starts empty when no
+    // bundle is present yet — the manager still binds and serves.
+    let tasks_file = std::env::var("GRL_TASKS_FILE").ok();
+    let catalog = Arc::new(ArcSwap::from_pointee(Catalog::from_env()?));
+    let initial_tasks = catalog.load().len();
+    if initial_tasks == 0 {
+        match &tasks_file {
+            Some(path) => println!(
+                "[WARN] no active bundle present (tasks.jsonl missing at {path}); serving empty \
+                 catalog — CreateEnvironment returns not-found until a bundle is synced"
+            ),
+            None => println!("[WARN] GRL_TASKS_FILE unset; serving empty catalog"),
+        }
+    }
     println!(
-        "environment manager listening on {addr} ({} task(s) in catalog, request timeout {}s)",
-        catalog.len(),
-        request_timeout_secs
+        "environment manager listening on {addr} ({initial_tasks} task(s) in catalog, request timeout {request_timeout_secs}s)"
     );
-    telemetry::gauge("grl.manager.catalog.tasks").record(catalog.len() as f64, &[]);
+
+    // Watch the bundle's `.ready` sentinel and hot-reload the catalog on change.
+    if let Some(path) = tasks_file {
+        let poll_secs: u64 = std::env::var("GRL_CATALOG_POLL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+        reload::spawn_catalog_reloader(
+            Arc::clone(&catalog),
+            PathBuf::from(path),
+            Duration::from_secs(poll_secs),
+        );
+    }
 
     let service = EnvironmentServiceImpl::new(catalog);
     service.install_metrics();

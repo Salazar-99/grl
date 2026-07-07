@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,24 +15,34 @@ from grl.bundle import PreflightError, verify_bundle
 from grl.config import GRLConfig, ResolvedImages
 from grl.images import resolve_runtime_images
 from grl.k8s import (
+    cluster_reachable,
     create_or_update_configmap,
     create_rayjob,
+    daemonset_exists,
     helm_upgrade,
     load_kube_client,
     rayjob_manifest,
+    read_configmap_value,
     restart_daemonset,
     training_entrypoint,
     wait_for_rollout,
     watch_rayjob,
 )
-from grl.paths import helm_chart_path, state_dir
-from grl.terraform import apply_infra, write_helm_overlay
+from grl.paths import env_chart_path, state_dir
+from grl.terraform import apply_infra, write_env_overlay
 from grl.tools import ensure_tools
 from grl_proto.environment_client import ListTasksError, list_task_ids
+
+BUNDLE_SYNC_DAEMONSET = "grl-bundle-sync"
+ACTIVE_RUN_CONFIGMAP = "grl-active-run"
 
 
 class GrlError(Exception):
     """Base error for GRL launcher failures."""
+
+
+class CapacityError(GrlError):
+    """Cluster capacity does not match training configuration."""
 
 
 @dataclass
@@ -43,14 +54,74 @@ class LaunchResult:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
+def validate_capacity(config: GRLConfig) -> list[str]:
+    """Pure-config capacity checks. Returns warning messages."""
+    warnings: list[str] = []
+
+    rollouts_gpus_per_node = config.rollouts_gpus_per_node()
+    training_gpus_per_node = config.training_gpus_per_node()
+    tp = config.rollout.tensor_parallel_size
+    num_rollout_workers = config.resolved_num_rollout_workers()
+    rollout_gpus_total = config.rollout_gpus_total()
+    training_gpus_total = config.training_gpus_total()
+
+    if tp > rollouts_gpus_per_node:
+        raise CapacityError(
+            f"rollout.tensor_parallel_size ({tp}) exceeds rollouts GPUs per node "
+            f"({rollouts_gpus_per_node}); each RolloutWorker must fit on one node"
+        )
+    if rollouts_gpus_per_node % tp != 0:
+        raise CapacityError(
+            f"rollouts GPUs per node ({rollouts_gpus_per_node}) must be divisible by "
+            f"rollout.tensor_parallel_size ({tp}) to avoid stranded GPUs"
+        )
+    if num_rollout_workers * tp > rollout_gpus_total:
+        raise CapacityError(
+            f"resolved num_rollout_workers ({num_rollout_workers}) × "
+            f"tensor_parallel_size ({tp}) = {num_rollout_workers * tp} exceeds "
+            f"rollout GPU capacity ({rollout_gpus_total})"
+        )
+    if training_gpus_total < 1:
+        raise CapacityError(
+            f"training GPU capacity is {training_gpus_total}; at least 1 GPU is required"
+        )
+
+    max_trajectories = num_rollout_workers * config.rollout.max_concurrent_trajectories
+    env_capacity = (
+        config.compute.environments.nodes
+        * int(config.infra.manager.max_concurrent_envs)
+    )
+    if max_trajectories > env_capacity:
+        warnings.append(
+            f"rollout concurrency ({max_trajectories} = {num_rollout_workers} workers × "
+            f"{config.rollout.max_concurrent_trajectories} trajectories) may exceed "
+            f"environment admission ({env_capacity} = "
+            f"{config.compute.environments.nodes} nodes × "
+            f"{config.infra.manager.max_concurrent_envs} max_concurrent_envs)"
+        )
+
+    print(
+        f"Capacity: rollouts {config.compute.rollouts.nodes} nodes × "
+        f"{rollouts_gpus_per_node} GPUs → {num_rollout_workers} workers "
+        f"(tp={tp}) → ≤{max_trajectories} trajectories | "
+        f"training {config.compute.training.nodes} nodes × "
+        f"{training_gpus_per_node} GPUs | "
+        f"env capacity {env_capacity}"
+    )
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    return warnings
+
+
 def run_preflight(config: GRLConfig, *, dry_run: bool = False) -> None:
+    validate_capacity(config)
     if dry_run:
-        print("dry-run: preflight checks")
+        print("dry-run: skipping AWS identity and bundle checks")
         return
     session = boto3.session.Session()
     identity = session.client("sts").get_caller_identity()
     print(f"AWS identity: {identity.get('Arn', 'unknown')}")
-    if config.launch.environment.activate or config.launch.job.submit:
+    if config.launch.runs_envs() or config.launch.runs_training():
         verify_bundle(config)
 
 
@@ -103,16 +174,55 @@ def resolved_kubeconfig(config: GRLConfig) -> Path | None:
 
 
 def load_cluster_client(config: GRLConfig):
-    infra = config.launch.infra
-    kubeconfig = resolved_kubeconfig(config)
-    if kubeconfig is not None:
-        return load_kube_client(kubeconfig=kubeconfig)
-    if infra.auto_kubeconfig or infra.should_apply_cluster():
-        return load_kube_client(
-            cluster_name=config.infra.cluster_name,
-            region=config.infra.region,
+    """Connect to the target cluster based on ``launch.cluster_type``.
+
+    BYOK uses the supplied kubeconfig; EKS mints a token for the named cluster.
+    """
+    if config.launch.is_byok():
+        return load_kube_client(kubeconfig=config.launch.infra.resolved_kubeconfig())
+    return load_kube_client(
+        cluster_name=config.infra.cluster_name,
+        region=config.infra.region,
+    )
+
+
+def assert_cluster_present(config: GRLConfig, api_client) -> None:
+    """CLUSTER layer check: the target cluster's API is reachable."""
+    try:
+        cluster_reachable(api_client)
+    except Exception as exc:
+        raise GrlError(
+            f"cluster not reachable ({exc}); deploy the CLUSTER layer first"
+        ) from exc
+
+
+def assert_resources_present(config: GRLConfig, api_client) -> None:
+    """RESOURCES layer check: the manager DaemonSet exists."""
+    manager = config.resolved_manager()
+    if not daemonset_exists(api_client, manager.name, manager.namespace):
+        raise GrlError(
+            "RESOURCES layer not deployed (manager DaemonSet missing); "
+            "run deployment_type=RESOURCES first"
         )
-    return load_kube_client()
+
+
+def assert_envs_present(config: GRLConfig) -> None:
+    """ENVS layer check: the manager serves a non-empty task catalog."""
+    if verify_manager_catalog(config) == 0:
+        raise GrlError(
+            "ENVS layer not deployed (manager catalog is empty); "
+            "run deployment_type=ENVS first"
+        )
+
+
+def assert_layer_present(layer: str, config: GRLConfig, api_client) -> None:
+    """Fail unless ``layer`` is already deployed on the target cluster."""
+    if layer == "CLUSTER":
+        assert_cluster_present(config, api_client)
+    elif layer == "RESOURCES":
+        assert_resources_present(config, api_client)
+    elif layer == "ENVS":
+        assert_envs_present(config)
 
 
 def activate_environment(
@@ -123,54 +233,41 @@ def activate_environment(
     *,
     dry_run: bool = False,
 ) -> None:
-    overlay_path = write_helm_overlay(config, run_id)
-    chart = helm_chart_path()
-    base_values = chart / "values.yaml"
-    values_files = [base_values, overlay_path]
+    """ENVS layer: apply the launcher-owned ``environments`` chart and roll the
+    bundle-sync DaemonSet so the manager hot-reloads the new catalog.
+
+    The manager is never restarted — it is owned by the (untouched) Terraform
+    ``resources`` chart and picks up the new bundle via its watcher.
+    """
+    namespace = config.infra.vm_image_cache.namespace
+
+    # Warn when re-deploying the same bundle (the manager would reload identical
+    # content). The currently-deployed URI is recorded in the active-run CM.
+    if not dry_run and api_client is not None and config.environment.bundle_uri:
+        deployed = read_configmap_value(
+            api_client, ACTIVE_RUN_CONFIGMAP, config.infra.release_namespace, "bundle_uri"
+        )
+        if deployed and deployed == config.environment.bundle_uri:
+            print(
+                f"warning: environment bundle unchanged ({deployed}); "
+                "re-syncing the same S3 URI"
+            )
+
+    overlay_path = write_env_overlay(config, run_id)
     helm_upgrade(
         tools["helm"],
-        config.infra.release_name,
-        chart,
-        config.infra.release_namespace,
-        values_files,
+        config.infra.env_release_name,
+        env_chart_path(),
+        namespace,
+        [overlay_path],
         kubeconfig=resolved_kubeconfig(config),
         dry_run=dry_run,
     )
 
-    refresh = config.launch.environment.refresh_vm_cache
-    manager = config.resolved_manager()
-    restart_manager = True
-    restart_vm_cache = refresh == "always"
-    if refresh == "auto" and config.infra.vm_image_cache.bucket:
-        restart_vm_cache = True
-
-    if restart_vm_cache:
-        restart_daemonset(
-            api_client,
-            "vm-image-cache",
-            config.infra.vm_image_cache.namespace,
-            dry_run=dry_run,
-        )
-        wait_for_rollout(
-            api_client,
-            "vm-image-cache",
-            config.infra.vm_image_cache.namespace,
-            dry_run=dry_run,
-        )
-
-    if restart_manager:
-        restart_daemonset(
-            api_client,
-            manager.name,
-            manager.namespace,
-            dry_run=dry_run,
-        )
-        wait_for_rollout(
-            api_client,
-            manager.name,
-            manager.namespace,
-            dry_run=dry_run,
-        )
+    # Roll the bundle-sync DaemonSet so its initContainer re-syncs and rewrites
+    # the .ready sentinel; the manager reloads its catalog with no pod restart.
+    restart_daemonset(api_client, BUNDLE_SYNC_DAEMONSET, namespace, dry_run=dry_run)
+    wait_for_rollout(api_client, BUNDLE_SYNC_DAEMONSET, namespace, dry_run=dry_run)
 
 
 def verify_manager_catalog(config: GRLConfig) -> int:
@@ -184,6 +281,25 @@ def verify_manager_catalog(config: GRLConfig) -> int:
     except ListTasksError as exc:
         raise PreflightError(str(exc)) from exc
     return len(task_ids)
+
+
+def wait_for_manager_catalog(
+    config: GRLConfig,
+    *,
+    timeout_secs: float = 300.0,
+    poll_interval_secs: float = 5.0,
+) -> int:
+    """Poll the manager until it serves a non-empty catalog (bundle-sync is
+    asynchronous), returning the observed task count. Returns the last count
+    seen if the timeout elapses first."""
+    deadline = time.monotonic() + timeout_secs
+    count = 0
+    while time.monotonic() < deadline:
+        count = verify_manager_catalog(config)
+        if count > 0:
+            return count
+        time.sleep(poll_interval_secs)
+    return count
 
 
 def submit_training_job(
@@ -224,10 +340,15 @@ def submit_training_job(
 
 def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResult:
     dry_run = config.launch.dry_run
+    launch_cfg = config.launch
     run_id = config.resolve_run_id()
     if config.telemetry.run_id is None:
         config.telemetry.run_id = run_id
-    print(f"GRL launch run_id={run_id}")
+    print(
+        f"GRL launch run_id={run_id} "
+        f"deployment_type={launch_cfg.deployment_type} "
+        f"cluster_type={launch_cfg.cluster_type}"
+    )
 
     tools = ensure_managed_tools(config)
     resolved = resolve_runtime_images(config, dry_run=dry_run)
@@ -235,43 +356,50 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     print(f"Resolved images: head={resolved.head} manager={resolved.manager}")
 
     run_preflight(config, dry_run=dry_run)
-    if config.launch.preflight_only:
+    if launch_cfg.preflight_only:
         print("Preflight complete.")
         return LaunchResult(run_id=run_id, resolved_images=resolved)
 
-    if config.launch.infra.should_apply_cluster() or config.launch.infra.should_apply_byok():
-        if "terraform" not in tools:
-            tools = ensure_managed_tools(config)
-        apply_infra(
-            config,
-            resolved,
-            tools["terraform"],
-            run_id,
-            dry_run=dry_run,
-        )
-
     api_client = None
-    if config.launch.environment.activate or config.launch.job.submit:
-        if not dry_run:
+
+    # Fail fast if a single-layer run's prerequisite layer isn't already present.
+    prev = launch_cfg.required_present_layer()
+    if prev is not None and not dry_run:
+        if prev != "ENVS":
             api_client = load_cluster_client(config)
+        assert_layer_present(prev, config, api_client)
 
+    # --- CLUSTER layer ---
+    if launch_cfg.runs_cluster():
+        if launch_cfg.is_eks():
+            # For EKS+FULL this single apply also deploys RESOURCES
+            # (deploy_workloads=True), so the RESOURCES step below is a no-op.
+            apply_infra(config, resolved, tools["terraform"], run_id, dry_run=dry_run)
+        elif dry_run:
+            print("dry-run: verify BYOK cluster reachable")
+        else:
+            api_client = api_client or load_cluster_client(config)
+            assert_cluster_present(config, api_client)
+
+    # --- RESOURCES layer ---
+    if launch_cfg.runs_resources() and (launch_cfg.is_byok() or not launch_cfg.runs_cluster()):
+        apply_infra(config, resolved, tools["terraform"], run_id, dry_run=dry_run)
+
+    if (launch_cfg.runs_envs() or launch_cfg.runs_training()) and not dry_run:
+        api_client = api_client or load_cluster_client(config)
+
+    # --- ENVS layer ---
     task_count: int | None = None
-    if config.launch.environment.activate:
-        if "helm" not in tools:
-            tools = ensure_managed_tools(config)
+    if launch_cfg.runs_envs():
         activate_environment(config, tools, api_client, run_id, dry_run=dry_run)
-        if config.launch.environment.verify and not dry_run:
-            task_count = verify_manager_catalog(config)
-            print(f"Manager catalog verified: {task_count} tasks")
+        if launch_cfg.environment.verify and not dry_run:
+            task_count = wait_for_manager_catalog(config)
+            print(f"Manager catalog: {task_count} tasks")
 
+    # --- TRAINING layer ---
     rayjob_name: str | None = None
-    if config.launch.job.submit:
-        rayjob_name = submit_training_job(
-            config,
-            run_id,
-            api_client,
-            dry_run=dry_run,
-        )
+    if launch_cfg.runs_training():
+        rayjob_name = submit_training_job(config, run_id, api_client, dry_run=dry_run)
         print(f"Submitted RayJob {rayjob_name}")
 
     result = LaunchResult(

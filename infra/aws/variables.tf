@@ -14,6 +14,12 @@ variable "cluster_version" {
   description = "Kubernetes version for the EKS control plane and node groups."
 }
 
+variable "deploy_workloads" {
+  type        = bool
+  default     = true
+  description = "When false, provision only the VPC + EKS cluster (skip the operator charts and the GRL resources chart). Set false by the launcher CLUSTER layer, true by RESOURCES/FULL."
+}
+
 variable "node_groups" {
   description = "Instance types, AMI, disk, and fixed node count for each EKS node group."
   type = object({
@@ -170,6 +176,30 @@ variable "ray_version" {
   type        = string
   default     = "2.55.1"
   description = "Ray version reported in the RayCluster spec."
+}
+
+variable "ray_rollouts_gpus_per_node" {
+  type        = number
+  default     = 1
+  description = "GPUs advertised per rollouts worker node (Ray num-gpus, the rollouts custom resource, and the pod nvidia.com/gpu request). Resolved by the launcher from compute."
+}
+
+variable "ray_training_gpus_per_node" {
+  type        = number
+  default     = 1
+  description = "GPUs advertised per training worker node (Ray num-gpus, the training custom resource, and the pod nvidia.com/gpu request). Resolved by the launcher from compute."
+}
+
+variable "ray_rollouts_replicas" {
+  type        = number
+  default     = 1
+  description = "KubeRay rollouts worker pod count. Matches compute.rollouts.nodes."
+}
+
+variable "ray_training_replicas" {
+  type        = number
+  default     = 1
+  description = "KubeRay training worker pod count. Matches compute.training.nodes."
 }
 
 variable "otel_collector_name" {

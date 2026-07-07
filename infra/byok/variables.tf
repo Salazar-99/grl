@@ -81,6 +81,18 @@ variable "ray_training_gpus_per_node" {
   description = "GPUs advertised per training worker node."
 }
 
+variable "ray_rollouts_replicas" {
+  type        = number
+  default     = 1
+  description = "KubeRay rollouts worker pod count."
+}
+
+variable "ray_training_replicas" {
+  type        = number
+  default     = 1
+  description = "KubeRay training worker pod count."
+}
+
 variable "manager_image" {
   type        = string
   default     = "grl-manager:latest"

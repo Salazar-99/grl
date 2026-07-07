@@ -39,6 +39,13 @@ def write_helm_overlay(config: GRLConfig, run_id: str) -> Path:
     return overlay_path
 
 
+def write_env_overlay(config: GRLConfig, run_id: str) -> Path:
+    """Write the values overlay for the launcher-owned ``environments`` chart."""
+    overlay_path = state_dir(run_id) / "env-overlay.yaml"
+    overlay_path.write_text(yaml.safe_dump(config.env_helm_values(), sort_keys=False))
+    return overlay_path
+
+
 def terraform_init(terraform_bin: Path, tf_root: Path, *, dry_run: bool = False) -> None:
     run_tool(terraform_bin, ["init", "-input=false"], cwd=tf_root, dry_run=dry_run)
 
@@ -147,25 +154,34 @@ def apply_infra(
     *,
     dry_run: bool = False,
 ) -> Path | None:
-    """Apply Terraform phases according to launch.infra settings."""
-    infra = config.launch.infra
-    tfvars: Path | None = None
+    """Apply Terraform for the CLUSTER/RESOURCES layers, routed by cluster_type.
 
-    if infra.should_apply_cluster():
-        tfvars = apply_full_stack_infra(
+    BYOK targets a pre-existing cluster, so only its RESOURCES layer runs
+    Terraform (the ``infra/byok`` root). EKS runs the ``infra/aws`` root whenever
+    CLUSTER or RESOURCES is in play; ``deploy_workloads`` (via terraform_vars)
+    gates the charts + resources modules so CLUSTER alone provisions only the
+    VPC + EKS cluster.
+    """
+    launch = config.launch
+
+    if launch.is_byok():
+        if launch.runs_resources():
+            return apply_byok_infra(
+                config,
+                resolved,
+                terraform_bin,
+                run_id,
+                dry_run=dry_run,
+            )
+        return None
+
+    if launch.runs_cluster() or launch.runs_resources():
+        return apply_full_stack_infra(
             config,
             resolved,
             terraform_bin,
             run_id,
             dry_run=dry_run,
         )
-    elif infra.should_apply_byok():
-        tfvars = apply_byok_infra(
-            config,
-            resolved,
-            terraform_bin,
-            run_id,
-            dry_run=dry_run,
-        )
 
-    return tfvars
+    return None

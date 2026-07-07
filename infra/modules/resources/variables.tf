@@ -64,6 +64,18 @@ variable "ray_training_gpus_per_node" {
   description = "GPUs advertised per training worker node (Ray num-gpus, the training custom resource, and the pod nvidia.com/gpu request)."
 }
 
+variable "ray_rollouts_replicas" {
+  type        = number
+  default     = 1
+  description = "KubeRay rollouts worker pod count. Matches compute.rollouts.nodes."
+}
+
+variable "ray_training_replicas" {
+  type        = number
+  default     = 1
+  description = "KubeRay training worker pod count. Matches compute.training.nodes."
+}
+
 variable "vm_images_bucket" {
   type        = string
   default     = ""

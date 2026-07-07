@@ -17,9 +17,11 @@ resource "helm_release" "resources" {
         workers = {
           rollouts = {
             gpusPerNode = var.ray_rollouts_gpus_per_node
+            replicas    = var.ray_rollouts_replicas
           }
           training = {
             gpusPerNode = var.ray_training_gpus_per_node
+            replicas    = var.ray_training_replicas
           }
         }
       }

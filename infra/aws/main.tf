@@ -17,6 +17,7 @@ module "cluster" {
 }
 
 module "charts" {
+  count  = var.deploy_workloads ? 1 : 0
   source = "../modules/charts"
 
   opentelemetry_operator_chart_version = var.opentelemetry_operator_chart_version
@@ -27,6 +28,7 @@ module "charts" {
 }
 
 module "resources" {
+  count  = var.deploy_workloads ? 1 : 0
   source = "../modules/resources"
 
   release_name          = var.release_name
@@ -39,8 +41,10 @@ module "resources" {
   ray_version           = var.ray_version
   manager_image         = var.manager_image
 
-  ray_rollouts_gpus_per_node = local.rollouts_gpu_count
-  ray_training_gpus_per_node = local.training_gpu_count
+  ray_rollouts_gpus_per_node = var.ray_rollouts_gpus_per_node
+  ray_training_gpus_per_node = var.ray_training_gpus_per_node
+  ray_rollouts_replicas      = var.ray_rollouts_replicas
+  ray_training_replicas      = var.ray_training_replicas
 
   vm_images_bucket = var.vm_images_bucket
   vm_images_region = var.region

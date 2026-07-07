@@ -17,12 +17,14 @@ grpo:
   top_p: 1.0
 
 workers:
-  num_rollout_workers: 1
+  # num_rollout_workers is derived from compute unless set explicitly:
+  #   rollouts.nodes × gpus_per_node(instance_type) ÷ rollout.tensor_parallel_size
   max_in_flight_rollouts: 32
 
 rollout:
   max_model_len: 8192
   max_num_seqs: 64
+  tensor_parallel_size: 1
   max_concurrent_trajectories: 32
   max_tokens_per_turn: 512
   max_assistant_turns: 8
@@ -54,9 +56,40 @@ telemetry:
 ray:
   ignore_reinit_error: true
 
+# Hardware sizing — single source of truth for nodes, GPUs, and Ray worker pods.
+# The launcher resolves gpus_per_node from instance_type on EKS (AWS EC2 SKU table)
+# and propagates to Terraform node_groups, KubeRay replicas/gpusPerNode, and
+# num_rollout_workers. Optional per role: ami_type (defaults from role),
+# gpus_per_node (required on BYOK or unknown SKUs).
+compute:
+  ray:
+    instance_type: m5.large
+    nodes: 1
+    disk_size: 10
+  rollouts:
+    instance_type: g5.xlarge
+    nodes: 1
+    disk_size: 20
+  training:
+    instance_type: g5.xlarge
+    nodes: 1
+    disk_size: 20
+  environments:
+    instance_type: c5.metal
+    nodes: 1
+    disk_size: 20
+
 launch:
   dry_run: false
   preflight_only: false
+  # Deployment layer stack (each builds on the one below):
+  #   CLUSTER -> RESOURCES -> ENVS -> TRAINING
+  # A single layer deploys only itself and requires the layer beneath it to be
+  # present; FULL runs all four in order.
+  deployment_type: CLUSTER
+  # EKS provisions/targets a cluster via infra/aws (client via EKS token);
+  # BYOK targets a pre-existing cluster via launch.infra.kubeconfig (infra/byok).
+  cluster_type: EKS
   tools:
     auto_install: true
     terraform: terraform
@@ -64,20 +97,15 @@ launch:
     helm_version: "3.16.4"
     kubectl_version: "1.32.0"
   infra:
-    apply: false
-    apply_cluster: false
-    apply_byok: true
     terraform_dir: infra/aws
     byok_terraform_dir: infra/byok
     kubeconfig: null
     auto_kubeconfig: true
   environment:
-    activate: true
     verify: true
     refresh_vm_cache: auto
     purge_cache: false
   job:
-    submit: true
     force: false
     wait: false
     backend: rayjob
@@ -99,41 +127,15 @@ infra:
   region: us-west-2
   helm_chart_path: infra/modules/resources/chart
   ray_address: ray://grl-ray-head:10001
-  node_groups:
-    ray:
-      instance_types: [m5.4xlarge]
-      ami_type: AL2023_x86_64_STANDARD
-      disk_size: 100
-      node_count: 2
-    rollouts:
-      instance_types: [g4dn.xlarge]
-      ami_type: AL2023_x86_64_NVIDIA
-      disk_size: 200
-      node_count: 1
-    training:
-      instance_types: [g4dn.xlarge]
-      ami_type: AL2023_x86_64_NVIDIA
-      disk_size: 200
-      node_count: 1
-    environments:
-      instance_types: [c5.metal]
-      ami_type: AL2023_x86_64_STANDARD
-      disk_size: 200
-      node_count: 1
   ray_cluster:
     name: grl-ray
     namespace: default
     version: "2.55.1"
+    # images below are overridden at launch from images.*
     images:
       head: grl-training:head
       rollouts: grl-training:rollouts
       training: grl-training:training
-    workers:
-      rollouts:
-        gpus_per_node: 1
-        vllm_metrics_port: 9090
-      training:
-        gpus_per_node: 1
   otel_collector:
     name: grl-collector
     namespace: default
