@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from grl.config import load_config
-from grl.launcher import launch, write_init_config
+from grl.launcher import launch, list_registered_clusters, teardown, write_init_config
 from grl.tools import doctor_tools, ensure_tools, list_installed_tools
 
 
@@ -30,6 +30,26 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run preflight checks only",
     )
+
+    teardown_parser = subparsers.add_parser(
+        "teardown",
+        help="Destroy Terraform-managed infrastructure for a cluster",
+    )
+    teardown_parser.add_argument("config", type=Path, help="Path to the run config YAML")
+    teardown_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run terraform plan -destroy without executing destroy",
+    )
+    teardown_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip interactive confirmation",
+    )
+
+    clusters_parser = subparsers.add_parser("clusters", help="Launcher cluster registry")
+    clusters_sub = clusters_parser.add_subparsers(dest="clusters_command", required=True)
+    clusters_sub.add_parser("list", help="List known launcher clusters")
 
     init_parser = subparsers.add_parser("init", help="Write a starter config.yaml")
     init_parser.add_argument(
@@ -73,6 +93,29 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         return 0
+
+    if args.command == "teardown":
+        if not args.config.is_file():
+            print(f"error: config file not found: {args.config}", file=sys.stderr)
+            return 1
+        try:
+            config = load_config(args.config)
+        except (ValidationError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if args.dry_run:
+            config.launch.dry_run = True
+        try:
+            teardown(config, config_path=args.config, auto_yes=args.yes)
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "clusters":
+        if args.clusters_command == "list":
+            print(list_registered_clusters())
+            return 0
 
     if args.command == "init":
         if args.destination.exists():

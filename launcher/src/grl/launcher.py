@@ -25,11 +25,13 @@ from grl.k8s import (
     read_configmap_value,
     restart_daemonset,
     training_entrypoint,
+    update_eks_kubeconfig,
     wait_for_rollout,
     watch_rayjob,
 )
+from grl.clusters import format_cluster_table, list_clusters, mark_cluster_destroyed, register_cluster
 from grl.paths import env_chart_path, state_dir
-from grl.terraform import apply_infra, write_env_overlay
+from grl.terraform import apply_infra, destroy_infra, write_env_overlay
 from grl.tools import ensure_tools
 from grl_proto.environment_client import ListTasksError, list_task_ids
 
@@ -180,10 +182,12 @@ def load_cluster_client(config: GRLConfig):
     """
     if config.launch.is_byok():
         return load_kube_client(kubeconfig=config.launch.infra.resolved_kubeconfig())
-    return load_kube_client(
-        cluster_name=config.infra.cluster_name,
-        region=config.infra.region,
-    )
+    if config.launch.infra.auto_kubeconfig:
+        return load_kube_client(
+            cluster_name=config.infra.cluster_name,
+            region=config.infra.region,
+        )
+    return load_kube_client()
 
 
 def assert_cluster_present(config: GRLConfig, api_client) -> None:
@@ -370,11 +374,13 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
         assert_layer_present(prev, config, api_client)
 
     # --- CLUSTER layer ---
+    terraform_applied = False
     if launch_cfg.runs_cluster():
         if launch_cfg.is_eks():
             # For EKS+FULL this single apply also deploys RESOURCES
             # (deploy_workloads=True), so the RESOURCES step below is a no-op.
             apply_infra(config, resolved, tools["terraform"], run_id, dry_run=dry_run)
+            terraform_applied = True
         elif dry_run:
             print("dry-run: verify BYOK cluster reachable")
         else:
@@ -384,6 +390,16 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     # --- RESOURCES layer ---
     if launch_cfg.runs_resources() and (launch_cfg.is_byok() or not launch_cfg.runs_cluster()):
         apply_infra(config, resolved, tools["terraform"], run_id, dry_run=dry_run)
+        terraform_applied = True
+
+    if terraform_applied and not dry_run:
+        register_cluster(config, run_id=run_id)
+        if launch_cfg.is_eks() and launch_cfg.infra.auto_kubeconfig:
+            update_eks_kubeconfig(
+                config.infra.cluster_name,
+                config.infra.region,
+                kubeconfig=config.launch.infra.kubeconfig,
+            )
 
     if (launch_cfg.runs_envs() or launch_cfg.runs_training()) and not dry_run:
         api_client = api_client or load_cluster_client(config)
@@ -419,3 +435,43 @@ def write_init_config(destination: Path) -> None:
         destination.write_text(example.read_text())
         return
     destination.write_text(yaml.safe_dump({"model": "Qwen/Qwen3.5-4B"}, sort_keys=False))
+
+
+def confirm_teardown(config: GRLConfig, *, auto_yes: bool = False) -> None:
+    if auto_yes:
+        return
+    cluster = config.infra.cluster_name
+    cluster_type = config.launch.cluster_type
+    region = config.infra.region if config.launch.is_eks() else "-"
+    prompt = f"Destroy {cluster} ({cluster_type}/{region})? [y/N] "
+    answer = input(prompt).strip().lower()
+    if answer not in {"y", "yes"}:
+        raise GrlError("teardown cancelled")
+
+
+def teardown(
+    config: GRLConfig,
+    *,
+    config_path: Path | None = None,
+    auto_yes: bool = False,
+) -> None:
+    dry_run = config.launch.dry_run
+    run_id = config.resolve_run_id()
+    print(
+        f"GRL teardown cluster={config.infra.cluster_name} "
+        f"cluster_type={config.launch.cluster_type}"
+    )
+    confirm_teardown(config, auto_yes=auto_yes or dry_run)
+
+    tools = ensure_managed_tools(config)
+    resolved = resolve_runtime_images(config, dry_run=True)
+    config.apply_resolved_images(resolved)
+
+    destroy_infra(config, resolved, tools["terraform"], run_id, dry_run=dry_run)
+    if not dry_run:
+        mark_cluster_destroyed(config)
+    print("Teardown complete.")
+
+
+def list_registered_clusters() -> str:
+    return format_cluster_table(list_clusters())

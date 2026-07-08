@@ -1,9 +1,10 @@
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from grl.config import GRLConfig
-from grl.k8s import helm_upgrade, load_kube_client
+from grl.k8s import helm_upgrade, load_kube_client, update_eks_kubeconfig
 
 
 def test_helm_upgrade_passes_kubeconfig(monkeypatch, tmp_path: Path):
@@ -69,3 +70,40 @@ def test_load_kube_client_uses_explicit_kubeconfig(monkeypatch, tmp_path: Path):
 def test_load_kube_client_missing_kubeconfig_raises(tmp_path: Path):
     with pytest.raises(Exception, match="kubeconfig not found"):
         load_kube_client(kubeconfig=tmp_path / "missing")
+
+
+def test_update_eks_kubeconfig_runs_aws_command(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+
+    def fake_which(name: str):
+        return "/usr/bin/aws" if name == "aws" else None
+
+    def fake_run(args, *, check, capture_output, text):
+        captured["args"] = args
+        captured["check"] = check
+        return subprocess.CompletedProcess(args, 0, "Added new context\n", "")
+
+    monkeypatch.setattr("grl.k8s.shutil.which", fake_which)
+    monkeypatch.setattr("grl.k8s.subprocess.run", fake_run)
+
+    kubeconfig = tmp_path / "config"
+    path = update_eks_kubeconfig("grl", "us-west-2", kubeconfig=kubeconfig)
+
+    assert path == kubeconfig
+    assert captured["args"] == [
+        "/usr/bin/aws",
+        "eks",
+        "update-kubeconfig",
+        "--region",
+        "us-west-2",
+        "--name",
+        "grl",
+        "--kubeconfig",
+        str(kubeconfig),
+    ]
+
+
+def test_update_eks_kubeconfig_requires_aws_cli(monkeypatch):
+    monkeypatch.setattr("grl.k8s.shutil.which", lambda name: None)
+    with pytest.raises(Exception, match="aws CLI not found"):
+        update_eks_kubeconfig("grl", "us-west-2")

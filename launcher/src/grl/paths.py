@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
+
+CLUSTER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def repo_root() -> Path | None:
@@ -118,3 +121,38 @@ def state_dir(run_id: str) -> Path:
     path = base / run_id
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def validate_cluster_name(cluster_name: str) -> str:
+    """Validate ``infra.cluster_name`` as a path-safe launcher cluster slug."""
+    name = cluster_name.strip()
+    if not name:
+        raise ValueError("infra.cluster_name is required")
+    if name in {".", ".."}:
+        raise ValueError(f"invalid infra.cluster_name: {cluster_name!r}")
+    if not CLUSTER_NAME_PATTERN.fullmatch(name):
+        raise ValueError(
+            "infra.cluster_name must contain only letters, numbers, '.', '_', or '-'"
+        )
+    return name
+
+
+def terraform_state_base() -> Path:
+    """Root directory for launcher-managed Terraform state files."""
+    return Path(os.environ.get("GRL_TF_STATE_DIR", grl_home() / "terraform-state"))
+
+
+def cluster_dir(cluster_name: str) -> Path:
+    return terraform_state_base() / validate_cluster_name(cluster_name)
+
+
+def terraform_state_path(cluster_name: str, *, byok: bool) -> Path:
+    stack = "byok" if byok else "eks"
+    return cluster_dir(cluster_name) / stack / "terraform.tfstate"
+
+
+def list_cluster_dirs() -> list[Path]:
+    base = terraform_state_base()
+    if not base.is_dir():
+        return []
+    return sorted(path for path in base.iterdir() if path.is_dir())

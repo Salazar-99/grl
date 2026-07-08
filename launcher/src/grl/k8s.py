@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import base64
+import os
+import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +22,56 @@ from grl.tools import run_tool
 
 class KubernetesError(Exception):
     """Kubernetes or Helm operation failed."""
+
+
+def default_kubeconfig_path() -> Path:
+    env = os.environ.get("KUBECONFIG")
+    if env:
+        return Path(env.split(os.pathsep)[0]).expanduser()
+    return Path.home() / ".kube" / "config"
+
+
+def update_eks_kubeconfig(
+    cluster_name: str,
+    region: str,
+    *,
+    kubeconfig: Path | str | None = None,
+) -> Path:
+    """Merge EKS cluster credentials into a kubeconfig and set the current context."""
+    aws = shutil.which("aws")
+    if aws is None:
+        raise KubernetesError(
+            "aws CLI not found; install AWS CLI or set launch.infra.auto_kubeconfig: false"
+        )
+    target = Path(kubeconfig).expanduser() if kubeconfig else default_kubeconfig_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    args = [
+        aws,
+        "eks",
+        "update-kubeconfig",
+        "--region",
+        region,
+        "--name",
+        cluster_name,
+        "--kubeconfig",
+        str(target),
+    ]
+    try:
+        result = subprocess.run(
+            args,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        raise KubernetesError(
+            f"aws eks update-kubeconfig failed: {detail or exc}"
+        ) from exc
+    if result.stdout.strip():
+        print(result.stdout.strip())
+    print(f"Kubeconfig updated: {target} (current context set to {cluster_name})")
+    return target
 
 
 def generate_eks_token(cluster_name: str, region: str) -> str:

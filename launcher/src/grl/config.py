@@ -14,6 +14,7 @@ from grl_config.infra import ComputeConfig
 from grl_config.providers import provider_for_cluster_type
 from grl_config.run_id import new_run_id
 from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig as TrainingGRLConfig
+from grl.paths import validate_cluster_name
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -275,6 +276,11 @@ class InfraConfig(BaseModel):
     vm_image_cache: VmImageCacheConfig = Field(default_factory=VmImageCacheConfig)
     model_cache: ModelCacheConfig = Field(default_factory=ModelCacheConfig)
 
+    @field_validator("cluster_name")
+    @classmethod
+    def _validate_cluster_name(cls, value: str) -> str:
+        return validate_cluster_name(value)
+
 
 class GRLConfig(TrainingGRLConfig):
     """Unified run config for training and infra orchestration."""
@@ -469,6 +475,16 @@ class GRLConfig(TrainingGRLConfig):
         vars_ = dict(self.terraform_vars(resolved))
         if self.launch.infra.kubeconfig:
             vars_["kubeconfig_path"] = str(self.launch.infra.resolved_kubeconfig())
+        return vars_
+
+    def terraform_vars_for_teardown(self, resolved: ResolvedImages) -> dict[str, Any]:
+        vars_ = self.terraform_vars(resolved)
+        vars_["deploy_workloads"] = True
+        return vars_
+
+    def byok_terraform_vars_for_teardown(self, resolved: ResolvedImages) -> dict[str, Any]:
+        vars_ = self.byok_terraform_vars(resolved)
+        vars_["deploy_workloads"] = True
         return vars_
 
     def training_payload(self, run_id: str | None = None) -> dict[str, Any]:

@@ -36,6 +36,20 @@ Preflight only:
 grl launch config.yaml --preflight-only
 ```
 
+List known launcher clusters:
+
+```bash
+grl clusters list
+```
+
+Teardown Terraform-managed infrastructure:
+
+```bash
+grl teardown config.yaml
+grl teardown config.yaml --dry-run
+grl teardown config.yaml --yes
+```
+
 ## Prerequisites
 
 - Python 3.12
@@ -44,7 +58,15 @@ grl launch config.yaml --preflight-only
 - For `launch.infra.apply: true`: permission to run Terraform against your AWS account
 - For bring-your-own Kubernetes: a kubeconfig file with access to an existing cluster
 
-The CLI stores local state under `~/.grl` (run metadata, Terraform/Helm overlays, and auto-downloaded Terraform/Helm/kubectl binaries when `launch.tools.auto_install` is true). Override with `GRL_HOME`, or set `GRL_STATE_DIR` / `GRL_TOOLS_CACHE` for individual paths.
+The CLI stores local state under `~/.grl`:
+
+- `~/.grl/terraform-state/<infra.cluster_name>/` — Terraform state and cluster registry metadata
+- `~/.grl/runs/<run_id>/` — per-run tfvars, Helm overlays, and run metadata
+- `~/.grl/tools/` — auto-downloaded Terraform/Helm/kubectl binaries when `launch.tools.auto_install` is true
+
+Override with `GRL_HOME`, or set `GRL_STATE_DIR`, `GRL_TF_STATE_DIR`, or `GRL_TOOLS_CACHE` for individual paths.
+
+`infra.cluster_name` is the single cluster name used for state selection, cluster listing, and (for EKS) the actual AWS cluster name. Use different `infra.cluster_name` values to manage multiple clusters from one machine without state collisions. For BYOK, `infra.cluster_name` is the launcher's name for the external cluster.
 
 ## Deployment modes
 
@@ -59,7 +81,7 @@ launch:
     auto_kubeconfig: true
 ```
 
-After the first apply, the launcher uses AWS EKS auth for Kubernetes API calls when `auto_kubeconfig: true`.
+After the first apply, the launcher runs `aws eks update-kubeconfig` to merge cluster credentials into your local kubeconfig and set the current context. It also uses AWS EKS auth for in-process Kubernetes API calls when `auto_kubeconfig: true`.
 
 ### Bring your own Kubernetes cluster
 
@@ -91,7 +113,7 @@ One YAML drives all layers:
 | `environment` | Bundle URI, split, manager address |
 | `launch` | Which layers to run (infra apply, env activate, job submit) |
 | `images` | Runtime image resolution (`published`, `custom`, `build_and_push`) |
-| `infra` | Cluster metadata, Helm release names, OTel, manager, caches |
+| `infra` | Cluster metadata (`cluster_name`, region, Helm release names), OTel, manager, caches |
 
 Secrets can use environment variable references:
 
@@ -124,6 +146,7 @@ Training runs are submitted as KubeRay `RayJob` custom resources. The launcher:
 grl tools doctor
 grl tools install
 grl tools list
+grl clusters list
 ```
 
 ## Development

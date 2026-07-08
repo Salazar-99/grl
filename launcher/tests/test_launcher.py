@@ -23,6 +23,8 @@ def _stub_launch_prelude(monkeypatch, launcher_module, calls):
     monkeypatch.setattr(
         launcher_module, "apply_infra", lambda *a, **k: calls.append("apply_infra")
     )
+    monkeypatch.setattr(launcher_module, "register_cluster", lambda *a, **k: None)
+    monkeypatch.setattr(launcher_module, "update_eks_kubeconfig", lambda *a, **k: None)
     monkeypatch.setattr(
         launcher_module, "activate_environment", lambda *a, **k: calls.append("activate")
     )
@@ -117,6 +119,25 @@ def test_load_cluster_client_eks_uses_token(monkeypatch):
     launcher_module.load_cluster_client(config)
     assert captured["cluster_name"] == "grl"
     assert "kubeconfig" not in captured
+
+
+def test_load_cluster_client_eks_auto_kubeconfig_false_uses_default(monkeypatch):
+    from grl import launcher as launcher_module
+
+    config = GRLConfig.model_validate(
+        {"model": "org/model", "launch": {"infra": {"auto_kubeconfig": False}}}
+    )
+    captured: dict[str, object] = {"called": False}
+
+    def fake_load_kube_client(**kwargs):
+        captured["called"] = True
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(launcher_module, "load_kube_client", fake_load_kube_client)
+    launcher_module.load_cluster_client(config)
+    assert captured["called"] is True
+    assert captured == {"called": True}
 
 
 def _resolved():
@@ -227,6 +248,28 @@ def test_cluster_only_applies_infra_and_stops(monkeypatch):
     )
     launcher_module.launch(config)
     assert calls == ["apply_infra"]
+
+
+def test_cluster_only_updates_kubeconfig_after_eks_apply(monkeypatch):
+    from grl import launcher as launcher_module
+
+    calls: list[str] = []
+    _stub_launch_prelude(monkeypatch, launcher_module, calls)
+    monkeypatch.setattr(
+        launcher_module,
+        "register_cluster",
+        lambda *a, **k: calls.append("register_cluster"),
+    )
+    monkeypatch.setattr(
+        launcher_module,
+        "update_eks_kubeconfig",
+        lambda *a, **k: calls.append("update_kubeconfig"),
+    )
+    config = GRLConfig.model_validate(
+        {"model": "org/model", "launch": {"deployment_type": "CLUSTER"}}
+    )
+    launcher_module.launch(config)
+    assert calls == ["apply_infra", "register_cluster", "update_kubeconfig"]
 
 
 def test_full_launch_runs_all_layers(monkeypatch):
