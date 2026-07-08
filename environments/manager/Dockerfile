@@ -4,6 +4,9 @@ FROM rust:1-slim AS build
 
 WORKDIR /build
 COPY environments/proto/ environments/proto/
+# The env crate is a dev-dependency of the manager; cargo needs its manifest
+# to resolve the dependency graph even though it is not compiled here.
+COPY environments/swebench-lite/env/ environments/swebench-lite/env/
 COPY environments/manager/ environments/manager/
 
 WORKDIR /build/environments/manager
