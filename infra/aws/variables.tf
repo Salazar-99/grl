@@ -87,6 +87,12 @@ variable "vm_images_bucket" {
   description = "S3 bucket holding Firecracker VM artifacts (kernel/, bases/, tasks/) that must match the VMS_S3_BUCKET used by environments/swebench-lite/vms uploads. Empty disables the vm-image-cache DaemonSet and its IAM policy."
 }
 
+variable "vm_images_region" {
+  type        = string
+  default     = ""
+  description = "AWS region of the VM images bucket. Empty falls back to var.region."
+}
+
 variable "model_tag" {
   type        = string
   default     = ""
@@ -216,17 +222,19 @@ variable "otel_collector_namespace" {
 
 variable "otel_upstream_endpoint" {
   type        = string
-  default     = "otel.gerardosalazar.com:4317"
-  description = "OTLP gRPC endpoint of the external collector that owns the ClickHouse export. Always TLS."
+  default     = "https://otel.gerardosalazar.com"
+  description = "OTLP/HTTP endpoint (URL) of the external collector that owns the ClickHouse export. Always TLS; the otlphttp exporter appends /v1/{traces,metrics,logs}."
 }
 
 variable "otel_upstream_username" {
   type        = string
-  description = "Basic-auth username for the external OTLP collector."
+  default     = ""
+  description = "Basic-auth username for the external OTLP collector. Only used when deploy_workloads is true."
 }
 
 variable "otel_upstream_password" {
   type        = string
+  default     = ""
   sensitive   = true
-  description = "Basic-auth password for the external OTLP collector."
+  description = "Basic-auth password for the external OTLP collector. Only used when deploy_workloads is true."
 }

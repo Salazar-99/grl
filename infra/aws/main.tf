@@ -47,7 +47,7 @@ module "resources" {
   ray_training_replicas      = var.ray_training_replicas
 
   vm_images_bucket = var.vm_images_bucket
-  vm_images_region = var.region
+  vm_images_region = var.vm_images_region != "" ? var.vm_images_region : var.region
 
   model_tag         = var.model_tag
   model_revision    = var.model_revision

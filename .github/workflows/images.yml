@@ -1,0 +1,90 @@
+name: Publish Images
+
+# Builds and pushes the four GRL runtime images to GHCR following the
+# launcher's published-image naming convention (launcher/src/grl/images.py):
+#   ghcr.io/<owner>/grl-training-{head,rollouts,training}:<tag>
+#   ghcr.io/<owner>/grl-manager:<tag>
+#
+# Auth is the workflow's own GITHUB_TOKEN (permissions.packages: write);
+# no stored secrets are required. Packages are private on first push —
+# flip each to public once in the package settings.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build and publish ${{ matrix.component }} image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: training-head
+            dockerfile: training/Dockerfile
+            target: head
+          - component: training-rollouts
+            dockerfile: training/Dockerfile
+            target: rollouts
+          - component: training-training
+            dockerfile: training/Dockerfile
+            target: training
+          - component: manager
+            dockerfile: environments/manager/Dockerfile
+            target: ""
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve image name and tag
+        id: image
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            # Strip the leading v from the git tag (v0.1.0 -> 0.1.0).
+            tag="${GITHUB_REF_NAME#v}"
+          fi
+          # GHCR requires a lowercase namespace.
+          owner="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/${owner}/grl-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          # Both Dockerfiles copy sibling directories (config/, proto/,
+          # environments/proto/), so the build context is the repo root.
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,scope=${{ matrix.component }},mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

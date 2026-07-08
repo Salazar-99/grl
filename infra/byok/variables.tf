@@ -144,8 +144,8 @@ variable "otel_collector_namespace" {
 
 variable "otel_upstream_endpoint" {
   type        = string
-  default     = "otel.gerardosalazar.com:4317"
-  description = "OTLP gRPC endpoint of the external collector."
+  default     = "https://otel.gerardosalazar.com"
+  description = "OTLP/HTTP endpoint (URL) of the external collector. Always TLS; the otlphttp exporter appends /v1/{traces,metrics,logs}."
 }
 
 variable "otel_upstream_username" {

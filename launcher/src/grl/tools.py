@@ -165,17 +165,40 @@ def ensure_tools(config: LaunchToolsConfig) -> dict[str, Path]:
 
 
 def run_tool(path: Path, args: list[str], *, cwd: Path | None = None, dry_run: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run a managed tool, streaming its output live.
+
+    Long-running commands (e.g. a ~20 minute ``terraform apply``) echo each
+    line as it is produced instead of staying silent until completion. stderr
+    is merged into the stream so failures carry the tool's own error text.
+    """
     command = [str(path), *args]
+    display = f"{path.name} {' '.join(args)}"
     if dry_run:
         print("dry-run:", " ".join(command))
         return subprocess.CompletedProcess(command, 0, "", "")
-    return subprocess.run(
+    print(f"$ {display}", flush=True)
+    process = subprocess.Popen(
         command,
-        check=True,
-        capture_output=True,
-        text=True,
         cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
+    lines: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        lines.append(line)
+        print(f"[{path.name}] {line}", end="", flush=True)
+    returncode = process.wait()
+    output = "".join(lines)
+    if returncode != 0:
+        tail = "".join(lines[-20:]).rstrip()
+        raise ToolError(
+            f"{display} exited with code {returncode}"
+            + (f"; last output:\n{tail}" if tail else "")
+        )
+    return subprocess.CompletedProcess(command, returncode, output, "")
 
 
 def list_installed_tools() -> list[dict[str, str]]:

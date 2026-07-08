@@ -2,7 +2,7 @@ model: Qwen/Qwen3.5-4B
 
 environment:
   id: swebench-lite
-  bundle_uri: s3://my-bucket/datasets/swebench-lite/dev
+  bundle_uri: s3://grl-swebench-lite/datasets/swebench-lite/dev
   split: dev
   server_addr: grl-manager.default.svc:50051
 
@@ -44,7 +44,7 @@ pipeline:
   group_poll_interval_secs: 5
 
 checkpoint:
-  bucket_uri: s3://my-bucket/checkpoints/grl
+  bucket_uri: s3://grl-swebench-lite/checkpoints/grl
   interval_steps: null
   staging_dir: /tmp/grl-checkpoints
   max_background_uploads: 1
@@ -65,19 +65,19 @@ compute:
   ray:
     instance_type: m5.large
     nodes: 1
-    disk_size: 10
+    disk_size: 100
   rollouts:
     instance_type: g5.xlarge
     nodes: 1
-    disk_size: 20
+    disk_size: 100
   training:
     instance_type: g5.xlarge
     nodes: 1
-    disk_size: 20
+    disk_size: 100
   environments:
     instance_type: c5.metal
     nodes: 1
-    disk_size: 20
+    disk_size: 100
 
 launch:
   dry_run: false
@@ -140,7 +140,7 @@ infra:
     name: grl-collector
     namespace: default
     upstream:
-      endpoint: https://otel.gerardosalazar.com
+      endpoint: https://your-otel.com
       username: ""
       password: ""
   dcgm_exporter:
@@ -157,7 +157,7 @@ infra:
     max_concurrent_envs: "32"
   vm_image_cache:
     namespace: default
-    bucket: my-bucket
+    bucket: grl-swebench-lite
     region: us-west-2
     image: peakcom/s5cmd:v2.3.0
     pause_image: registry.k8s.io/pause:3.10

@@ -101,6 +101,8 @@ def plan_build_and_push(config: GRLConfig, tag: str) -> BuildPlan:
     for component, target in targets:
         image_ref = f"{registry}-training-{component}:{tag}"
         resolved_training[component] = image_ref
+        # Context is the repo root: the training Dockerfile copies the
+        # sibling config/ and proto/ directories.
         commands.append(
             [
                 "docker",
@@ -111,7 +113,7 @@ def plan_build_and_push(config: GRLConfig, tag: str) -> BuildPlan:
                 image_ref,
                 "-f",
                 str(training_dockerfile),
-                str(context / "training"),
+                str(context),
             ]
         )
         commands.append(["docker", "push", image_ref])
