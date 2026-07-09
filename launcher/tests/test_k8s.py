@@ -4,7 +4,14 @@ from pathlib import Path
 import pytest
 
 from grl.config import GRLConfig
-from grl.k8s import helm_upgrade, load_kube_client, update_eks_kubeconfig
+from grl.k8s import (
+    helm_upgrade,
+    is_kubernetes_service_addr,
+    is_loopback_addr,
+    load_kube_client,
+    port_forward_service,
+    update_eks_kubeconfig,
+)
 
 
 def test_helm_upgrade_passes_kubeconfig(monkeypatch, tmp_path: Path):
@@ -107,3 +114,80 @@ def test_update_eks_kubeconfig_requires_aws_cli(monkeypatch):
     monkeypatch.setattr("grl.k8s.shutil.which", lambda name: None)
     with pytest.raises(Exception, match="aws CLI not found"):
         update_eks_kubeconfig("grl", "us-west-2")
+
+
+@pytest.mark.parametrize(
+    ("addr", "expected"),
+    [
+        ("localhost:50051", True),
+        ("127.0.0.1:50051", True),
+        ("grl-manager.default.svc:50051", False),
+    ],
+)
+def test_is_loopback_addr(addr: str, expected: bool):
+    assert is_loopback_addr(addr) is expected
+
+
+@pytest.mark.parametrize(
+    ("addr", "expected"),
+    [
+        ("grl-manager.default.svc:50051", True),
+        ("grl-manager.default.svc.cluster.local:50051", True),
+        ("my-env.example.com:50051", False),
+        ("localhost:50051", False),
+    ],
+)
+def test_is_kubernetes_service_addr(addr: str, expected: bool):
+    assert is_kubernetes_service_addr(addr) is expected
+
+
+def test_port_forward_service_runs_kubectl(monkeypatch, tmp_path: Path):
+    class FakeProc:
+        def __init__(self):
+            self.returncode = None
+            self.stderr = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            self.returncode = -9
+
+    captured: dict[str, object] = {"proc": FakeProc()}
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        return captured["proc"]
+
+    monkeypatch.setattr("grl.k8s.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("grl.k8s._wait_for_local_port", lambda port: None)
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n")
+
+    with port_forward_service(
+        Path("kubectl"),
+        "grl-manager",
+        "default",
+        50051,
+        50051,
+        kubeconfig=kubeconfig,
+    ) as addr:
+        assert addr == "127.0.0.1:50051"
+
+    assert captured["args"] == [
+        "kubectl",
+        "port-forward",
+        "svc/grl-manager",
+        "50051:50051",
+        "-n",
+        "default",
+        "--kubeconfig",
+        str(kubeconfig),
+    ]

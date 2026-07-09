@@ -2,4 +2,4 @@ apiVersion: v2
 name: grl-resources
 description: Custom resources for the GRL cluster
 type: application
-version: 0.1.0
+version: 0.1.1

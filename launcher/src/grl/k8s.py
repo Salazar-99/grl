@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import boto3
 import yaml
@@ -22,6 +24,71 @@ from grl.tools import run_tool
 
 class KubernetesError(Exception):
     """Kubernetes or Helm operation failed."""
+
+
+def is_loopback_addr(addr: str) -> bool:
+    host = addr.rsplit(":", 1)[0].strip("[]")
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def is_kubernetes_service_addr(addr: str) -> bool:
+    """True when ``addr`` looks like an in-cluster Service DNS name."""
+    host = addr.rsplit(":", 1)[0]
+    return ".svc" in host
+
+
+def _wait_for_local_port(port: int, *, timeout_secs: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout_secs
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.2)
+    raise KubernetesError(f"port-forward to 127.0.0.1:{port} did not become ready")
+
+
+@contextmanager
+def port_forward_service(
+    kubectl_bin: Path,
+    service: str,
+    namespace: str,
+    local_port: int,
+    remote_port: int,
+    *,
+    kubeconfig: Path | str | None = None,
+) -> Iterator[str]:
+    """Forward a ClusterIP Service to localhost for launcher-side gRPC checks."""
+    args = [
+        str(kubectl_bin),
+        "port-forward",
+        f"svc/{service}",
+        f"{local_port}:{remote_port}",
+        "-n",
+        namespace,
+    ]
+    if kubeconfig is not None:
+        args.extend(["--kubeconfig", str(Path(kubeconfig).expanduser())])
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        if proc.poll() is not None:
+            stderr = (proc.stderr.read() if proc.stderr else "").strip()
+            raise KubernetesError(
+                f"kubectl port-forward failed for svc/{service}: {stderr or proc.returncode}"
+            )
+        _wait_for_local_port(local_port)
+        yield f"127.0.0.1:{local_port}"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def default_kubeconfig_path() -> Path:

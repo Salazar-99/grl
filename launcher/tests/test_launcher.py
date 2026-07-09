@@ -1,3 +1,4 @@
+from contextlib import nullcontext as _nullcontext
 from pathlib import Path
 
 from grl.config import GRLConfig, ResolvedImages
@@ -40,9 +41,14 @@ def _stub_launch_prelude(monkeypatch, launcher_module, calls):
         launcher_module, "assert_resources_present", lambda c, a: calls.append("assert_resources")
     )
     monkeypatch.setattr(
-        launcher_module, "assert_envs_present", lambda c: calls.append("assert_envs")
+        launcher_module, "assert_envs_present", lambda *a, **k: calls.append("assert_envs")
     )
-    monkeypatch.setattr(launcher_module, "wait_for_manager_catalog", lambda c: 3)
+    monkeypatch.setattr(
+        launcher_module,
+        "manager_verify_session",
+        lambda *a, **k: _nullcontext("localhost:50051"),
+    )
+    monkeypatch.setattr(launcher_module, "wait_for_manager_catalog", lambda *a, **k: 3)
 
 
 def test_training_entrypoint_roundtrip():

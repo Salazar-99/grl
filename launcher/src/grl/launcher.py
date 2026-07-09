@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,7 +21,10 @@ from grl.k8s import (
     create_rayjob,
     daemonset_exists,
     helm_upgrade,
+    is_kubernetes_service_addr,
+    is_loopback_addr,
     load_kube_client,
+    port_forward_service,
     rayjob_manifest,
     read_configmap_value,
     restart_daemonset,
@@ -210,23 +214,65 @@ def assert_resources_present(config: GRLConfig, api_client) -> None:
         )
 
 
-def assert_envs_present(config: GRLConfig) -> None:
+def assert_envs_present(
+    config: GRLConfig,
+    *,
+    tools: dict[str, Path] | None = None,
+) -> None:
     """ENVS layer check: the manager serves a non-empty task catalog."""
-    if verify_manager_catalog(config) == 0:
-        raise GrlError(
-            "ENVS layer not deployed (manager catalog is empty); "
-            "run deployment_type=ENVS first"
-        )
+    with manager_verify_session(config, tools) as addr:
+        if verify_manager_catalog(config, addr=addr) == 0:
+            raise GrlError(
+                "ENVS layer not deployed (manager catalog is empty); "
+                "run deployment_type=ENVS first"
+            )
 
 
-def assert_layer_present(layer: str, config: GRLConfig, api_client) -> None:
+def assert_layer_present(
+    layer: str,
+    config: GRLConfig,
+    api_client,
+    *,
+    tools: dict[str, Path] | None = None,
+) -> None:
     """Fail unless ``layer`` is already deployed on the target cluster."""
     if layer == "CLUSTER":
         assert_cluster_present(config, api_client)
     elif layer == "RESOURCES":
         assert_resources_present(config, api_client)
     elif layer == "ENVS":
-        assert_envs_present(config)
+        assert_envs_present(config, tools=tools)
+
+
+@contextmanager
+def manager_verify_session(
+    config: GRLConfig,
+    tools: dict[str, Path] | None,
+):
+    """Dial address for manager gRPC checks from the launcher's machine.
+
+    ``environment.server_addr`` is the in-cluster Service DNS trainers use
+    (e.g. ``grl-manager.default.svc:50051``). When the launcher runs on a
+    laptop it cannot resolve that name, so open a kubectl port-forward first.
+    """
+    configured = config.environment.server_addr
+    if is_loopback_addr(configured) or not is_kubernetes_service_addr(configured):
+        yield configured
+        return
+    if tools is None:
+        yield configured
+        return
+    manager = config.resolved_manager()
+    with port_forward_service(
+        tools["kubectl"],
+        manager.name,
+        manager.namespace,
+        manager.port,
+        manager.port,
+        kubeconfig=resolved_kubeconfig(config),
+    ) as addr:
+        print(f"Port-forwarding manager for verification: {addr}")
+        yield addr
 
 
 def activate_environment(
@@ -274,22 +320,23 @@ def activate_environment(
     wait_for_rollout(api_client, BUNDLE_SYNC_DAEMONSET, namespace, dry_run=dry_run)
 
 
-def verify_manager_catalog(config: GRLConfig) -> int:
-    addr = config.environment.server_addr
+def verify_manager_catalog(config: GRLConfig, *, addr: str | None = None) -> int:
+    target = addr or config.environment.server_addr
     split = config.environment.split
     timeout = config.environment.rpc_timeouts.list_tasks_secs
     try:
         task_ids = asyncio.run(
-            list_task_ids(addr=addr, split=split, timeout_secs=timeout)
+            list_task_ids(addr=target, split=split, timeout_secs=timeout)
         )
-    except ListTasksError as exc:
-        raise PreflightError(str(exc)) from exc
+    except ListTasksError:
+        return 0
     return len(task_ids)
 
 
 def wait_for_manager_catalog(
     config: GRLConfig,
     *,
+    addr: str | None = None,
     timeout_secs: float = 300.0,
     poll_interval_secs: float = 5.0,
 ) -> int:
@@ -299,7 +346,7 @@ def wait_for_manager_catalog(
     deadline = time.monotonic() + timeout_secs
     count = 0
     while time.monotonic() < deadline:
-        count = verify_manager_catalog(config)
+        count = verify_manager_catalog(config, addr=addr)
         if count > 0:
             return count
         time.sleep(poll_interval_secs)
@@ -371,7 +418,7 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     if prev is not None and not dry_run:
         if prev != "ENVS":
             api_client = load_cluster_client(config)
-        assert_layer_present(prev, config, api_client)
+        assert_layer_present(prev, config, api_client, tools=tools)
 
     # --- CLUSTER layer ---
     terraform_applied = False
@@ -409,7 +456,8 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     if launch_cfg.runs_envs():
         activate_environment(config, tools, api_client, run_id, dry_run=dry_run)
         if launch_cfg.environment.verify and not dry_run:
-            task_count = wait_for_manager_catalog(config)
+            with manager_verify_session(config, tools) as addr:
+                task_count = wait_for_manager_catalog(config, addr=addr)
             print(f"Manager catalog: {task_count} tasks")
 
     # --- TRAINING layer ---

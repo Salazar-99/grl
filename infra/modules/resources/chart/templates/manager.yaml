@@ -34,6 +34,7 @@ spec:
       containers:
         - name: manager
           image: {{ .Values.manager.image | quote }}
+          imagePullPolicy: Always
           env:
             # Push manager metrics to the same in-cluster collector the Ray
             # workers use (telemetry.rs no-ops if this is unset). HOSTNAME (the
