@@ -1,6 +1,6 @@
 # Build from the repo root so the proto dir is in the build context:
 #   docker build -f environments/manager/Dockerfile -t grl-manager .
-FROM rust:1-slim AS build
+FROM rust:1-bookworm AS build
 
 WORKDIR /build
 COPY environments/proto/ environments/proto/

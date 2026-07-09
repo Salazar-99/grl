@@ -4,7 +4,7 @@
 # the Hub on the hot path.
 #
 # The sync runs in an initContainer: the pod only reaches Running once the
-# cache is warm, and huggingface-cli resumes partial downloads on retry.
+# cache is warm, and `hf download` resumes partial downloads on retry.
 # A .ready sentinel is written after a complete sync.
 apiVersion: apps/v1
 kind: DaemonSet
@@ -60,7 +60,7 @@ spec:
           args:
             - |
               set -eu
-              pip install -q "huggingface_hub[cli]"
+              pip install -q huggingface_hub
               if [ -n "${HF_TOKEN:-}" ]; then
                 pip install -q hf_transfer
               fi
@@ -69,17 +69,17 @@ spec:
               rm -f "${dest}/.ready"
               mkdir -p "${dest}"
               if [ -n "${MODEL_REVISION}" ]; then
-                huggingface-cli download "${MODEL_TAG}" \
+                hf download "${MODEL_TAG}" \
                   --local-dir "${dest}" \
                   --revision "${MODEL_REVISION}"
               else
-                huggingface-cli download "${MODEL_TAG}" \
+                hf download "${MODEL_TAG}" \
                   --local-dir "${dest}"
               fi
               touch "${dest}/.ready"
           resources:
             requests:
-              cpu: "2"
+              cpu: "1"
               memory: 2Gi
             limits:
               cpu: "4"

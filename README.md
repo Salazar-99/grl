@@ -40,7 +40,7 @@ grl/
         ├── vpc/               # networking
         ├── cluster/           # EKS cluster + node groups mapped to system components (ray head/rollouts/training/environment)
         ├── charts/            # third-party helm installs (KubeRay, NVIDIA GPU operator, OTel operator)
-        └── resources/chart/   # grl resources and config in a single umbrella chart (RayCluster, OTel collector, dcgm-exporter)
+        └── resources/chart/   # grl resources and config in a single umbrella chart (RayCluster, OTel collector)
 ```
 
 ## Infra

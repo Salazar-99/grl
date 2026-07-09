@@ -22,7 +22,6 @@ With BYOK enabled, the launcher:
    - environment manager `DaemonSet` and `Service`
    - VM image cache and model cache `DaemonSet`s
    - OpenTelemetry collector resources
-   - DCGM exporter resources
 5. Applies the per-run Helm overlay during environment activation.
 6. Submits training as a KubeRay `RayJob`.
 

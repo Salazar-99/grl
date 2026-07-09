@@ -42,7 +42,7 @@ spec:
       maxReplicas: {{ .Values.rayCluster.workers.rollouts.replicas }}
       rayStartParams:
         num-gpus: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
-        resources: {{ dict "rollouts" (.Values.rayCluster.workers.rollouts.gpusPerNode | int) | toJson | quote }}
+        resources: '"{{ printf "{\\\"rollouts\\\": %d}" (.Values.rayCluster.workers.rollouts.gpusPerNode | int) }}"'
         metrics-export-port: "8080"
       template:
         spec:
@@ -83,7 +83,7 @@ spec:
       maxReplicas: {{ .Values.rayCluster.workers.training.replicas }}
       rayStartParams:
         num-gpus: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
-        resources: {{ dict "training" (.Values.rayCluster.workers.training.gpusPerNode | int) | toJson | quote }}
+        resources: '"{{ printf "{\\\"training\\\": %d}" (.Values.rayCluster.workers.training.gpusPerNode | int) }}"'
         metrics-export-port: "8080"
       template:
         spec:

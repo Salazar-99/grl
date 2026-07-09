@@ -112,7 +112,7 @@ launch:
 
 images:
   mode: published
-  registry: ghcr.io/gerardosalazar/grl
+  registry: ghcr.io/salazar-99/grl
   tag: "0.1.0"
   training:
     head: auto
@@ -143,9 +143,6 @@ infra:
       endpoint: https://your-otel.com
       username: ""
       password: ""
-  dcgm_exporter:
-    namespace: default
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
   manager:
     name: grl-manager
     namespace: default

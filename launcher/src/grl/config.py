@@ -156,7 +156,7 @@ class ImageBuildConfig(BaseModel):
 
 class ImagesConfig(BaseModel):
     mode: Literal["published", "custom", "build_and_push"] = "published"
-    registry: str = "ghcr.io/gerardosalazar/grl"
+    registry: str = "ghcr.io/salazar-99/grl"
     tag: str = "0.1.0"
     training: TrainingImagesConfig = Field(default_factory=TrainingImagesConfig)
     manager: str = "auto"
@@ -199,11 +199,6 @@ class OtelCollectorConfig(BaseModel):
     upstream: OtelCollectorUpstreamConfig = Field(
         default_factory=OtelCollectorUpstreamConfig
     )
-
-
-class DcgmExporterConfig(BaseModel):
-    namespace: str = "default"
-    image: str = "nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04"
 
 
 class ManagerConfig(BaseModel):
@@ -271,7 +266,6 @@ class InfraConfig(BaseModel):
     ray_address: str = "ray://grl-ray-head:10001"
     ray_cluster: RayClusterConfig = Field(default_factory=RayClusterConfig)
     otel_collector: OtelCollectorConfig = Field(default_factory=OtelCollectorConfig)
-    dcgm_exporter: DcgmExporterConfig = Field(default_factory=DcgmExporterConfig)
     manager: ManagerConfig = Field(default_factory=ManagerConfig)
     vm_image_cache: VmImageCacheConfig = Field(default_factory=VmImageCacheConfig)
     model_cache: ModelCacheConfig = Field(default_factory=ModelCacheConfig)

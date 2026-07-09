@@ -61,7 +61,7 @@ The launcher resolves `gpus_per_node` from `instance_type` via cloud provider im
 - KubeRay worker `replicas` and `gpusPerNode` for Helm
 - `workers.num_rollout_workers` for the RayJob (`nodes × gpus_per_node ÷ rollout.tensor_parallel_size`, overridable)
 
-Environment nodes also run the VM image cache and per-run bundle-sync DaemonSets. GPU nodes run model-cache and DCGM exporter DaemonSets.
+Environment nodes also run the VM image cache and per-run bundle-sync DaemonSets. GPU nodes run model-cache; GPU metrics come from the NVIDIA GPU Operator's dcgm-exporter.
 
 ## Ray scheduling
 
@@ -105,7 +105,7 @@ Rollout workers reach the manager at `environment.server_addr` (default `grl-man
 | Ray capacity | `num-gpus` + custom resources in `rayStartParams` |
 | Actor placement | `.options(num_gpus=…, resources={…})` at spawn time |
 | vLLM metrics | `RolloutWorker` starts a Prometheus server on `rollout.vllm_metrics_port` |
-| GPU metrics | DCGM exporter DaemonSet on GPU nodes |
+| GPU metrics | NVIDIA GPU Operator dcgm-exporter (scraped by OTel collector) |
 | Manager / training metrics | OTel SDK → in-cluster collector → upstream endpoint |
 
 ## Sizing correlation (example-config defaults)

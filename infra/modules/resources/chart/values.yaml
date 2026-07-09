@@ -29,10 +29,6 @@ otelCollector:
     username: ""
     password: ""
 
-dcgmExporter:
-  namespace: default
-  image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
-
 # Environment-agnostic Rust gRPC server (environments/manager/Dockerfile).
 # Runs as a DaemonSet: one pod per environment node, booting Firecracker VMs
 # from the vmImageCache hostPath. Rollout workers reach it through a ClusterIP
