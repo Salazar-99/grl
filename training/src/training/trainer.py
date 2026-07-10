@@ -89,9 +89,8 @@ class TrainingWorker:
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map="cuda:0",
             local_files_only=True,
-        )
+        ).to("cuda:0")
         self.model.train()
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate)

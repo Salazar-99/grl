@@ -68,6 +68,14 @@ spec:
               ports:
                 - name: vllm-metrics
                   containerPort: {{ .Values.rayCluster.workers.rollouts.vllmMetricsPort }}
+              {{- if .Values.modelCache.tag }}
+              # Host path populated by the model-cache DaemonSet
+              # (hostPath/<repo-name>, e.g. /models/Qwen3.5-4B).
+              volumeMounts:
+                - name: model-cache
+                  mountPath: {{ .Values.modelCache.hostPath | quote }}
+                  readOnly: true
+              {{- end }}
               resources:
                 requests:
                   cpu: "2"
@@ -77,6 +85,13 @@ spec:
                   cpu: "4"
                   memory: 16Gi
                   nvidia.com/gpu: {{ .Values.rayCluster.workers.rollouts.gpusPerNode | quote }}
+          {{- if .Values.modelCache.tag }}
+          volumes:
+            - name: model-cache
+              hostPath:
+                path: {{ .Values.modelCache.hostPath | quote }}
+                type: DirectoryOrCreate
+          {{- end }}
     - groupName: training
       replicas: {{ .Values.rayCluster.workers.training.replicas }}
       minReplicas: {{ .Values.rayCluster.workers.training.replicas }}
@@ -100,6 +115,12 @@ spec:
               env:
                 - name: OTEL_EXPORTER_OTLP_ENDPOINT
                   value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
+              {{- if .Values.modelCache.tag }}
+              volumeMounts:
+                - name: model-cache
+                  mountPath: {{ .Values.modelCache.hostPath | quote }}
+                  readOnly: true
+              {{- end }}
               resources:
                 requests:
                   cpu: "2"
@@ -109,3 +130,10 @@ spec:
                   cpu: "4"
                   memory: 16Gi
                   nvidia.com/gpu: {{ .Values.rayCluster.workers.training.gpusPerNode | quote }}
+          {{- if .Values.modelCache.tag }}
+          volumes:
+            - name: model-cache
+              hostPath:
+                path: {{ .Values.modelCache.hostPath | quote }}
+                type: DirectoryOrCreate
+          {{- end }}

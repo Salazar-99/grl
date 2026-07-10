@@ -65,7 +65,8 @@ vmImageCache:
 
 # Hugging Face model weights cached on GPU nodes (rollouts + training).
 # Weights land at hostPath/<repo-name> (e.g. /models/Qwen2.5-7B for
-# Qwen/Qwen2.5-7B). Empty tag disables the DaemonSet.
+# Qwen/Qwen2.5-7B). Empty tag disables the DaemonSet and the matching
+# hostPath mounts on Ray rollouts/training workers.
 modelCache:
   namespace: default
   tag: ""
