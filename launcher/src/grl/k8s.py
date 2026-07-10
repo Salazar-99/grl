@@ -386,18 +386,24 @@ def rayjob_manifest(
     entrypoint: str,
     shutdown_after_job_finishes: bool = False,
 ) -> dict[str, Any]:
+    # KubeRay RayJob CRD: target an existing cluster via clusterSelector
+    # (key ray.io/cluster = RayCluster.metadata.name), submissionMode (not
+    # submitMode), and flat string map spec.metadata (Ray job metadata, not
+    # nested ObjectMeta labels).
     return {
         "apiVersion": "ray.io/v1",
         "kind": "RayJob",
-        "metadata": {"name": name, "namespace": namespace},
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {"app.kubernetes.io/managed-by": "grl"},
+        },
         "spec": {
             "entrypoint": entrypoint,
-            "rayClusterName": ray_cluster_name,
+            "clusterSelector": {"ray.io/cluster": ray_cluster_name},
             "shutdownAfterJobFinishes": shutdown_after_job_finishes,
-            "submitMode": "K8sJobMode",
-            "metadata": {
-                "labels": {"app.kubernetes.io/managed-by": "grl"},
-            },
+            "submissionMode": "K8sJobMode",
+            "metadata": {"app.kubernetes.io/managed-by": "grl"},
         },
     }
 

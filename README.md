@@ -1,6 +1,6 @@
 # grl
 
-Distributed, async RLVR system for LLM post-training. It trains an open-weights policy model with GRPO against agentic software-engineering tasks from SWE-bench-Lite. Each rollout is a multi-turn tool-use trajectory where the model edits and tests a real repository inside an isolated Firecracker microVM. Rewards come from running the task's verification tests. Rollout generation, reward collection, and training run as pipelined async stages, so the GPUs generating trajectories and the GPUs updating weights are never blocked on each other.
+Distributed, async RLVR system for LLM post-training. grl lets you train an open-weights model with GRPO against any environment with a verifiable reward. The first environment is SWE-bench-Lite: each rollout is a multi-turn tool-use trajectory where the model edits and tests a real repository inside an isolated Firecracker microVM, and the reward comes from running the task's verification tests. Rollout generation, reward collection, and training run as pipelined async stages, so the GPUs generating trajectories and the GPUs updating weights are never blocked on each other.
 
 **Components:**
 
@@ -105,6 +105,20 @@ An environment is data, not code: prebuilt Firecracker VM images, a `tasks.jsonl
 - **`env` executor** — implements the tools (a persistent bash shell) and scoring: it applies the held-out test patch, runs the targeted tests, and returns reward 1.0 only if every `FAIL_TO_PASS` and `PASS_TO_PASS` test passes.
 
 The `vms` tooling builds all of this and uploads it to S3 as a bundle; the launcher's `ENVS` layer syncs the bundle onto environment nodes and rolling-restarts the manager DaemonSet to activate it.
+
+### Implementing a new environment
+
+The training stack only speaks the `EnvironmentService` gRPC API, so there are two ways to bring a new environment (see [`ENVS.md`](ENVS.md) for the longer discussion):
+
+**Managed Firecracker bundle** — no manager or trainer code changes; you ship data that satisfies the bundle contract:
+
+- **`tasks.jsonl`** — one row per task with `task_id`, `split`, `messages` (opening prompt, OpenAI-style JSON), `tools` (tool schemas, must include the standard `submit` tool), and node-relative `base_image` / `task_image` paths. The manager treats `messages` and `tools` as opaque JSON and just returns them from `CreateEnvironment`.
+- **A bootable base image** — a squashfs that boots under Firecracker and starts your in-VM executor listening on vsock port 5005. The executor speaks the framed-protobuf relay protocol (the `Execute`/`Evaluate` messages from the shared proto): it implements whatever tools your `tools` schemas declare and computes the reward on `Evaluate`. Anything the policy must not see — answer keys, held-out tests, scoring logic — lives inside the image (the `submit` tool itself is handled by the manager).
+- **Per-task images** — small read-only disks with per-task state, referenced from `tasks.jsonl` and mounted at boot.
+
+Upload the bundle to S3, set `environment.bundle_uri` in the launch config, and the `ENVS` layer activates it. VM lifecycle, tool dispatch, admission control, and teardown all come for free from the manager.
+
+**External gRPC service** — if you already have a sandbox, simulator, or hosted evaluator, skip VMs entirely: implement the five RPCs (`ListTasks`, `CreateEnvironment`, `Execute`, `Evaluate`, `Teardown`) in your own service and point `environment.server_addr` at it. Only the `grl-proto` package is needed to implement the contract.
 
 ## Training
 

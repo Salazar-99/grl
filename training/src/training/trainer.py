@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import ray
@@ -9,8 +8,6 @@ if TYPE_CHECKING:
     import torch
 
 from grl_config.training import GRLConfig
-from training.checkpoints import BackgroundCheckpointUploader, snapshot_checkpoint_dir
-from training.rollouts import PolicyWeightsRef, RolloutResult
 from training.telemetry import (
     counter,
     gauge,
@@ -19,6 +16,10 @@ from training.telemetry import (
     record_duration,
     span,
 )
+from training.types import PolicyWeightsRef, RolloutResult, TrainingBatch
+
+# Re-export for callers that historically imported TrainingBatch from here.
+__all__ = ["TrainingBatch", "TrainingWorker", "grpo_valid_rollouts"]
 
 
 def grpo_valid_rollouts(
@@ -35,13 +36,6 @@ def grpo_valid_rollouts(
     if len(valid) < min_rollouts_per_group:
         return []
     return valid
-
-
-@dataclass
-class TrainingBatch:
-    batch_id: str
-    groups: list[list[RolloutResult]]
-    policy_version: int
 
 
 @ray.remote
@@ -62,6 +56,8 @@ class TrainingWorker:
 
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        from training.checkpoints import BackgroundCheckpointUploader
 
         model_path = cfg.resolved_model_path()
 
@@ -184,6 +180,8 @@ class TrainingWorker:
         if not should_snapshot:
             return None
         if self.policy_version not in self.checkpoint_uris:
+            from training.checkpoints import snapshot_checkpoint_dir
+
             checkpoint_dir = snapshot_checkpoint_dir(
                 model=self.model,
                 tokenizer=self.tokenizer,

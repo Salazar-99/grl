@@ -20,9 +20,6 @@ from typing import Any, cast
 
 import ray
 from opentelemetry.metrics import Observation
-from renderers import Message, ParsedResponse, ToolSpec
-from renderers import Renderer as BaseRenderer
-from renderers.base import MODEL_RENDERER_MAP, create_renderer
 
 from grl_config.training import GRLConfig
 from training.environments import (
@@ -41,15 +38,27 @@ from training.telemetry import (
     record_duration,
     span,
 )
+from training.types import (
+    GenerationResult,
+    PolicyWeightsRef,
+    RolloutRequest,
+    RolloutResult,
+    ToolCall,
+)
 
 
-def _create_base_renderer(tokenizer: Any, model_id: str) -> BaseRenderer:
+def _create_base_renderer(tokenizer: Any, model_id: str) -> Any:
     """Pick the renderer for ``model_id`` (hand-coded map, else default).
 
     We resolve by ``model_id`` rather than letting ``create_renderer`` auto
     -detect, because the tokenizer is loaded from a local cache path whose
     ``name_or_path`` won't match the canonical HF id in ``MODEL_RENDERER_MAP``.
+
+    ``renderers`` is imported lazily so the head driver can import this module
+    without the rollouts extra installed.
     """
+    from renderers.base import create_renderer
+
     name = Renderer.name_for_model(model_id)
     if name == "default":
         return create_renderer(tokenizer, renderer="default", tool_parser="qwen3")
@@ -71,6 +80,8 @@ class Renderer:
     @staticmethod
     def name_for_model(model_id: str) -> str:
         """Resolve a hand-coded renderer name from the HF repo id."""
+        from renderers.base import MODEL_RENDERER_MAP
+
         return MODEL_RENDERER_MAP.get(model_id, "default")
 
     @property
@@ -78,14 +89,16 @@ class Renderer:
         return self._base.get_stop_token_ids()
 
     @property
-    def base(self) -> BaseRenderer:
+    def base(self) -> Any:
         return self._base
 
-    def to_tools(self, tools: list[dict[str, Any]] | None) -> list[ToolSpec] | None:
+    def to_tools(self, tools: list[dict[str, Any]] | None) -> list[Any] | None:
         """Unwrap OpenAI ``{"function": {...}}`` tool schemas into ``ToolSpec``s."""
         if not tools:
             return None
-        specs: list[ToolSpec] = []
+        from renderers import ToolSpec
+
+        specs: list[Any] = []
         for tool in tools:
             fn = tool.get("function")
             if isinstance(fn, dict):
@@ -97,15 +110,13 @@ class Renderer:
                     )
                 )
             else:
-                specs.append(cast(ToolSpec, tool))
+                specs.append(cast(Any, tool))
         return specs
 
     @staticmethod
-    def _to_messages(messages: list[dict[str, Any]]) -> list[Message]:
+    def _to_messages(messages: list[dict[str, Any]]) -> list[Any]:
         """Drop ``None`` values so optional keys stay absent for the renderer."""
-        return [
-            cast(Message, {k: v for k, v in m.items() if v is not None}) for m in messages
-        ]
+        return [{k: v for k, v in m.items() if v is not None} for m in messages]
 
     @staticmethod
     def _name_and_arguments(tool_call: dict[str, Any]) -> tuple[str, str]:
@@ -117,7 +128,7 @@ class Renderer:
             arguments = json.dumps(arguments or {})
         return name, arguments
 
-    def parsed_tool_calls(self, parsed: ParsedResponse) -> list[tuple[str, str]]:
+    def parsed_tool_calls(self, parsed: Any) -> list[tuple[str, str]]:
         """Return at most one ``(name, arguments_json)`` pair from a completion."""
         for tool_call in parsed.tool_calls or []:
             name, arguments = self._name_and_arguments(tool_call)
@@ -156,57 +167,6 @@ class Renderer:
             self._to_messages([tool_message]),
             tools=self.to_tools(tools),
         )
-
-
-@dataclass
-class ToolCall:
-    name: str
-    arguments: str
-
-
-@dataclass
-class RolloutRequest:
-    group_id: str
-    task_id: str
-    rollout_index: int
-    expected_group_size: int
-    policy_version: int
-    sampling_params: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class RolloutResult:
-    group_id: str
-    task_id: str
-    env_id: str
-    rollout_index: int
-    expected_group_size: int
-    # Latest policy version observed while generating this rollout. For async
-    # weight updates this can differ from policy_version_start.
-    policy_version_current: int
-    request_id: str
-    prompt_ids: list[int]
-    response_ids: list[int]
-    response_mask: list[int]
-    # Per-token logprobs from vLLM at rollout time; aligned 1:1 with response_ids.
-    inference_logprobs: list[float]
-    num_turns: int
-    reward: float | None = None
-    done_reason: str = "completed"
-    policy_version_start: int | None = None
-
-
-@dataclass(frozen=True)
-class PolicyWeightsRef:
-    """Nested wrapper so Ray sends the ObjectRef itself, not its value."""
-
-    ref: ray.ObjectRef
-
-
-@dataclass
-class GenerationResult:
-    token_ids: list[int]
-    logprobs: list[float]
 
 
 @dataclass

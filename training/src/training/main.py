@@ -12,7 +12,6 @@ from opentelemetry.metrics import Observation
 from grl_config.infra import ROLLOUTS_RESOURCE, TRAINING_RESOURCE
 from grl_config.training import DEFAULT_CONFIG_PATH, GRLConfig
 from training.environments import RpcTimeouts, list_task_ids
-from training.rollouts import RolloutRequest, RolloutResult, RolloutWorker
 from training.telemetry import (
     counter,
     gauge,
@@ -20,7 +19,7 @@ from training.telemetry import (
     init_telemetry,
     observable_gauge,
 )
-from training.trainer import TrainingBatch, TrainingWorker
+from training.types import RolloutRequest, RolloutResult, TrainingBatch
 
 
 @dataclass
@@ -342,6 +341,11 @@ async def trainer_loop(
 
 
 async def run(config: GRLConfig, run_id: str) -> None:
+    # Import worker classes only when spawning actors so the head image does
+    # not load rollouts/training implementation modules at process start.
+    from training.rollouts import RolloutWorker
+    from training.trainer import TrainingWorker
+
     ray.init(ignore_reinit_error=config.ray.ignore_reinit_error)
 
     config_payload = config.model_dump()

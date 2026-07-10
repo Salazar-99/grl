@@ -21,6 +21,14 @@ This writes into `proto/src/grl_proto/`.
 The Dockerfile builds the `training` package into role-specific images. This way when we use Ray to spin up a remote actor
 it runs in a container spawned from an image with the minimal dependency set needed for that actor's work.
 
+| Target | Sync | Extra packages |
+|--------|------|----------------|
+| `head` | `uv sync --no-dev` | base only (Ray orchestration) |
+| `training` | `uv sync --extra training --no-dev` | `torch`, `transformers` |
+| `rollouts` | `uv sync --extra rollouts --no-dev` | `renderers`, `transformers`, `vllm` |
+
+Shared dataclasses live in `training.types` so the head driver can import pipeline types without loading rollouts/training implementation modules. Optional extras (`torch`, `transformers`, `vllm`, `renderers`) are imported lazily inside actor methods, not at module top level.
+
 ```sh
 docker build -f training/Dockerfile --target head -t grl-training:head .
 docker build -f training/Dockerfile --target training -t grl-training:training .

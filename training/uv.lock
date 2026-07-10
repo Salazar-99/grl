@@ -3031,6 +3031,7 @@ dependencies = [
 [package.optional-dependencies]
 rollouts = [
     { name = "renderers" },
+    { name = "transformers" },
     { name = "vllm" },
 ]
 training = [
@@ -3059,6 +3060,7 @@ requires-dist = [
     { name = "ray", extras = ["default"], specifier = "==2.55.1" },
     { name = "renderers", marker = "extra == 'rollouts'", specifier = ">=0.1.6" },
     { name = "torch", marker = "extra == 'training'", specifier = ">=2.5.0" },
+    { name = "transformers", marker = "extra == 'rollouts'", specifier = ">=4.46" },
     { name = "transformers", marker = "extra == 'training'", specifier = ">=4.46" },
     { name = "vllm", marker = "extra == 'rollouts'", specifier = ">=0.8.0" },
 ]

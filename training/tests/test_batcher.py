@@ -15,8 +15,7 @@ from training.main import (
     trainer_loop,
 )
 from training.main import rollout_loop
-from training.rollouts import RolloutResult
-from training.trainer import TrainingBatch
+from training.types import RolloutResult, TrainingBatch
 
 
 def _rollout(*, group_id: str, index: int, expected: int = 2) -> RolloutResult:

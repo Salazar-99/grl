@@ -66,8 +66,13 @@ def test_rayjob_manifest_targets_cluster():
         entrypoint="python -m training.main",
     )
     assert manifest["kind"] == "RayJob"
-    assert manifest["spec"]["rayClusterName"] == "grl-ray"
-    assert manifest["spec"]["submitMode"] == "K8sJobMode"
+    assert manifest["metadata"]["labels"]["app.kubernetes.io/managed-by"] == "grl"
+    assert manifest["spec"]["clusterSelector"] == {"ray.io/cluster": "grl-ray"}
+    assert manifest["spec"]["submissionMode"] == "K8sJobMode"
+    assert manifest["spec"]["metadata"] == {"app.kubernetes.io/managed-by": "grl"}
+    assert "rayClusterName" not in manifest["spec"]
+    assert "submitMode" not in manifest["spec"]
+    assert "labels" not in manifest["spec"]["metadata"]
 
 
 def test_dry_run_launch_skips_cluster_calls(monkeypatch):

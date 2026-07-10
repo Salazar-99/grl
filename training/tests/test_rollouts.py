@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 from renderers import ParsedResponse
 
 from training.rollouts import (
-    GenerationResult,
-    PolicyWeightsRef,
     Renderer,
-    RolloutResult,
     RolloutWorker,
     Session,
+)
+from training.types import (
+    GenerationResult,
+    PolicyWeightsRef,
+    RolloutResult,
 )
 
 
@@ -158,7 +160,7 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         worker.checkpoint_uris = {}
 
         with patch(
-            "training.trainer.snapshot_checkpoint_dir",
+            "training.checkpoints.snapshot_checkpoint_dir",
             return_value=Path("/tmp/checkpoints/grl-test/step-3"),
         ) as snapshot_checkpoint_dir:
             path = worker.save_checkpoint()
@@ -213,7 +215,7 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         worker.checkpoint_uris = {}
 
         with patch(
-            "training.trainer.snapshot_checkpoint_dir",
+            "training.checkpoints.snapshot_checkpoint_dir",
             return_value=Path("/tmp/checkpoints/grl-test/step-4"),
         ) as snapshot_checkpoint_dir:
             uri = worker.checkpoint()
