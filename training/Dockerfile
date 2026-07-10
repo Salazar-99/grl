@@ -22,4 +22,9 @@ FROM base AS training
 RUN uv sync --extra training --no-dev --locked --no-cache
 
 FROM base AS rollouts
+# Triton JIT-compiles CUDA helpers at vLLM startup (e.g. Qwen3.5 multimodal
+# profiling); python:slim has no compiler by default.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
 RUN uv sync --extra rollouts --no-dev --locked --no-cache
