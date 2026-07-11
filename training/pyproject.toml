@@ -23,6 +23,17 @@ dependencies = [
     "grl-proto",
 ]
 
+[tool.uv]
+# torch/vLLM are cu130 (runtime 13.0.x). humming-kernels[cu13] otherwise pulls
+# nvcc/cccl 13.3, and FlashInfer JIT fails with "CUDA compiler and CUDA toolkit
+# headers are incompatible". Keep the compiler stack on 13.0.
+override-dependencies = [
+    "nvidia-cuda-nvcc==13.0.88",
+    "nvidia-cuda-crt==13.0.88",
+    "nvidia-nvvm==13.0.88",
+    "nvidia-cuda-cccl==13.0.85",
+]
+
 [tool.uv.sources]
 grl-config = { path = "../config" }
 grl-proto = { path = "../proto" }

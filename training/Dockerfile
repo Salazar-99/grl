@@ -29,8 +29,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 RUN uv sync --extra rollouts --no-dev --locked --no-cache
-# vLLM -> humming-kernels[cu13] installs nvidia-cuda-nvcc into
-# site-packages/nvidia/cu13; expose it where FlashInfer expects the toolkit.
+# Compiler stack is pinned to CUDA 13.0 via tool.uv.override-dependencies
+# (matches torch cu130 runtime headers for FlashInfer JIT).
+# Expose the pip-shipped toolkit where FlashInfer expects it.
 RUN python - <<'PY'
 from pathlib import Path
 import sysconfig
