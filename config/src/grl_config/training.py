@@ -68,6 +68,13 @@ class PipelineConfig(BaseModel):
 
 
 class EnvironmentRetryConfig(BaseModel):
+    """Backoff for manager gRPC calls that are not yet ready.
+
+    Covers admission pressure and Execute/Evaluate while the VM is still
+    booting (UNAVAILABLE). Defaults are sized for a ~2 minute boot budget:
+    10 attempts with 0.5s → 30s exponential backoff.
+    """
+
     max_attempts: int = 10
     initial_backoff_secs: float = 0.5
     max_backoff_secs: float = 30.0

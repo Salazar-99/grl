@@ -55,12 +55,12 @@ _RETRYABLE_CODES = frozenset(
     }
 )
 
-# CreateEnvironment while the VM is still booting.
+# Create returns before the VM is ready; Execute/Evaluate then poll through
+# UNAVAILABLE (NotReady / booting) and RESOURCE_EXHAUSTED (admission) with the
+# shared EnvironmentRetryConfig backoff until ready or attempts are exhausted.
 _CREATE_RETRY_CODES = _RETRYABLE_CODES
-
-# Execute/Evaluate after the env is ready — only admission pressure is retried.
-_EXECUTE_RETRY_CODES = frozenset({grpc.StatusCode.RESOURCE_EXHAUSTED})
-_EVALUATE_RETRY_CODES = _EXECUTE_RETRY_CODES
+_EXECUTE_RETRY_CODES = _RETRYABLE_CODES
+_EVALUATE_RETRY_CODES = _RETRYABLE_CODES
 
 
 class InfraError(Exception):

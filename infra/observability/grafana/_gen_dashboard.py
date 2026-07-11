@@ -272,8 +272,15 @@ WINDOW = (
 
 
 def q_scraped_gauge(name: str, svc: str, by: str) -> str:
+    # Identity labels (pod/node) are often resource attrs for OTLP pushers
+    # (e.g. grl-manager) and datapoint attrs for Prometheus scrapes (dcgm/ray).
+    # Prefer resource, fall back to datapoint so both layouts work.
+    series = (
+        f"if(ResourceAttributes['{by}'] != '', "
+        f"ResourceAttributes['{by}'], Attributes['{by}'])"
+    )
     return (
-        f"SELECT TimeUnix AS time, Attributes['{by}'] AS series, Value\n"
+        f"SELECT TimeUnix AS time, {series} AS series, Value\n"
         "FROM default.grl_metrics_landing\n"
         f"WHERE {WINDOW}\n"
         f"  AND ServiceName = '{svc}' AND MetricName = '{name}'\n"

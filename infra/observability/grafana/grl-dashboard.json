@@ -1759,7 +1759,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_running'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_running'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -1852,7 +1852,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:kv_cache_usage_perc'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:kv_cache_usage_perc'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -1945,7 +1945,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_waiting'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:num_requests_waiting'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3565,7 +3565,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.active'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.active'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3658,7 +3658,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vms.active'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.vms.active'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3751,7 +3751,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['phase'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.by_phase'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['phase'] != '', ResourceAttributes['phase'], Attributes['phase']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.envs.by_phase'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -3844,7 +3844,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.capacity.utilization'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.capacity.utilization'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4694,7 +4694,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_UTIL'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_UTIL'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4787,7 +4787,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_USED'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_USED'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4880,7 +4880,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_POWER_USAGE'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_POWER_USAGE'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -4973,7 +4973,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_TEMP'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_GPU_TEMP'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5066,7 +5066,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_SM_CLOCK'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_SM_CLOCK'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5159,7 +5159,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['node'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_FREE'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'dcgm' AND MetricName = 'DCGM_FI_DEV_FB_FREE'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5265,7 +5265,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5358,7 +5358,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_mem_used'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_mem_used'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5451,7 +5451,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_gpus_utilization'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_gpus_utilization'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5544,7 +5544,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_object_store_memory'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_object_store_memory'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5637,7 +5637,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['ray_node_type'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_cluster_active_nodes'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['ray_node_type'] != '', ResourceAttributes['ray_node_type'], Attributes['ray_node_type']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_cluster_active_nodes'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
@@ -5730,7 +5730,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['ray_group'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_resources'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['ray_group'] != '', ResourceAttributes['ray_group'], Attributes['ray_group']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_resources'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
