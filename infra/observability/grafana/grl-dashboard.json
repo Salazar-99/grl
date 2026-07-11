@@ -1852,7 +1852,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:gpu_cache_usage_perc'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, Attributes['pod'] AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'vllm' AND MetricName = 'vllm:kv_cache_usage_perc'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],

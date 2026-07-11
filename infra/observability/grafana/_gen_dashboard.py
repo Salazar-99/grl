@@ -389,7 +389,7 @@ row("vLLM (scraped: ServiceName='vllm', by pod)")
 timeseries("Requests running / waiting",
            q_scraped_gauge("vllm:num_requests_running", "vllm", "pod"), w=8)
 timeseries("KV cache usage %",
-           q_scraped_gauge("vllm:gpu_cache_usage_perc", "vllm", "pod"), w=8, unit="percentunit")
+           q_scraped_gauge("vllm:kv_cache_usage_perc", "vllm", "pod"), w=8, unit="percentunit")
 timeseries("Requests waiting",
            q_scraped_gauge("vllm:num_requests_waiting", "vllm", "pod"), w=8)
 timeseries("Prompt tokens / 30s",

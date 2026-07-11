@@ -61,7 +61,7 @@ vmImageCache:
   hostPath: /var/lib/grl
   # Size of the per-VM scratch template (sparse, journal-less ext4). Bounds each
   # microVM's writable overlay; sparse so it costs only what's written.
-  scratchGb: 20
+  scratchGb: 2
 
 # Hugging Face model weights cached on GPU nodes (rollouts + training).
 # Weights land at hostPath/<repo-name> (e.g. /models/Qwen2.5-7B for

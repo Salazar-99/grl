@@ -69,8 +69,20 @@ def test_helm_values_overlay_excludes_bundle_uri():
     assert "bundleUri" not in overlay["manager"]
     assert overlay["manager"]["envId"] == "env-a"
     assert overlay["vmImageCache"]["bucket"] == "my-bucket"
+    assert overlay["vmImageCache"]["scratchGb"] == 2
     assert overlay["rayCluster"]["workers"]["rollouts"]["replicas"] == 1
     assert overlay["rayCluster"]["workers"]["rollouts"]["gpusPerNode"] == 1
+
+
+def test_helm_values_overlay_scratch_gb_override():
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "environment": {"bundle_uri": "s3://b/e", "id": "env-a"},
+            "infra": {"vm_image_cache": {"bucket": "my-bucket", "scratch_gb": 4}},
+        }
+    )
+    assert config.helm_values_overlay()["vmImageCache"]["scratchGb"] == 4
 
 
 def test_env_helm_values_carries_bundle():

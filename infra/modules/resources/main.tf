@@ -38,8 +38,9 @@ resource "helm_release" "resources" {
         image = var.manager_image
       }
       vmImageCache = {
-        bucket = var.vm_images_bucket
-        region = var.vm_images_region
+        bucket    = var.vm_images_bucket
+        region    = var.vm_images_region
+        scratchGb = var.vm_images_scratch_gb
       }
       modelCache = {
         tag              = var.model_tag

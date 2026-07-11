@@ -159,6 +159,8 @@ infra:
     image: peakcom/s5cmd:v2.3.0
     pause_image: registry.k8s.io/pause:3.10
     host_path: /var/lib/grl
+    # Per-VM scratch template (GiB). Copied into manager ephemeral at boot.
+    scratch_gb: 2
   model_cache:
     namespace: default
     tag: Qwen/Qwen3.5-4B

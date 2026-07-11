@@ -5,6 +5,7 @@ mod executor;
 mod firecracker;
 mod jailer;
 mod paths;
+mod scratch;
 mod vsock;
 
 pub use executor::ExecutorConn;
@@ -78,19 +79,25 @@ pub async fn boot(env_id: &str, spec: &TaskSpec) -> Result<VmHandle, String> {
     let _ = std::fs::remove_file(&api_sock);
     let _ = std::fs::remove_file(&vsock_uds);
 
-    // Per-VM writable scratch: copy the node-local template into the run dir.
-    // std::fs::copy uses copy_file_range on Linux, giving a reflink/CoW copy on
-    // filesystems that support it and a fast sparse copy otherwise — the
-    // journal-less template's real footprint is a few MB.
+    // Per-VM writable scratch: sparse/reflink copy of the node-local template.
+    // Must preserve holes — std::fs::copy densifies across mounts (XFS cache →
+    // overlay run dir) and a full multi-GB write per env stalls the node.
     let template = scratch_template_path(&cache);
     let scratch = scratch_path(&run_dir);
-    std::fs::copy(&template, &scratch).map_err(|e| {
-        format!(
-            "copy scratch template {} -> {}: {e}",
-            template.display(),
-            scratch.display()
-        )
-    })?;
+    {
+        let src = template.clone();
+        let dst = scratch.clone();
+        tokio::task::spawn_blocking(move || scratch::copy_scratch_template(&src, &dst))
+            .await
+            .map_err(|e| format!("scratch copy join: {e}"))?
+            .map_err(|e| {
+                format!(
+                    "copy scratch template {} -> {}: {e}",
+                    template.display(),
+                    scratch.display()
+                )
+            })?;
+    }
 
     let child = jailer::spawn(env_id, &api_sock).await?;
     firecracker::wait_for_socket(&api_sock, Duration::from_secs(10)).await?;

@@ -52,9 +52,15 @@ spec:
               # overlay upper. Journalless keeps its real footprint at a few MB
               # (sparse), so the per-VM copy is fast; scratch is ephemeral so
               # journaling is pointless. Not shipped via S3 (a sparse ext4 would
-              # upload as full-size zeros).
-              if [ ! -f /data/scratch-template.ext4 ]; then
+              # upload as full-size zeros). Recreate when SCRATCH_GB changes.
+              WANT_BYTES=$((SCRATCH_GB * 1024 * 1024 * 1024))
+              CUR_BYTES=0
+              if [ -f /data/scratch-template.ext4 ]; then
+                CUR_BYTES=$(stat -c%s /data/scratch-template.ext4 2>/dev/null || echo 0)
+              fi
+              if [ ! -f /data/scratch-template.ext4 ] || [ "$CUR_BYTES" != "$WANT_BYTES" ]; then
                 apk add --no-cache e2fsprogs
+                rm -f /data/scratch-template.ext4
                 truncate -s "${SCRATCH_GB}G" /data/scratch-template.ext4
                 mkfs.ext4 -F -O ^has_journal /data/scratch-template.ext4
               fi

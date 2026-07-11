@@ -93,6 +93,12 @@ variable "vm_images_region" {
   description = "AWS region of the VM images bucket. Empty falls back to var.region."
 }
 
+variable "vm_images_scratch_gb" {
+  type        = number
+  default     = 2
+  description = "Size (GiB) of the per-VM scratch template staged by vm-image-cache."
+}
+
 variable "model_tag" {
   type        = string
   default     = ""

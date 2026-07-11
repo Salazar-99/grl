@@ -221,6 +221,9 @@ class VmImageCacheConfig(BaseModel):
     image: str = "peakcom/s5cmd:v2.3.0"
     pause_image: str = Field(default="registry.k8s.io/pause:3.10", alias="pauseImage")
     host_path: str = Field(default="/var/lib/grl", alias="hostPath")
+    # Per-VM writable scratch template size (GiB). Copied into each microVM's
+    # run dir at boot; keep small — copies land in manager container ephemeral.
+    scratch_gb: int = Field(default=2, alias="scratchGb", ge=1)
 
     model_config = {"populate_by_name": True}
 
@@ -403,6 +406,7 @@ class GRLConfig(TrainingGRLConfig):
         if self.infra.vm_image_cache.bucket:
             overlay["vmImageCache"] = {
                 "bucket": self.infra.vm_image_cache.bucket,
+                "scratchGb": self.infra.vm_image_cache.scratch_gb,
             }
         if self.infra.model_cache.enabled:
             overlay["modelCache"] = self.infra.model_cache.helm_fragment()
@@ -447,6 +451,7 @@ class GRLConfig(TrainingGRLConfig):
             "release_namespace": self.infra.release_namespace,
             "vm_images_bucket": self.infra.vm_image_cache.bucket,
             "vm_images_region": self.infra.vm_image_cache.region,
+            "vm_images_scratch_gb": self.infra.vm_image_cache.scratch_gb,
             "otel_collector_name": self.infra.otel_collector.name,
             "otel_collector_namespace": self.infra.otel_collector.namespace,
             "otel_upstream_endpoint": self.infra.otel_collector.upstream.endpoint,

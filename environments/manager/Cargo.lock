@@ -574,6 +574,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "env",
+ "libc",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
