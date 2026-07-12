@@ -73,7 +73,6 @@ pub fn vsock(guest_cid: u32, uds_path: &Path) -> Value {
     json!({
         "guest_cid": guest_cid,
         "uds_path": uds_path.display().to_string(),
-        "vsock_mode": "Unix",
     })
 }
 
@@ -118,6 +117,17 @@ mod tests {
         assert_eq!(d["is_root_device"], false);
         assert_eq!(d["is_read_only"], false);
         assert_eq!(d["path_on_host"], "/run/env42/scratch.ext4");
+    }
+
+    #[test]
+    fn vsock_uses_supported_firecracker_fields() {
+        assert_eq!(
+            vsock(42, Path::new("/run/env42/vsock.sock")),
+            json!({
+                "guest_cid": 42,
+                "uds_path": "/run/env42/vsock.sock",
+            })
+        );
     }
 
     #[test]
