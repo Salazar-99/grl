@@ -2,8 +2,9 @@
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
-#[cfg(target_os = "linux")]
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,16 +25,16 @@ enum MsgKind {
 
 enum Transport {
     Tcp(TcpStream),
-    #[cfg(target_os = "linux")]
-    Vsock(vsock::VsockStream),
+    #[cfg(unix)]
+    Unix(UnixStream),
 }
 
 impl Read for Transport {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Transport::Tcp(stream) => stream.read(buf),
-            #[cfg(target_os = "linux")]
-            Transport::Vsock(stream) => stream.read(buf),
+            #[cfg(unix)]
+            Transport::Unix(stream) => stream.read(buf),
         }
     }
 }
@@ -42,16 +43,16 @@ impl Write for Transport {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Transport::Tcp(stream) => stream.write(buf),
-            #[cfg(target_os = "linux")]
-            Transport::Vsock(stream) => stream.write(buf),
+            #[cfg(unix)]
+            Transport::Unix(stream) => stream.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Transport::Tcp(stream) => stream.flush(),
-            #[cfg(target_os = "linux")]
-            Transport::Vsock(stream) => stream.flush(),
+            #[cfg(unix)]
+            Transport::Unix(stream) => stream.flush(),
         }
     }
 }
@@ -63,8 +64,8 @@ impl Transport {
                 stream.set_read_timeout(Some(timeout))?;
                 stream.set_write_timeout(Some(timeout))?;
             }
-            #[cfg(target_os = "linux")]
-            Transport::Vsock(stream) => {
+            #[cfg(unix)]
+            Transport::Unix(stream) => {
                 stream.set_read_timeout(Some(timeout))?;
                 stream.set_write_timeout(Some(timeout))?;
             }
@@ -85,16 +86,51 @@ impl std::fmt::Debug for ExecutorConn {
 }
 
 impl ExecutorConn {
-    #[cfg(target_os = "linux")]
-    pub fn connect_vsock_timeout(guest_cid: u32, timeout: Duration) -> Result<Self, String> {
+    #[cfg(unix)]
+    pub fn connect_firecracker_vsock(
+        socket_path: &Path,
+        timeout: Duration,
+    ) -> Result<Self, String> {
         use crate::vm::config::EXECUTOR_VSOCK_PORT;
 
-        let stream =
-            connect_vsock_nonblocking(guest_cid, EXECUTOR_VSOCK_PORT, timeout).map_err(|e| {
-                format!("vsock connect cid={guest_cid} port={EXECUTOR_VSOCK_PORT}: {e}")
-            })?;
+        let mut stream = UnixStream::connect(socket_path)
+            .map_err(|e| format!("connect Firecracker vsock {}: {e}", socket_path.display()))?;
+        stream
+            .set_read_timeout(Some(timeout))
+            .map_err(|e| format!("set Firecracker vsock read timeout: {e}"))?;
+        stream
+            .set_write_timeout(Some(timeout))
+            .map_err(|e| format!("set Firecracker vsock write timeout: {e}"))?;
+        stream
+            .write_all(format!("CONNECT {EXECUTOR_VSOCK_PORT}\n").as_bytes())
+            .map_err(|e| format!("write Firecracker vsock handshake: {e}"))?;
+
+        let mut acknowledgement = Vec::with_capacity(32);
+        loop {
+            if acknowledgement.len() == 64 {
+                return Err("Firecracker vsock acknowledgement exceeds 64 bytes".into());
+            }
+            let mut byte = [0u8; 1];
+            match stream.read_exact(&mut byte) {
+                Ok(()) => acknowledgement.push(byte[0]),
+                Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    return Err("Firecracker closed vsock during handshake".into());
+                }
+                Err(err) => return Err(format!("read Firecracker vsock acknowledgement: {err}")),
+            }
+            if byte[0] == b'\n' {
+                break;
+            }
+        }
+        if !acknowledgement.starts_with(b"OK ") {
+            return Err(format!(
+                "invalid Firecracker vsock acknowledgement: {}",
+                String::from_utf8_lossy(&acknowledgement).trim()
+            ));
+        }
+
         Ok(Self {
-            stream: Arc::new(Mutex::new(Transport::Vsock(stream))),
+            stream: Arc::new(Mutex::new(Transport::Unix(stream))),
         })
     }
 
@@ -135,94 +171,6 @@ impl ExecutorConn {
         .await
         .map_err(|e| format!("executor task join: {e}"))?
     }
-}
-
-#[cfg(target_os = "linux")]
-fn connect_vsock_nonblocking(
-    guest_cid: u32,
-    port: u32,
-    timeout: Duration,
-) -> io::Result<vsock::VsockStream> {
-    let raw_fd = unsafe {
-        libc::socket(
-            libc::AF_VSOCK,
-            libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
-            0,
-        )
-    };
-    if raw_fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-    let mut address: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
-    address.svm_family = libc::AF_VSOCK as libc::sa_family_t;
-    address.svm_cid = guest_cid;
-    address.svm_port = port;
-
-    let rc = unsafe {
-        libc::connect(
-            fd.as_raw_fd(),
-            (&raw const address).cast::<libc::sockaddr>(),
-            std::mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t,
-        )
-    };
-    if rc < 0 {
-        let err = io::Error::last_os_error();
-        if err.raw_os_error() != Some(libc::EINPROGRESS) {
-            return Err(err);
-        }
-
-        let mut poll_fd = libc::pollfd {
-            fd: fd.as_raw_fd(),
-            events: libc::POLLOUT,
-            revents: 0,
-        };
-        let timeout_ms = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
-        loop {
-            let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
-            if ready == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "vsock connect timed out",
-                ));
-            }
-            if ready < 0 {
-                let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(err);
-            }
-            break;
-        }
-
-        let mut socket_error: libc::c_int = 0;
-        let mut error_len = std::mem::size_of_val(&socket_error) as libc::socklen_t;
-        if unsafe {
-            libc::getsockopt(
-                fd.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_ERROR,
-                (&raw mut socket_error).cast(),
-                &mut error_len,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        if socket_error != 0 {
-            return Err(io::Error::from_raw_os_error(socket_error));
-        }
-    }
-
-    let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
-    if flags < 0
-        || unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-
-    Ok(unsafe { vsock::VsockStream::from_raw_fd(fd.into_raw_fd()) })
 }
 
 fn map_evaluate(vm: EvaluateResponse) -> EvaluateResponse {
@@ -300,6 +248,8 @@ fn read_frame(stream: &mut Transport) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    #[cfg(unix)]
+    use std::os::unix::net::UnixListener;
     use std::sync::Arc;
     use std::thread;
 
@@ -327,6 +277,28 @@ mod tests {
             .unwrap();
         assert!(!resp.is_error, "unexpected error content: {}", resp.content);
         assert!(resp.content.contains("hello"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn firecracker_vsock_uses_unix_handshake() {
+        let socket_path =
+            std::env::temp_dir().join(format!("grl-vsock-handshake-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut command = [0u8; 13];
+            stream.read_exact(&mut command).unwrap();
+            assert_eq!(&command, b"CONNECT 5005\n");
+            stream.write_all(b"OK 1024\n").unwrap();
+        });
+
+        let connection =
+            ExecutorConn::connect_firecracker_vsock(&socket_path, Duration::from_secs(1)).unwrap();
+        drop(connection);
+        server.join().unwrap();
+        let _ = std::fs::remove_file(socket_path);
     }
 
     #[test]

@@ -234,7 +234,7 @@ pub async fn boot(
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(120),
         );
-        vsock::connect_executor(guest_cid, boot_timeout).await
+        vsock::connect_executor(&vsock_uds, boot_timeout).await
     };
 
     let result = tokio::select! {

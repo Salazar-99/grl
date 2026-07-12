@@ -590,7 +590,6 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tower 0.5.3",
- "vsock",
 ]
 
 [[package]]
