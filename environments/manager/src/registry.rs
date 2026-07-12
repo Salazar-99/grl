@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use opentelemetry::KeyValue;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
+use tokio::task::JoinHandle;
 
 use crate::telemetry;
-use crate::vm::VmHandle;
 use crate::vm::ExecutorConn;
+use crate::vm::VmHandle;
 
 /// Standard submit tool name (must match task catalog and trainer).
 pub const SUBMIT_TOOL: &str = "submit";
@@ -25,10 +26,17 @@ pub enum EnvPhase {
     Failed,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct EnvRecord {
     _task_id: String,
     phase: EnvPhase,
+    boot: Option<BootControl>,
+}
+
+#[derive(Debug)]
+pub struct BootControl {
+    pub cancel: watch::Sender<bool>,
+    pub task: JoinHandle<()>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +64,10 @@ impl fmt::Display for RegistryError {
                 write!(f, "environment {env_id} already evaluated")
             }
             RegistryError::ExecuteForbidden { env_id, phase } => {
-                write!(f, "environment {env_id} cannot execute tools in phase {phase:?}")
+                write!(
+                    f,
+                    "environment {env_id} cannot execute tools in phase {phase:?}"
+                )
             }
         }
     }
@@ -199,7 +210,7 @@ impl Registry {
             .build();
     }
 
-    fn new_env_id(&self, task_id: &str) -> String {
+    pub fn new_env_id(&self, task_id: &str) -> String {
         let n = self.next_suffix.fetch_add(1, Ordering::Relaxed);
         format!("{task_id}-{n}")
     }
@@ -209,22 +220,37 @@ impl Registry {
     }
 
     pub async fn register_booting(&self, task_id: &str) -> Result<String, RegistryError> {
+        let env_id = self.new_env_id(task_id);
+        self.register_booting_with_id(task_id, env_id.clone(), None)
+            .await?;
+        Ok(env_id)
+    }
+
+    /// Atomically register a reserved environment ID and its boot cancellation
+    /// handle. Cancellation while waiting for the lock cannot leave a record:
+    /// insertion happens only after the await has completed.
+    pub async fn register_booting_with_id(
+        &self,
+        task_id: &str,
+        env_id: String,
+        boot: Option<BootControl>,
+    ) -> Result<(), RegistryError> {
         let mut envs = self.envs.write().await;
-        if envs.len() >= self.max_concurrent {
+        if self.active_envs.load(Ordering::Relaxed) >= self.max_concurrent {
             telemetry::counter("grl.manager.admission.rejected").add(1, &[]);
             return Err(RegistryError::Exhausted);
         }
-        let env_id = self.new_env_id(task_id);
         envs.insert(
-            env_id.clone(),
+            env_id,
             EnvRecord {
                 _task_id: task_id.to_string(),
                 phase: EnvPhase::Booting,
+                boot,
             },
         );
         self.active_envs.fetch_add(1, Ordering::Relaxed);
         self.phase_counts.inc(EnvPhase::Booting);
-        Ok(env_id)
+        Ok(())
     }
 
     pub async fn set_ready(&self, env_id: &str) -> Result<(), RegistryError> {
@@ -234,7 +260,9 @@ impl Registry {
             .ok_or_else(|| RegistryError::NotFound(env_id.to_string()))?;
         if record.phase == EnvPhase::Booting {
             record.phase = EnvPhase::Ready;
-            self.phase_counts.transition(EnvPhase::Booting, EnvPhase::Ready);
+            record.boot = None;
+            self.phase_counts
+                .transition(EnvPhase::Booting, EnvPhase::Ready);
         }
         Ok(())
     }
@@ -246,7 +274,9 @@ impl Registry {
             .ok_or_else(|| RegistryError::NotFound(env_id.to_string()))?;
         if record.phase == EnvPhase::Booting {
             record.phase = EnvPhase::Failed;
-            self.phase_counts.transition(EnvPhase::Booting, EnvPhase::Failed);
+            record.boot = None;
+            self.phase_counts
+                .transition(EnvPhase::Booting, EnvPhase::Failed);
         }
         Ok(())
     }
@@ -299,28 +329,63 @@ impl Registry {
         }
     }
 
-    pub async fn remove(&self, env_id: &str) -> bool {
-        if self.vms.write().await.remove(env_id).is_some() {
-            self.active_vms.fetch_sub(1, Ordering::Relaxed);
+    /// Atomically remove an environment, cancel any boot task, and stop its VM.
+    ///
+    /// The env lock is taken before the VM lock, matching `attach_ready_vm`, so
+    /// teardown cannot race a late boot into attaching an unowned VM.
+    pub async fn teardown(&self, env_id: &str) -> (bool, bool) {
+        let (mut removed, vm) = {
+            let mut envs = self.envs.write().await;
+            let mut vms = self.vms.write().await;
+            let removed = envs.remove(env_id);
+            let vm = vms.remove(env_id);
+            (removed, vm)
+        };
+
+        if let Some(boot) = removed.as_mut().and_then(|record| record.boot.take()) {
+            let _ = boot.cancel.send(true);
+            // Cooperative cancellation lets vm::boot kill+wait the VMM and
+            // finish any bounded scratch/vsock operation before teardown
+            // releases capacity or reports success.
+            let _ = boot.task.await;
         }
-        let removed = self.envs.write().await.remove(env_id);
+        let stopped_vm = vm.is_some();
+        if let Some(vm) = vm {
+            self.active_vms.fetch_sub(1, Ordering::Relaxed);
+            vm.stop().await;
+        }
         if let Some(record) = &removed {
             self.active_envs.fetch_sub(1, Ordering::Relaxed);
             self.phase_counts.dec(record.phase);
         }
-        removed.is_some()
+        (removed.is_some(), stopped_vm)
     }
 
-    pub async fn attach_vm(&self, env_id: &str, vm: VmHandle) {
-        if self
-            .vms
-            .write()
-            .await
-            .insert(env_id.to_string(), vm)
-            .is_none()
-        {
+    pub async fn remove(&self, env_id: &str) -> bool {
+        self.teardown(env_id).await.0
+    }
+
+    /// Attach a completed VM and transition Booting → Ready as one operation.
+    ///
+    /// Returns the VM to the caller if teardown/failure won the race.
+    pub async fn attach_ready_vm(&self, env_id: &str, vm: VmHandle) -> Result<(), VmHandle> {
+        let mut envs = self.envs.write().await;
+        let Some(record) = envs.get_mut(env_id) else {
+            return Err(vm);
+        };
+        if record.phase != EnvPhase::Booting {
+            return Err(vm);
+        }
+
+        let mut vms = self.vms.write().await;
+        if vms.insert(env_id.to_string(), vm).is_none() {
             self.active_vms.fetch_add(1, Ordering::Relaxed);
         }
+        record.phase = EnvPhase::Ready;
+        record.boot = None;
+        self.phase_counts
+            .transition(EnvPhase::Booting, EnvPhase::Ready);
+        Ok(())
     }
 
     pub async fn take_vm(&self, env_id: &str) -> Option<VmHandle> {
@@ -383,6 +448,11 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tokio::process::Command;
 
     #[tokio::test]
     async fn admission_cap_returns_exhausted() {
@@ -450,5 +520,74 @@ mod tests {
         assert!(registry.remove(&env_id).await);
         assert_eq!(registry.active_envs.load(Ordering::Relaxed), 0);
         assert_eq!(registry.phase_counts.evaluated.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn teardown_waits_for_boot_task_cancellation() {
+        let registry = Registry::with_capacity(1);
+        let env_id = registry.new_env_id("t");
+        let (cancel, mut cancelled) = watch::channel(false);
+        let observed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_by_task = Arc::clone(&observed);
+        let task = tokio::spawn(async move {
+            let _ = cancelled.changed().await;
+            observed_by_task.store(true, Ordering::Relaxed);
+        });
+        registry
+            .register_booting_with_id("t", env_id.clone(), Some(BootControl { cancel, task }))
+            .await
+            .unwrap();
+
+        let (removed, stopped_vm) = registry.teardown(&env_id).await;
+        assert!(removed);
+        assert!(!stopped_vm);
+        assert!(observed.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn cancelled_registration_does_not_leak_capacity() {
+        let registry = Arc::new(Registry::with_capacity(1));
+        let env_id = registry.new_env_id("t");
+        let lock = registry.envs.write().await;
+        let registry_for_task = Arc::clone(&registry);
+        let registration = tokio::spawn(async move {
+            registry_for_task
+                .register_booting_with_id("t", env_id, None)
+                .await
+        });
+        tokio::task::yield_now().await;
+        registration.abort();
+        assert!(registration.await.unwrap_err().is_cancelled());
+        drop(lock);
+
+        assert_eq!(registry.len().await, 0);
+        assert!(registry.register_booting("replacement").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn completed_vm_cannot_attach_after_teardown() {
+        let registry = Registry::with_capacity(1);
+        let env_id = registry.register_booting("t").await.unwrap();
+        assert!(registry.teardown(&env_id).await.0);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let executor = Arc::new(
+            ExecutorConn::connect_tcp(&listener.local_addr().unwrap().to_string()).unwrap(),
+        );
+        let child = Command::new("sleep")
+            .arg("3600")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let vm = VmHandle::for_test(executor, child);
+        let rejected = registry
+            .attach_ready_vm(&env_id, vm)
+            .await
+            .expect_err("removed environment must reject a late VM");
+        rejected.stop().await;
+
+        // Let the listener and child shutdown settle before the test runtime is
+        // torn down; this also catches accidental blocking cleanup.
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }

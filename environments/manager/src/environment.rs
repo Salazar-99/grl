@@ -12,7 +12,7 @@ use crate::pb::{
     ExecuteRequest, ExecuteResponse, ListTasksRequest, ListTasksResponse, TaskIndexEntry,
     TeardownRequest, TeardownResponse,
 };
-use crate::registry::{Registry, RegistryError, SUBMIT_TOOL};
+use crate::registry::{BootControl, Registry, RegistryError, SUBMIT_TOOL};
 use crate::telemetry;
 use crate::vm;
 
@@ -66,21 +66,39 @@ impl EnvironmentServiceImpl {
         }
     }
 
-    fn spawn_boot_task(registry: Arc<Registry>, env_id: String, spec: crate::catalog::TaskSpec) {
-        tokio::spawn(async move {
+    fn spawn_boot_task(
+        registry: Arc<Registry>,
+        env_id: String,
+        spec: crate::catalog::TaskSpec,
+    ) -> (BootControl, tokio::sync::oneshot::Sender<()>) {
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            // Do not let a fast boot finish before its control is stored in
+            // the registry. Dropping the sender cancels this task.
+            if start_rx.await.is_err() {
+                return;
+            }
             if !vm::boot_enabled() {
                 let _ = registry.set_ready(&env_id).await;
                 return;
             }
             let start = Instant::now();
-            match vm::boot(&env_id, &spec).await {
+            match vm::boot(&env_id, &spec, cancel_rx).await {
                 Ok(handle) => {
-                    telemetry::histogram("grl.manager.vm.boot.duration")
-                        .record(start.elapsed().as_secs_f64(), &[]);
-                    telemetry::counter("grl.manager.vm.boots")
-                        .add(1, &[KeyValue::new("ok", true)]);
-                    registry.attach_vm(&env_id, handle).await;
-                    let _ = registry.set_ready(&env_id).await;
+                    match registry.attach_ready_vm(&env_id, handle).await {
+                        Ok(()) => {
+                            telemetry::histogram("grl.manager.vm.boot.duration")
+                                .record(start.elapsed().as_secs_f64(), &[]);
+                            telemetry::counter("grl.manager.vm.boots")
+                                .add(1, &[KeyValue::new("ok", true)]);
+                        }
+                        Err(handle) => {
+                            // Teardown removed the registry record while boot
+                            // was finishing; never leave the completed VMM live.
+                            handle.stop().await;
+                        }
+                    }
                 }
                 Err(err) => {
                     telemetry::histogram("grl.manager.vm.boot.duration")
@@ -93,6 +111,13 @@ impl EnvironmentServiceImpl {
                 }
             }
         });
+        (
+            BootControl {
+                cancel: cancel_tx,
+                task,
+            },
+            start_tx,
+        )
     }
 
     /// Register the observable gauges. Called from `main` after telemetry init;
@@ -150,21 +175,23 @@ impl EnvironmentService for EnvironmentServiceImpl {
         let result: Result<Response<CreateEnvironmentResponse>, Status> = async {
             let task_id = request.into_inner().task_id;
             let catalog = self.catalog.load();
-            let spec = catalog.get(&task_id).ok_or_else(|| {
-                Status::not_found(format!("task {task_id} not in catalog"))
-            })?;
+            let spec = catalog
+                .get(&task_id)
+                .ok_or_else(|| Status::not_found(format!("task {task_id} not in catalog")))?;
 
-            let env_id = self
+            let env_id = self.registry.new_env_id(&task_id);
+            let (boot, start_boot) =
+                Self::spawn_boot_task(Arc::clone(&self.registry), env_id.clone(), spec.clone());
+            if let Err(err) = self
                 .registry
-                .register_booting(&task_id)
+                .register_booting_with_id(&task_id, env_id.clone(), Some(boot))
                 .await
-                .map_err(Self::registry_status)?;
-
-            Self::spawn_boot_task(
-                Arc::clone(&self.registry),
-                env_id.clone(),
-                spec.clone(),
-            );
+            {
+                return Err(Self::registry_status(err));
+            }
+            // Failure only means the task was already cancelled; registry
+            // teardown remains the source of truth.
+            let _ = start_boot.send(());
 
             Ok(Response::new(CreateEnvironmentResponse {
                 env_id,
@@ -298,11 +325,10 @@ impl EnvironmentService for EnvironmentServiceImpl {
         let start = Instant::now();
         let result: Result<Response<TeardownResponse>, Status> = async {
             let env_id = request.into_inner().env_id;
-            if let Some(vm) = self.registry.take_vm(&env_id).await {
-                vm.stop().await;
+            let (_, stopped_vm) = self.registry.teardown(&env_id).await;
+            if stopped_vm {
                 telemetry::counter("grl.manager.vm.stops").add(1, &[]);
             }
-            let _ = self.registry.remove(&env_id).await;
             Ok(Response::new(TeardownResponse {}))
         }
         .await;
@@ -485,17 +511,13 @@ mod tests {
         });
 
         let svc = test_service(4);
-        let env_id = svc
-            .registry
-            .register_booting("t1")
-            .await
-            .unwrap();
-        svc.registry.set_ready(&env_id).await.unwrap();
+        let env_id = svc.registry.register_booting("t1").await.unwrap();
         let executor = Arc::new(ExecutorConn::connect_tcp(&addr.to_string()).unwrap());
         let child = Command::new("sleep").arg("3600").spawn().unwrap();
         svc.registry
-            .attach_vm(&env_id, VmHandle::for_test(executor, child))
-            .await;
+            .attach_ready_vm(&env_id, VmHandle::for_test(executor, child))
+            .await
+            .unwrap();
 
         let resp = svc
             .execute(Request::new(ExecuteRequest {
@@ -527,9 +549,11 @@ mod tests {
             .into_inner()
             .env_id;
 
-        svc.teardown(Request::new(TeardownRequest { env_id: env_id.clone() }))
-            .await
-            .unwrap();
+        svc.teardown(Request::new(TeardownRequest {
+            env_id: env_id.clone(),
+        }))
+        .await
+        .unwrap();
 
         let err = svc
             .execute(Request::new(ExecuteRequest {

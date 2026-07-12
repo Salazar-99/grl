@@ -3,6 +3,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
@@ -15,15 +16,31 @@ use std::os::unix::io::AsRawFd;
 /// byte. Concurrent densifying copies of multi-GB scratch templates saturate
 /// dirty-page writeback and stall boots. This path only materializes extents
 /// that contain data.
+#[cfg(test)]
 pub fn copy_scratch_template(src: &Path, dst: &Path) -> io::Result<()> {
-    let result = copy_sparse(src, dst);
+    let cancelled = AtomicBool::new(false);
+    copy_scratch_template_cancelable(src, dst, &cancelled)
+}
+
+/// Cancellation-aware variant used by VM boot tasks.
+///
+/// A blocking filesystem operation cannot be force-cancelled safely, but the
+/// sparse-copy fallback checks this flag between each MiB chunk. Teardown can
+/// therefore bound detached writeback instead of leaving a multi-GB copy alive.
+pub fn copy_scratch_template_cancelable(
+    src: &Path,
+    dst: &Path,
+    cancelled: &AtomicBool,
+) -> io::Result<()> {
+    let result = copy_sparse(src, dst, cancelled);
     if result.is_err() {
         let _ = std::fs::remove_file(dst);
     }
     result
 }
 
-fn copy_sparse(src: &Path, dst: &Path) -> io::Result<()> {
+fn copy_sparse(src: &Path, dst: &Path, cancelled: &AtomicBool) -> io::Result<()> {
+    check_cancelled(cancelled)?;
     let mut src_file = File::open(src)?;
     let len = src_file.metadata()?.len();
 
@@ -35,6 +52,7 @@ fn copy_sparse(src: &Path, dst: &Path) -> io::Result<()> {
 
     #[cfg(target_os = "linux")]
     if try_ficlone(&src_file, &dst_file)? {
+        check_cancelled(cancelled)?;
         return Ok(());
     }
 
@@ -42,14 +60,16 @@ fn copy_sparse(src: &Path, dst: &Path) -> io::Result<()> {
 
     #[cfg(unix)]
     {
-        copy_extents(&mut src_file, &mut dst_file, len)?;
+        copy_extents(&mut src_file, &mut dst_file, len, cancelled)?;
     }
     #[cfg(not(unix))]
     {
         let _ = len;
+        let _ = cancelled;
         std::io::copy(&mut src_file, &mut dst_file)?;
     }
 
+    check_cancelled(cancelled)?;
     dst_file.sync_all()?;
     Ok(())
 }
@@ -74,7 +94,12 @@ fn try_ficlone(src: &File, dst: &File) -> io::Result<bool> {
 }
 
 #[cfg(unix)]
-fn copy_extents(src: &mut File, dst: &mut File, len: u64) -> io::Result<()> {
+fn copy_extents(
+    src: &mut File,
+    dst: &mut File,
+    len: u64,
+    cancelled: &AtomicBool,
+) -> io::Result<()> {
     // Linux: SEEK_DATA=3, SEEK_HOLE=4. BSD/macOS swap those values.
     #[cfg(target_os = "linux")]
     const SEEK_DATA: i32 = 3;
@@ -89,6 +114,7 @@ fn copy_extents(src: &mut File, dst: &mut File, len: u64) -> io::Result<()> {
     let mut buf = vec![0u8; 1024 * 1024];
 
     while offset < len {
+        check_cancelled(cancelled)?;
         let data = match lseek_whence(src, offset, SEEK_DATA) {
             Ok(off) => off,
             // No more data extents — trailing hole already covered by set_len.
@@ -107,6 +133,7 @@ fn copy_extents(src: &mut File, dst: &mut File, len: u64) -> io::Result<()> {
         src.seek(SeekFrom::Start(data))?;
         dst.seek(SeekFrom::Start(data))?;
         while pos < hole {
+            check_cancelled(cancelled)?;
             let chunk = ((hole - pos) as usize).min(buf.len());
             src.read_exact(&mut buf[..chunk])?;
             dst.write_all(&buf[..chunk])?;
@@ -115,6 +142,17 @@ fn copy_extents(src: &mut File, dst: &mut File, len: u64) -> io::Result<()> {
         offset = hole;
     }
     Ok(())
+}
+
+fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
+    if cancelled.load(Ordering::Relaxed) {
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "scratch copy cancelled",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(unix)]
@@ -183,6 +221,22 @@ mod tests {
         File::open(&dst).unwrap().read_exact(&mut got).unwrap();
         assert_eq!(&got, b"grl-scratch-hdr");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cancelled_copy_stops_and_removes_destination() {
+        let dir = std::env::temp_dir().join(format!("grl-scratch-cancel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("template.ext4");
+        let dst = dir.join("scratch.ext4");
+        fs::write(&src, b"template").unwrap();
+        let cancelled = AtomicBool::new(true);
+
+        let err = copy_scratch_template_cancelable(&src, &dst, &cancelled).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+        assert!(!dst.exists());
         let _ = fs::remove_dir_all(&dir);
     }
 }

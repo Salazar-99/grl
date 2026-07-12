@@ -38,6 +38,8 @@ Set `GRL_ENV_SERVER_ADDR` (default `0.0.0.0:50051` on the manager, `localhost:50
 | `GRL_VM_CACHE_DIR` | Node-local cache root (`/var/lib/grl`) |
 | `GRL_KERNEL_FILE` | Guest kernel path (default: first `kernel/vmlinux*` under cache) |
 | `GRL_VM_BOOT` | Set `0` to skip Firecracker boot (dev/tests; default boot on Linux) |
+| `GRL_FIRECRACKER_API_TIMEOUT_SECS` | Per-operation Firecracker API deadline (default: `10`) |
+| `GRL_VM_BOOT_TIMEOUT_SECS` | Deadline for connecting to the guest executor after `InstanceStart` (default: `120`) |
 | `GRL_USE_JAILER` | Set `1` to spawn Firecracker via jailer |
 | `GRL_VM_RUN_DIR` | Per-VM runtime dir for API sockets (`/var/run/grl/vms`) |
 | `GRL_ACTIVE_DIR` | Subdir for active bundle (`active`) |
