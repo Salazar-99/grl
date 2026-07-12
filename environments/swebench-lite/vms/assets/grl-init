@@ -74,7 +74,11 @@ mount --make-rprivate /
 mkdir -p /newroot/oldroot
 for d in proc sys dev scratch; do
   mkdir -p "/newroot/$d"
-  mount --move "/$d" "/newroot/$d"
+  # The move is authoritative in the kernel. Do not update userspace mount
+  # tables while /proc and the root filesystem are being relocated: libmount
+  # can report a bookkeeping failure after a successful move, and `set -e`
+  # would then terminate PID 1 and panic the guest.
+  mount -n --move "/$d" "/newroot/$d"
 done
 cd /newroot
 pivot_root . oldroot
