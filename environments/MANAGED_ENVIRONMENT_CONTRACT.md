@@ -14,7 +14,8 @@ The generic VM layer owns:
 - mounting `/proc`, `/sys`, `/dev`, and `/dev/pts`;
 - assembling a writable OverlayFS root from a read-only base and private ext4
   scratch;
-- pivoting into that root and supervising the environment entrypoint as PID 1;
+- keeping the initramfs bootstrap as PID 1 and supervising one chrooted
+  environment process group;
 - Firecracker lifecycle, vsock transport, snapshot/restore, cancellation, and
   teardown;
 - classifying failures before the environment protocol is available as
@@ -50,14 +51,17 @@ in-flight boot, or snapshot still references them.
 
 | Device | Artifact | Access | Guest use |
 | --- | --- | --- | --- |
-| `/dev/vda` | Base SquashFS | read-only root | OverlayFS lower |
+| `/dev/vda` | Base SquashFS | read-only, non-root | OverlayFS lower |
 | `/dev/vdb` | Task SquashFS | read-only | mounted at `/run/grl/task` |
 | `/dev/vdc` | Environment SquashFS | read-only | mounted at `/run/grl/environment` |
 | `/dev/vdd` | Per-rollout ext4 scratch | read-write | OverlayFS upper/work |
 
 The kernel loads the global `bootstrap/active.cpio.gz` as its initramfs.
-`grl-bootstrap` mounts the task and environment payloads after pivoting and
-executes:
+`grl-bootstrap` remains PID 1 in that initramfs. It mounts the base and private
+scratch as an OverlayFS at `/sandbox-root`, recursively bind-mounts `/proc`,
+`/sys`, and `/dev` into it, and mounts task and environment packages below
+`/sandbox-root/run/grl`. It then forks a child into a private mount namespace,
+chroots that child to `/sandbox-root`, and executes:
 
 ```text
 /run/grl/environment/entrypoint
@@ -82,7 +86,10 @@ The entrypoint:
 5. Leaves no task mutation in the task or environment SquashFS.
 
 The bootstrap remains PID 1, forwards `SIGTERM` and `SIGINT` to the entrypoint,
-reaps orphaned descendants, and exits with the entrypoint's status.
+reaps all orphaned descendants, terminates the remaining process group after
+the entrypoint exits, and exits with the entrypoint's status. The workload is
+not given a second PID namespace; the microVM is already its PID-isolation
+boundary.
 
 Readiness means the manager can complete a new vsock connection and handshake
 with the entrypoint. A process merely existing is not readiness.
@@ -133,6 +140,17 @@ while the listener must accept a new connection after resume.
 An incompatible or corrupt snapshot is discarded. Cold boot remains the
 correctness fallback.
 
+## Host jail contract
+
+Direct and Firecracker-jailer launches use the same guest contract. In jailed
+mode, the manager creates one sanitized per-VM jail root, hardlinks (or copies
+across filesystems) every immutable kernel/initrd/drive artifact into it, and
+creates scratch, API socket, vsock UDS, and snapshot staging files there.
+Firecracker API paths are chroot-relative; manager transport paths are the
+corresponding host paths. Teardown reaps Firecracker before removing the jail.
+`manager.useJailer` must be promoted only after the KVM conformance workflow
+passes in both direct and jailed modes.
+
 ## Minimal environment
 
 A minimal package contains:
@@ -155,6 +173,8 @@ It must not depend on files privately baked into the bootstrap.
 - Tool state persists within one rollout but is absent in a fresh rollout.
 - Two concurrent restored clones cannot observe each other's workspace writes.
 - The listener reconnects after snapshot restore.
+- `/dev/pts` permits `openpty`, and task/environment mounts are visible inside
+  the chroot.
 - A zero reward is distinguishable from scorer infrastructure failure.
 - `SIGTERM` stops the entrypoint and descendants without zombies.
 - Changing any relevant artifact invalidates the golden snapshot.

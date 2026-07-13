@@ -96,6 +96,7 @@ dependencies = [
 name = "grl-minimal-env"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "prost",
  "prost-build",
  "protoc-bin-vendored",

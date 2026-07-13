@@ -214,6 +214,8 @@ class ManagerConfig(BaseModel):
     snapshot_cache_max_entries: str = Field(
         default="64", alias="snapshotCacheMaxEntries"
     )
+    use_jailer: bool = Field(default=False, alias="useJailer")
+    jailer_root: str = Field(default="/srv/jailer", alias="jailerRoot")
 
     model_config = {"populate_by_name": True}
 
@@ -390,6 +392,8 @@ class GRLConfig(TrainingGRLConfig):
                 "image": manager.image,
                 "snapshotsEnabled": manager.snapshots_enabled,
                 "snapshotCacheMaxEntries": manager.snapshot_cache_max_entries,
+                "useJailer": manager.use_jailer,
+                "jailerRoot": manager.jailer_root,
             },
             "rayCluster": {
                 "images": {
@@ -457,6 +461,8 @@ class GRLConfig(TrainingGRLConfig):
             "manager_image": resolved.manager,
             "manager_snapshots_enabled": self.infra.manager.snapshots_enabled,
             "manager_snapshot_cache_max_entries": self.infra.manager.snapshot_cache_max_entries,
+            "manager_use_jailer": self.infra.manager.use_jailer,
+            "manager_jailer_root": self.infra.manager.jailer_root,
             "release_name": self.infra.release_name,
             "release_namespace": self.infra.release_namespace,
             "vm_images_bucket": self.infra.vm_image_cache.bucket,

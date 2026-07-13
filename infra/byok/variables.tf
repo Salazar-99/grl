@@ -111,6 +111,18 @@ variable "manager_snapshot_cache_max_entries" {
   description = "Maximum node-local golden snapshot entries."
 }
 
+variable "manager_use_jailer" {
+  type        = bool
+  default     = false
+  description = "Run Firecracker through its jailer."
+}
+
+variable "manager_jailer_root" {
+  type        = string
+  default     = "/srv/jailer"
+  description = "Base directory for per-VM Firecracker jail roots."
+}
+
 variable "vm_images_bucket" {
   type        = string
   default     = ""

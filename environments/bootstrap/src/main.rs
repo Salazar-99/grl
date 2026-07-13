@@ -5,7 +5,6 @@ mod linux {
     use std::ffi::CString;
     use std::fs;
     use std::io;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::process;
     use std::sync::atomic::{AtomicI32, Ordering};
@@ -51,8 +50,8 @@ mod linux {
         }
     }
 
-    fn move_mount(source: &str, target: &str) -> io::Result<()> {
-        mount(source, target, "", libc::MS_MOVE, None)
+    fn bind_mount(source: &str, target: &str) -> io::Result<()> {
+        mount(source, target, "", libc::MS_BIND | libc::MS_REC, None)
     }
 
     fn wait_for(path: &str) -> io::Result<()> {
@@ -68,11 +67,9 @@ mod linux {
         ))
     }
 
-    fn pivot_root(new_root: &str, put_old: &str) -> io::Result<()> {
-        let new_root = cstring(new_root)?;
-        let put_old = cstring(put_old)?;
-        let result =
-            unsafe { libc::syscall(libc::SYS_pivot_root, new_root.as_ptr(), put_old.as_ptr()) };
+    fn chroot(path: &str) -> io::Result<()> {
+        let path = cstring(path)?;
+        let result = unsafe { libc::chroot(path.as_ptr()) };
         if result == 0 {
             Ok(())
         } else {
@@ -95,99 +92,103 @@ mod linux {
         Err(io::Error::last_os_error())
     }
 
-    fn prepare_root() -> io::Result<()> {
+    fn stage<T>(name: &str, result: io::Result<T>) -> io::Result<T> {
+        result.map_err(|error| io::Error::new(error.kind(), format!("{name}: {error}")))
+    }
+
+    fn prepare_sandbox() -> io::Result<()> {
         for path in [
-            "/proc", "/sys", "/dev", "/dev/pts", "/lower", "/scratch", "/newroot",
-        ] {
-            mkdir(path)?;
-        }
-        mount("proc", "/proc", "proc", 0, None)?;
-        mount("sysfs", "/sys", "sysfs", 0, None)?;
-        mount("devtmpfs", "/dev", "devtmpfs", 0, None)?;
-        mkdir("/dev/pts")?;
-        mount(
-            "devpts",
+            "/proc",
+            "/sys",
+            "/dev",
             "/dev/pts",
-            "devpts",
-            0,
-            Some("newinstance,ptmxmode=0666,mode=0620,gid=5"),
+            "/lower",
+            "/scratch",
+            "/sandbox-root",
+        ] {
+            stage(&format!("create {path}"), mkdir(path))?;
+        }
+        stage("mount proc", mount("proc", "/proc", "proc", 0, None))?;
+        stage("mount sysfs", mount("sysfs", "/sys", "sysfs", 0, None))?;
+        stage(
+            "mount devtmpfs",
+            mount("devtmpfs", "/dev", "devtmpfs", 0, None),
+        )?;
+        stage("create /dev/pts", mkdir("/dev/pts"))?;
+        stage(
+            "mount devpts",
+            mount(
+                "devpts",
+                "/dev/pts",
+                "devpts",
+                0,
+                Some("newinstance,ptmxmode=0666,mode=0620,gid=5"),
+            ),
         )?;
         let _ = fs::remove_file("/dev/ptmx");
-        std::os::unix::fs::symlink("pts/ptmx", "/dev/ptmx")?;
+        stage(
+            "link /dev/ptmx",
+            std::os::unix::fs::symlink("pts/ptmx", "/dev/ptmx"),
+        )?;
 
         for device in ["/dev/vda", "/dev/vdb", "/dev/vdc", "/dev/vdd"] {
-            wait_for(device)?;
+            stage(&format!("wait for {device}"), wait_for(device))?;
         }
 
-        mount("/dev/vda", "/lower", "squashfs", libc::MS_RDONLY, None)?;
+        stage(
+            "mount base squashfs",
+            mount("/dev/vda", "/lower", "squashfs", libc::MS_RDONLY, None),
+        )?;
+        stage(
+            "mount scratch ext4",
+            mount("/dev/vdd", "/scratch", "ext4", 0, None),
+        )?;
+        stage("create overlay upper", mkdir("/scratch/root/upper"))?;
+        stage("create overlay work", mkdir("/scratch/root/work"))?;
+        stage(
+            "mount workload overlay",
+            mount(
+                "overlay",
+                "/sandbox-root",
+                "overlay",
+                0,
+                Some("lowerdir=/lower,upperdir=/scratch/root/upper,workdir=/scratch/root/work"),
+            ),
+        )?;
 
-        // With an environment package, vdc is its squashfs and vdd is scratch.
-        // The generic bootstrap intentionally requires that final drive layout.
-        if !Path::new("/dev/vdd").exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "generic bootstrap requires environment drive vdc and scratch drive vdd",
-            ));
+        for name in ["proc", "sys", "dev"] {
+            let target = format!("/sandbox-root/{name}");
+            stage(&format!("create {target}"), mkdir(&target))?;
+            stage(
+                &format!("bind /{name} into sandbox"),
+                bind_mount(&format!("/{name}"), &target),
+            )?;
         }
-        mount("/dev/vdd", "/scratch", "ext4", 0, None)?;
-        mkdir("/scratch/root/upper")?;
-        mkdir("/scratch/root/work")?;
-        mount(
-            "overlay",
-            "/newroot",
-            "overlay",
-            0,
-            Some("lowerdir=/lower,upperdir=/scratch/root/upper,workdir=/scratch/root/work"),
-        )?;
 
-        mkdir("/newroot/usr/local/bin")?;
-        fs::copy("/proc/self/exe", "/newroot/usr/local/bin/grl-bootstrap")?;
-        fs::set_permissions(
-            "/newroot/usr/local/bin/grl-bootstrap",
-            fs::Permissions::from_mode(0o755),
+        stage("create task mount", mkdir("/sandbox-root/run/grl/task"))?;
+        stage(
+            "create environment mount",
+            mkdir("/sandbox-root/run/grl/environment"),
         )?;
-
-        let root = cstring("/")?;
-        let result = unsafe {
-            libc::mount(
-                std::ptr::null(),
-                root.as_ptr(),
-                std::ptr::null(),
-                libc::MS_PRIVATE | libc::MS_REC,
-                std::ptr::null(),
-            )
-        };
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        mkdir("/newroot/oldroot")?;
-        for name in ["proc", "sys", "dev", "scratch"] {
-            let target = format!("/newroot/{name}");
-            mkdir(&target)?;
-            move_mount(&format!("/{name}"), &target)?;
-        }
-        std::env::set_current_dir("/newroot")?;
-        pivot_root(".", "oldroot")?;
-
-        mkdir("/run/grl/task")?;
-        mkdir("/run/grl/environment")?;
-        mount(
-            "/dev/vdb",
-            "/run/grl/task",
-            "squashfs",
-            libc::MS_RDONLY,
-            None,
+        stage(
+            "mount task squashfs",
+            mount(
+                "/dev/vdb",
+                "/sandbox-root/run/grl/task",
+                "squashfs",
+                libc::MS_RDONLY,
+                None,
+            ),
         )?;
-        mount(
-            "/dev/vdc",
-            "/run/grl/environment",
-            "squashfs",
-            libc::MS_RDONLY,
-            None,
-        )?;
-        exec(
-            "/usr/local/bin/grl-bootstrap",
-            &["grl-bootstrap", "--supervise"],
+        stage(
+            "mount environment squashfs",
+            mount(
+                "/dev/vdc",
+                "/sandbox-root/run/grl/environment",
+                "squashfs",
+                libc::MS_RDONLY,
+                None,
+            ),
         )
     }
 
@@ -197,6 +198,59 @@ mod linux {
             unsafe {
                 libc::kill(-child, signal);
             }
+        }
+    }
+
+    fn status_code(status: libc::c_int) -> libc::c_int {
+        if libc::WIFEXITED(status) {
+            libc::WEXITSTATUS(status)
+        } else {
+            128 + libc::WTERMSIG(status)
+        }
+    }
+
+    fn reap_remaining(process_group: libc::pid_t) {
+        unsafe {
+            libc::kill(-process_group, libc::SIGTERM);
+        }
+        for _ in 0..50 {
+            let mut reaped_any = false;
+            loop {
+                let mut status = 0;
+                let reaped = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+                if reaped > 0 {
+                    reaped_any = true;
+                    continue;
+                }
+                if reaped == 0 {
+                    break;
+                }
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    return;
+                }
+                if error.kind() != io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+            if !reaped_any {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        unsafe {
+            libc::kill(-process_group, libc::SIGKILL);
+        }
+        loop {
+            let mut status = 0;
+            let reaped = unsafe { libc::waitpid(-1, &mut status, 0) };
+            if reaped > 0 {
+                continue;
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            break;
         }
     }
 
@@ -230,6 +284,25 @@ mod linux {
                 libc::signal(libc::SIGINT, libc::SIG_DFL);
                 libc::sigprocmask(libc::SIG_SETMASK, &previous, std::ptr::null_mut());
             }
+            if unsafe { libc::unshare(libc::CLONE_NEWNS) } != 0 {
+                eprintln!(
+                    "grl-bootstrap: create workload mount namespace: {}",
+                    io::Error::last_os_error()
+                );
+                unsafe { libc::_exit(127) };
+            }
+            if let Err(error) = mount("", "/", "", libc::MS_PRIVATE | libc::MS_REC, None) {
+                eprintln!("grl-bootstrap: make workload mounts private: {error}");
+                unsafe { libc::_exit(127) };
+            }
+            if let Err(error) = chroot("/sandbox-root") {
+                eprintln!("grl-bootstrap: chroot workload: {error}");
+                unsafe { libc::_exit(127) };
+            }
+            if let Err(error) = std::env::set_current_dir("/") {
+                eprintln!("grl-bootstrap: enter workload root: {error}");
+                unsafe { libc::_exit(127) };
+            }
             let _ = exec(
                 "/run/grl/environment/entrypoint",
                 &["/run/grl/environment/entrypoint"],
@@ -258,26 +331,18 @@ mod linux {
                 break;
             }
             if reaped == child {
-                main_status = if libc::WIFEXITED(status) {
-                    libc::WEXITSTATUS(status)
-                } else {
-                    128 + libc::WTERMSIG(status)
-                };
+                main_status = status_code(status);
                 break;
             }
         }
-        unsafe {
-            libc::kill(-child, libc::SIGTERM);
-        }
+        reap_remaining(child);
+        CHILD.store(0, Ordering::Relaxed);
         process::exit(main_status)
     }
 
     pub fn run() -> io::Result<()> {
-        if std::env::args().any(|arg| arg == "--supervise") {
-            supervise()
-        } else {
-            prepare_root()
-        }
+        prepare_sandbox()?;
+        supervise()
     }
 }
 

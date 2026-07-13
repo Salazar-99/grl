@@ -1,0 +1,42 @@
+name: Firecracker KVM Conformance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [direct, jailed]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Enable KVM
+        run: |
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+      - name: Install Firecracker and test kernel
+        run: |
+          version=v1.16.0
+          curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${version}/firecracker-${version}-x86_64.tgz" | tar -xz
+          sudo install -m 755 "release-${version}-x86_64/firecracker-${version}-x86_64" /usr/local/bin/firecracker
+          sudo install -m 755 "release-${version}-x86_64/jailer-${version}-x86_64" /usr/local/bin/jailer
+          curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.11/x86_64/vmlinux-5.10.225" -o /tmp/vmlinux
+      - name: Build deterministic guest fixture
+        env:
+          GRL_CONFORMANCE_KERNEL: /tmp/vmlinux
+          GRL_CONFORMANCE_ROOT: /tmp/grl-conformance
+        run: environments/conformance/build-fixture.sh
+      - name: Run production boot-path conformance
+        env:
+          GRL_CONFORMANCE_ROOT: /tmp/grl-conformance
+          GRL_USE_JAILER: ${{ matrix.mode == 'jailed' }}
+          GRL_JAILER_DIR: /tmp/grl-jailer
+        run: sudo --preserve-env=GRL_CONFORMANCE_ROOT,GRL_USE_JAILER,GRL_JAILER_DIR,PATH cargo test --manifest-path environments/manager/Cargo.toml --test kvm_conformance -- --ignored --nocapture

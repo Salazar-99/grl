@@ -10,10 +10,9 @@ pub const EXECUTOR_VSOCK_PORT: u32 = 5005;
 
 pub fn boot_args() -> String {
     std::env::var("GRL_VM_BOOT_ARGS").unwrap_or_else(|_| {
-        // `ro`: the root device is a read-only squashfs (Firecracker appends
-        // `root=/dev/vda` for the root drive). `init=/init` is the required
-        // external grl-bootstrap, which assembles and pivots into the overlay.
-        "console=ttyS0 reboot=k panic=1 pci=off ro init=/init".to_string()
+        // The external initramfs is the guest control plane. Its PID 1 mounts
+        // the base drive as a workload lower; no block device is the VM root.
+        "console=ttyS0 reboot=k panic=1 pci=off rdinit=/init".to_string()
     })
 }
 
@@ -45,7 +44,7 @@ pub fn root_drive(paths: &VmPaths) -> Value {
     json!({
         "drive_id": "rootfs",
         "path_on_host": paths.base_image.display().to_string(),
-        "is_root_device": true,
+        "is_root_device": false,
         "is_read_only": true,
     })
 }
@@ -106,10 +105,10 @@ mod tests {
     }
 
     #[test]
-    fn root_drive_is_readonly_root_squashfs() {
+    fn base_drive_is_readonly_nonroot_squashfs() {
         let d = root_drive(&sample_paths());
         assert_eq!(d["drive_id"], "rootfs");
-        assert_eq!(d["is_root_device"], true);
+        assert_eq!(d["is_root_device"], false);
         assert_eq!(d["is_read_only"], true);
         assert_eq!(d["path_on_host"], "/cache/images/bases/b.squashfs");
     }
@@ -151,11 +150,14 @@ mod tests {
     }
 
     #[test]
-    fn default_boot_args_mount_root_readonly() {
+    fn default_boot_args_start_initramfs_pid1() {
         // GRL_VM_BOOT_ARGS is unset in the default test env.
         let args = boot_args();
-        assert!(args.contains(" ro "), "boot args must mark root ro: {args}");
-        assert!(args.contains("init=/init"));
+        assert!(
+            !args.contains("root="),
+            "initramfs boot must not name a root drive: {args}"
+        );
+        assert!(args.contains("rdinit=/init"));
         assert_eq!(
             boot_source(&sample_paths())["initrd_path"],
             "/cache/bootstrap/active.cpio.gz"

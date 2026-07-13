@@ -21,7 +21,9 @@ environment package copies the task into its writable workspace.
 
 **Bootstrap** (`bootstrap-images/`) — a required, content-addressed initramfs
 containing the static `grl-bootstrap` PID 1. It assembles the writable root,
-mounts task and environment packages, and starts the environment entrypoint.
+mounts task and environment packages, and supervises the environment entrypoint.
+The bootstrap stays in the initramfs as PID 1; the entrypoint runs in a private
+mount namespace chrooted to the assembled OverlayFS root.
 
 **Environment package** (`environment-images/`) — a required squashfs
 containing `/entrypoint` (`grl-env`). It owns SWE-bench workspace preparation,
@@ -65,6 +67,14 @@ uv run vms resolve <task_id> --tasks tasks.jsonl  # from a specific tasks.jsonl
 ```
 
 Pass `--force` to rebuild or re-upload images that already exist. Use `--only <name>` with `build` or `build-tasks` to target a single image.
+
+The Linux KVM publication gate builds a deterministic minimal fixture and runs
+the production manager boot path in both direct and jailed modes. It verifies
+cold boot, task/environment visibility, PTY support, Execute/Evaluate framing,
+writable-clone isolation, snapshot creation, restore, and vsock reconnection.
+For a local run, set `GRL_CONFORMANCE_KERNEL` to an uncompressed x86_64 kernel,
+run `../conformance/build-fixture.sh`, then run the ignored
+`manager/tests/kvm_conformance.rs` test.
 
 Uploads land at `s3://$VMS_S3_BUCKET/bases/<env>.squashfs` and `s3://$VMS_S3_BUCKET/tasks/<instance_id>.squashfs`. Existing objects with matching size are skipped unless `--force` is set, so failed or interrupted uploads can be retried. Uploads run in parallel with `--jobs`, or `VMS_UPLOAD_JOBS`; the default is 4. Large files use S3 multipart upload, so objects appear in the bucket only after all parts complete.
 

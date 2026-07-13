@@ -67,6 +67,10 @@ spec:
               value: {{ ternary "true" "false" .Values.manager.snapshotsEnabled | quote }}
             - name: GRL_SNAPSHOT_CACHE_MAX_ENTRIES
               value: {{ .Values.manager.snapshotCacheMaxEntries | quote }}
+            - name: GRL_USE_JAILER
+              value: {{ ternary "true" "false" .Values.manager.useJailer | quote }}
+            - name: GRL_JAILER_DIR
+              value: {{ .Values.manager.jailerRoot | quote }}
           ports:
             - name: grpc
               containerPort: {{ .Values.manager.port }}

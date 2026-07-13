@@ -25,7 +25,11 @@ permissions:
   packages: write
 
 jobs:
+  kvm-conformance:
+    uses: ./.github/workflows/kvm-conformance.yml
+
   publish:
+    needs: kvm-conformance
     name: Build and publish ${{ matrix.component }} image
     runs-on: ubuntu-latest
     strategy:

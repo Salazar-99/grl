@@ -15,17 +15,86 @@ pub use paths::{
     scratch_template_path,
 };
 
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
+use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 use tokio::sync::watch;
 
 use crate::catalog::TaskSpec;
 
 static NEXT_GUEST_CID: AtomicU32 = AtomicU32::new(3);
+const SERIAL_TAIL_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Default)]
+struct SerialTail {
+    bytes: Mutex<Vec<u8>>,
+}
+
+impl SerialTail {
+    fn append(&self, chunk: &[u8]) {
+        let mut bytes = self.bytes.lock().expect("serial tail lock poisoned");
+        if chunk.len() >= SERIAL_TAIL_BYTES {
+            bytes.clear();
+            bytes.extend_from_slice(&chunk[chunk.len() - SERIAL_TAIL_BYTES..]);
+            return;
+        }
+        let overflow = bytes
+            .len()
+            .saturating_add(chunk.len())
+            .saturating_sub(SERIAL_TAIL_BYTES);
+        if overflow > 0 {
+            bytes.drain(..overflow);
+        }
+        bytes.extend_from_slice(chunk);
+    }
+
+    fn sanitized(&self) -> String {
+        String::from_utf8_lossy(&self.bytes.lock().expect("serial tail lock poisoned"))
+            .chars()
+            .map(|character| {
+                if character == '\n' || character == '\r' || character == '\t' {
+                    character
+                } else if character.is_control() {
+                    '�'
+                } else {
+                    character
+                }
+            })
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+}
+
+fn drain_serial(child: &mut Child, tail: Arc<SerialTail>) {
+    let Some(mut stdout) = child.stdout.take() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match stdout.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(count) => tail.append(&chunk[..count]),
+            }
+        }
+    });
+}
+
+fn include_serial_tail(message: String, tail: &SerialTail) -> String {
+    let serial = tail.sanitized();
+    if serial.is_empty() {
+        message
+    } else {
+        format!("{message}; guest serial tail:\n{serial}")
+    }
+}
 
 /// Whether this manager process should boot real VMs (Linux + `GRL_VM_BOOT` unset/1).
 pub fn boot_enabled() -> bool {
@@ -45,6 +114,7 @@ pub struct VmHandle {
     pub executor: Arc<ExecutorConn>,
     child: Option<Child>,
     _snapshot_lease: Option<snapshot::Lease>,
+    _serial_tail: Arc<SerialTail>,
 }
 
 impl VmHandle {
@@ -64,6 +134,7 @@ impl VmHandle {
             executor,
             child: Some(child),
             _snapshot_lease: None,
+            _serial_tail: Arc::new(SerialTail::default()),
         }
     }
 }
@@ -99,6 +170,7 @@ struct BootGuard {
     child: Option<Child>,
     run_dir: Option<PathBuf>,
     scratch_cancel: Arc<AtomicBool>,
+    serial_tail: Arc<SerialTail>,
 }
 
 impl BootGuard {
@@ -107,6 +179,7 @@ impl BootGuard {
             child: None,
             run_dir: Some(run_dir),
             scratch_cancel: Arc::new(AtomicBool::new(false)),
+            serial_tail: Arc::new(SerialTail::default()),
         }
     }
 
@@ -114,7 +187,8 @@ impl BootGuard {
         Arc::clone(&self.scratch_cancel)
     }
 
-    fn set_child(&mut self, child: Child) {
+    fn set_child(&mut self, mut child: Child) {
+        drain_serial(&mut child, Arc::clone(&self.serial_tail));
         self.child = Some(child);
     }
 
@@ -132,7 +206,7 @@ impl BootGuard {
             let _ = child.wait().await;
         }
         let _ = std::fs::remove_file(api_sock);
-        self.child = Some(jailer::spawn(env_id, api_sock).await?);
+        self.set_child(jailer::spawn(env_id, api_sock).await?);
         Ok(())
     }
 
@@ -159,6 +233,7 @@ impl BootGuard {
             executor,
             child: Some(self.child.take().expect("boot child must be set")),
             _snapshot_lease: snapshot_lease,
+            _serial_tail: Arc::clone(&self.serial_tail),
         }
     }
 }
@@ -186,19 +261,28 @@ pub async fn boot(
     mut cancel: watch::Receiver<bool>,
 ) -> Result<VmHandle, String> {
     let cache = cache_root();
-    let paths = spec.resolve_vm_paths(&cache)?;
+    let cache_paths = spec.resolve_vm_paths(&cache)?;
 
     let guest_cid = alloc_guest_cid();
-    let run_dir = run_root().join(env_id);
-    std::fs::create_dir_all(&run_dir).map_err(|e| format!("mkdir {}: {e}", run_dir.display()))?;
-    let mut boot_guard = BootGuard::new(run_dir.clone());
-    let api_sock = run_dir.join("firecracker.sock");
-    let vsock_uds = run_dir.join("vsock.sock");
+    let host_run_dir = run_root().join(env_id);
+    if !jailer::use_jailer() {
+        std::fs::create_dir_all(&host_run_dir)
+            .map_err(|e| format!("mkdir {}: {e}", host_run_dir.display()))?;
+    }
+    let staged = jailer::stage(env_id, &host_run_dir, &cache_paths)?;
+    let paths = staged.paths;
+    let scratch = staged.scratch_host;
+    let scratch_api = staged.scratch_api;
+    let vsock_api = staged.vsock_api;
+    let mut boot_guard = BootGuard::new(staged.cleanup_dir);
+    let api_sock = staged.api_sock;
+    let vsock_uds = staged.vsock_uds;
     let _ = std::fs::remove_file(&api_sock);
     let _ = std::fs::remove_file(&vsock_uds);
 
+    let jailed = jailer::use_jailer();
     let mut snapshot_acquire = if snapshot::enabled() {
-        match snapshot::cache_key(&paths).await {
+        match snapshot::cache_key(&cache_paths).await {
             Ok(key) => match snapshot::acquire(&cache, key).await {
                 Ok(acquire) => Some(acquire),
                 Err(error) => {
@@ -219,17 +303,25 @@ pub async fn boot(
     // Must preserve holes — std::fs::copy densifies across mounts (XFS cache →
     // overlay run dir) and a full multi-GB write per env stalls the node.
     let template = scratch_template_path(&cache);
-    let scratch = scratch_path(&run_dir);
     let (scratch_source, scratch_destination, boot_scratch) = match &snapshot_acquire {
-        Some(snapshot::Acquire::Hit(entry, _)) => {
-            (entry.scratch(), scratch.clone(), scratch.clone())
-        }
-        Some(snapshot::Acquire::Build(builder)) => (
+        Some(snapshot::Acquire::Hit(entry, _)) => (
+            entry.scratch(),
+            scratch.clone(),
+            if jailed {
+                scratch_api.clone()
+            } else {
+                scratch.clone()
+            },
+        ),
+        Some(snapshot::Acquire::Build(builder)) if !jailed => (
             template.clone(),
             builder.entry.scratch(),
             builder.entry.scratch(),
         ),
-        None => (template, scratch.clone(), scratch.clone()),
+        Some(snapshot::Acquire::Build(_)) => {
+            (template.clone(), scratch.clone(), scratch_api.clone())
+        }
+        None => (template, scratch.clone(), scratch_api),
     };
     {
         let src = scratch_source.clone();
@@ -273,7 +365,7 @@ pub async fn boot(
             let Some(snapshot::Acquire::Hit(entry, lease)) = snapshot_acquire.take() else {
                 unreachable!();
             };
-            let restore = match snapshot::load(&api_sock, &entry, &scratch, &vsock_uds).await {
+            let restore = match snapshot::load(&api_sock, &entry, &boot_scratch, &vsock_api).await {
                 Ok(()) => connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await,
                 Err(error) => Err(error),
             };
@@ -324,24 +416,39 @@ pub async fn boot(
             &config::scratch_drive(&boot_scratch),
         )
         .await?;
-        firecracker::put(&api_sock, "vsock", &config::vsock(guest_cid, &vsock_uds)).await?;
+        firecracker::put(&api_sock, "vsock", &config::vsock(guest_cid, &vsock_api)).await?;
         firecracker::put(&api_sock, "actions", &config::instance_start()).await?;
 
-        let executor = connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await?;
-
         if let Some(snapshot::Acquire::Build(builder)) = snapshot_acquire.take() {
+            let (executor, create_result) = after_readiness(
+                connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout),
+                || snapshot::create(&api_sock, &builder.entry),
+            )
+            .await?;
             drop(executor);
-            let create_result = snapshot::create(&api_sock, &builder.entry).await;
+            if jailed {
+                let source = scratch.clone();
+                let destination = builder.entry.scratch();
+                let cancel = Arc::clone(&snapshot_copy_cancel);
+                tokio::task::spawn_blocking(move || {
+                    scratch::copy_scratch_template_cancelable(&source, &destination, &cancel)
+                })
+                .await
+                .map_err(|e| format!("persist jailed snapshot scratch join: {e}"))?
+                .map_err(|e| format!("persist jailed snapshot scratch: {e}"))?;
+            }
             let source = builder.entry.scratch();
             let destination = scratch.clone();
-            let cancel = Arc::clone(&snapshot_copy_cancel);
-            tokio::task::spawn_blocking(move || {
-                scratch::copy_scratch_template_cancelable(&source, &destination, &cancel)
-            })
-            .await
-            .map_err(|e| format!("snapshot scratch clone join: {e}"))?
-            .map_err(|e| format!("snapshot scratch clone: {e}"))?;
-            snapshot::activate_builder(&api_sock, &scratch).await?;
+            if !jailed {
+                let cancel = Arc::clone(&snapshot_copy_cancel);
+                tokio::task::spawn_blocking(move || {
+                    scratch::copy_scratch_template_cancelable(&source, &destination, &cancel)
+                })
+                .await
+                .map_err(|e| format!("snapshot scratch clone join: {e}"))?
+                .map_err(|e| format!("snapshot scratch clone: {e}"))?;
+            }
+            snapshot::activate_builder(&api_sock, &boot_scratch).await?;
             let executor =
                 connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await?;
             if let Err(error) = create_result {
@@ -357,6 +464,7 @@ pub async fn boot(
             return Ok((executor, Some(snapshot::lease(&entry))));
         }
 
+        let executor = connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await?;
         Ok((executor, None))
     };
 
@@ -372,8 +480,10 @@ pub async fn boot(
             Ok(boot_guard.into_handle(guest_cid, Arc::new(executor), snapshot_lease))
         }
         Err(err) => {
+            let serial_tail = Arc::clone(&boot_guard.serial_tail);
             boot_guard.cleanup().await;
-            Err(err)
+            tokio::task::yield_now().await;
+            Err(include_serial_tail(err, &serial_tail))
         }
     }
 }
@@ -385,6 +495,20 @@ fn boot_timeout() -> Duration {
             .and_then(|value| value.parse().ok())
             .unwrap_or(120),
     )
+}
+
+async fn after_readiness<R, T, Ready, Create, Created>(
+    readiness: Ready,
+    create: Create,
+) -> Result<(R, T), String>
+where
+    Ready: Future<Output = Result<R, String>>,
+    Create: FnOnce() -> Created,
+    Created: Future<Output = T>,
+{
+    let ready = readiness.await?;
+    let created = create().await;
+    Ok((ready, created))
 }
 
 async fn connect_executor_or_exit(
@@ -477,5 +601,41 @@ mod tests {
         })
         .await
         .expect("background reaper did not finish");
+    }
+
+    #[test]
+    fn serial_tail_is_bounded_and_sanitized() {
+        let tail = SerialTail::default();
+        tail.append(&vec![b'a'; SERIAL_TAIL_BYTES]);
+        tail.append(b"bootstrap failed\x00\n");
+
+        let serial = tail.sanitized();
+        assert_eq!(
+            tail.bytes.lock().expect("serial tail lock poisoned").len(),
+            SERIAL_TAIL_BYTES
+        );
+        assert!(serial.ends_with("bootstrap failed�"));
+        assert!(!serial.contains('\0'));
+    }
+
+    #[tokio::test]
+    async fn snapshot_creation_runs_only_after_executor_readiness() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let ready_order = Arc::clone(&order);
+        let create_order = Arc::clone(&order);
+
+        let result = after_readiness(
+            async move {
+                ready_order.lock().unwrap().push("ready");
+                Ok::<_, String>(())
+            },
+            || async move {
+                create_order.lock().unwrap().push("snapshot");
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*order.lock().unwrap(), ["ready", "snapshot"]);
     }
 }

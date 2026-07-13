@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 from vms.env_binary import resolve_grl_env_binary
@@ -81,34 +80,30 @@ def build_minimal_environment_image(
 ) -> Path:
     environments = Path(__file__).resolve().parents[4]
     crate = environments / "minimal-env"
-    target = "x86_64-unknown-linux-gnu"
+    target = "x86_64-unknown-linux-musl"
     binary = crate / "target" / target / "release" / "grl-minimal-env"
     if force or not binary.is_file():
-        if sys.platform.startswith("linux"):
-            subprocess.run(
-                ["cargo", "build", "--release", "--target", target],
-                cwd=crate,
-                check=True,
-            )
-        else:
-            subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "--platform",
-                    platform,
-                    "-v",
-                    f"{environments.resolve()}:/workspace/environments",
-                    "-w",
-                    "/workspace/environments/minimal-env",
-                    "rust:1.93-bookworm",
-                    "bash",
-                    "-c",
-                    f"rustup target add {target} && cargo build --release --target {target}",
-                ],
-                check=True,
-            )
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--platform",
+                platform,
+                "-v",
+                f"{environments.resolve()}:/workspace/environments",
+                "-w",
+                "/workspace/environments/minimal-env",
+                "rust:1.93-bookworm",
+                "bash",
+                "-c",
+                (
+                    "apt-get update -qq && apt-get install -y -qq musl-tools && "
+                    f"rustup target add {target} && cargo build --release --target {target}"
+                ),
+            ],
+            check=True,
+        )
     return _package_binary(
         binary,
         "minimal",

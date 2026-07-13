@@ -381,22 +381,57 @@ fn evict(current: &Entry) {
     }
 }
 
+fn copy_or_link(source: &Path, destination: &Path) -> Result<(), String> {
+    let _ = fs::remove_file(destination);
+    if fs::hard_link(source, destination).is_err() {
+        fs::copy(source, destination).map_err(|error| {
+            format!(
+                "copy snapshot artifact {} -> {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn runtime_file(api_sock: &Path, name: &str, direct: &Path) -> (PathBuf, PathBuf) {
+    if jailer::use_jailer() {
+        (
+            api_sock
+                .parent()
+                .expect("jailed API socket has a parent")
+                .join(name),
+            PathBuf::from("/").join(name),
+        )
+    } else {
+        (direct.to_path_buf(), direct.to_path_buf())
+    }
+}
+
 pub async fn create(api_sock: &Path, entry: &Entry) -> Result<(), String> {
+    let (state_host, state_api) = runtime_file(api_sock, "snapshot.state", &entry.state());
+    let (memory_host, memory_api) = runtime_file(api_sock, "snapshot.memory", &entry.memory());
     firecracker::put(api_sock, "actions", &json!({"action_type": "Pause"})).await?;
     firecracker::put_timeout(
         api_sock,
         "snapshot/create",
-        &create_config(entry),
+        &create_config(&state_api, &memory_api),
         Duration::from_secs(120),
     )
-    .await
+    .await?;
+    if jailer::use_jailer() {
+        copy_or_link(&state_host, &entry.state())?;
+        copy_or_link(&memory_host, &entry.memory())?;
+    }
+    Ok(())
 }
 
-fn create_config(entry: &Entry) -> serde_json::Value {
+fn create_config(state: &Path, memory: &Path) -> serde_json::Value {
     json!({
         "snapshot_type": "Full",
-        "snapshot_path": entry.state().display().to_string(),
-        "mem_file_path": entry.memory().display().to_string(),
+        "snapshot_path": state.display().to_string(),
+        "mem_file_path": memory.display().to_string(),
     })
 }
 
@@ -419,7 +454,18 @@ pub async fn load(
     scratch: &Path,
     vsock_uds: &Path,
 ) -> Result<(), String> {
-    firecracker::put(api_sock, "snapshot/load", &load_config(entry, vsock_uds)).await?;
+    let (state_host, state_api) = runtime_file(api_sock, "snapshot.state", &entry.state());
+    let (memory_host, memory_api) = runtime_file(api_sock, "snapshot.memory", &entry.memory());
+    if jailer::use_jailer() {
+        copy_or_link(&entry.state(), &state_host)?;
+        copy_or_link(&entry.memory(), &memory_host)?;
+    }
+    firecracker::put(
+        api_sock,
+        "snapshot/load",
+        &load_config(&state_api, &memory_api, vsock_uds),
+    )
+    .await?;
     firecracker::patch(
         api_sock,
         "drives/scratch",
@@ -432,12 +478,12 @@ pub async fn load(
     firecracker::put(api_sock, "actions", &json!({"action_type": "Resume"})).await
 }
 
-fn load_config(entry: &Entry, vsock_uds: &Path) -> serde_json::Value {
+fn load_config(state: &Path, memory: &Path, vsock_uds: &Path) -> serde_json::Value {
     json!({
-        "snapshot_path": entry.state().display().to_string(),
+        "snapshot_path": state.display().to_string(),
         "mem_backend": {
             "backend_type": "File",
-            "backend_path": entry.memory().display().to_string(),
+            "backend_path": memory.display().to_string(),
         },
         "resume_vm": false,
         "vsock_override": {
@@ -478,7 +524,11 @@ mod tests {
             key: "key".into(),
             dir: PathBuf::from("/cache/snapshots/key"),
         };
-        let config = load_config(&entry, Path::new("/run/env/vsock.sock"));
+        let config = load_config(
+            &entry.state(),
+            &entry.memory(),
+            Path::new("/run/env/vsock.sock"),
+        );
         assert_eq!(config["mem_backend"]["backend_type"], "File");
         assert_eq!(config["resume_vm"], false);
         assert_eq!(config["vsock_override"]["uds_path"], "/run/env/vsock.sock");

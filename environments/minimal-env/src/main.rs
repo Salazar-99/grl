@@ -53,11 +53,20 @@ fn handle<S: Read + Write>(mut stream: S) -> io::Result<()> {
             0 => {
                 let request = pb::ExecuteRequest::decode(payload.as_slice())
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                pb::ExecuteResponse {
-                    content: format!(
+                let content = match request.tool_name.as_str() {
+                    "conformance_write" => {
+                        std::fs::write("/conformance-isolation", &request.arguments_json)?;
+                        "written".to_string()
+                    }
+                    "conformance_read" => std::fs::read_to_string("/conformance-isolation")
+                        .unwrap_or_else(|_| "missing".to_string()),
+                    _ => format!(
                         "minimal environment received {}: {}",
                         request.tool_name, request.arguments_json
                     ),
+                };
+                pb::ExecuteResponse {
+                    content,
                     is_error: false,
                 }
                 .encode_to_vec()
@@ -80,6 +89,35 @@ fn handle<S: Read + Write>(mut stream: S) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn main() -> io::Result<()> {
+    for required in ["/run/grl/task/fixture", "/run/grl/environment/entrypoint"] {
+        if !std::path::Path::new(required).exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("required conformance path is missing: {required}"),
+            ));
+        }
+    }
+    let mut master = 0;
+    let mut slave = 0;
+    if unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    } != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("conformance openpty failed: {}", io::Error::last_os_error()),
+        ));
+    }
+    unsafe {
+        libc::close(master);
+        libc::close(slave);
+    }
     let listener = vsock::VsockListener::bind_with_cid_port(vsock::VMADDR_CID_ANY, 5005)?;
     for stream in listener.incoming() {
         handle(stream?)?;
