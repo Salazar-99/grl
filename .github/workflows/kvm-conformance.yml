@@ -39,4 +39,4 @@ jobs:
           GRL_CONFORMANCE_ROOT: /tmp/grl-conformance
           GRL_USE_JAILER: ${{ matrix.mode == 'jailed' }}
           GRL_JAILER_DIR: /tmp/grl-jailer
-        run: sudo --preserve-env=GRL_CONFORMANCE_ROOT,GRL_USE_JAILER,GRL_JAILER_DIR,PATH cargo test --manifest-path environments/manager/Cargo.toml --test kvm_conformance -- --ignored --nocapture
+        run: sudo --preserve-env=GRL_CONFORMANCE_ROOT,GRL_USE_JAILER,GRL_JAILER_DIR "$(command -v cargo)" test --manifest-path environments/manager/Cargo.toml --test kvm_conformance -- --ignored --nocapture
