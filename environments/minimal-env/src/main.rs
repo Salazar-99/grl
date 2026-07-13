@@ -120,7 +120,16 @@ fn main() -> io::Result<()> {
     }
     let listener = vsock::VsockListener::bind_with_cid_port(vsock::VMADDR_CID_ANY, 5005)?;
     for stream in listener.incoming() {
-        handle(stream?)?;
+        match stream {
+            Ok(stream) => {
+                if let Err(error) = handle(stream) {
+                    eprintln!("minimal environment connection reset: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("minimal environment accept reset: {error}");
+            }
+        }
     }
     Ok(())
 }
