@@ -93,6 +93,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let tasks = dir.join("tasks.jsonl");
+        std::fs::write(dir.join("environment.squashfs"), b"environment").unwrap();
 
         let catalog: ArcSwap<Catalog> = ArcSwap::from_pointee(Catalog::default());
         assert_eq!(catalog.load().len(), 0);
@@ -111,6 +112,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let tasks = dir.join("tasks.jsonl");
+        std::fs::write(dir.join("environment.squashfs"), b"environment").unwrap();
 
         std::fs::write(&tasks, format!("{}\n", sample_line("t1"))).unwrap();
         let catalog: ArcSwap<Catalog> = ArcSwap::from_pointee(Catalog::default());

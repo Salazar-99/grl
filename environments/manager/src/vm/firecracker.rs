@@ -47,30 +47,51 @@ async fn connect_until(socket_path: &Path, deadline: Instant) -> Result<UnixStre
 }
 
 pub async fn put(socket_path: &Path, resource: &str, body: &Value) -> Result<(), String> {
-    put_with_timeout(socket_path, resource, body, api_timeout()).await
+    request_with_timeout(socket_path, Method::PUT, resource, body, api_timeout()).await
 }
 
-async fn put_with_timeout(
+pub async fn put_timeout(
     socket_path: &Path,
+    resource: &str,
+    body: &Value,
+    operation_timeout: Duration,
+) -> Result<(), String> {
+    request_with_timeout(socket_path, Method::PUT, resource, body, operation_timeout).await
+}
+
+pub async fn patch(socket_path: &Path, resource: &str, body: &Value) -> Result<(), String> {
+    request_with_timeout(socket_path, Method::PATCH, resource, body, api_timeout()).await
+}
+
+async fn request_with_timeout(
+    socket_path: &Path,
+    method: Method,
     resource: &str,
     body: &Value,
     operation_timeout: Duration,
 ) -> Result<(), String> {
     timeout(
         operation_timeout,
-        put_inner(socket_path, resource, body, operation_timeout),
+        request_inner(
+            socket_path,
+            method.clone(),
+            resource,
+            body,
+            operation_timeout,
+        ),
     )
     .await
     .map_err(|_| {
         format!(
-            "firecracker PUT /{resource} timed out after {:.1}s",
+            "firecracker {method} /{resource} timed out after {:.1}s",
             operation_timeout.as_secs_f64()
         )
     })?
 }
 
-async fn put_inner(
+async fn request_inner(
     socket_path: &Path,
+    method: Method,
     resource: &str,
     body: &Value,
     operation_timeout: Duration,
@@ -83,7 +104,7 @@ async fn put_inner(
     let connection = ConnectionTask::spawn(connection);
 
     let request = Request::builder()
-        .method(Method::PUT)
+        .method(method.clone())
         .uri(format!("/{resource}"))
         .header(HOST, "localhost")
         .header(CONTENT_TYPE, "application/json")
@@ -94,12 +115,12 @@ async fn put_inner(
     let response = sender
         .send_request(request)
         .await
-        .map_err(|e| format!("send PUT /{resource}: {e}"))?;
+        .map_err(|e| format!("send {method} /{resource}: {e}"))?;
     let status = response.status();
     let response_body = Limited::new(response.into_body(), MAX_RESPONSE_BYTES)
         .collect()
         .await
-        .map_err(|e| format!("read PUT /{resource} response body: {e}"))?
+        .map_err(|e| format!("read {method} /{resource} response body: {e}"))?
         .to_bytes();
 
     // Close the keep-alive connection only after Hyper has observed a complete
@@ -112,7 +133,7 @@ async fn put_inner(
     }
     let detail = String::from_utf8_lossy(&response_body);
     Err(format!(
-        "firecracker PUT /{resource} failed: {status}{}{}",
+        "firecracker {method} /{resource} failed: {status}{}{}",
         if detail.is_empty() { "" } else { ": " },
         detail.trim()
     ))
@@ -148,13 +169,13 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
-    use hyper::StatusCode;
+    use hyper::{Method, StatusCode};
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;
     use tokio::time::sleep;
 
-    use super::put_with_timeout;
+    use super::request_with_timeout;
 
     static NEXT_SOCKET: AtomicU64 = AtomicU64::new(0);
 
@@ -215,8 +236,9 @@ mod tests {
             sleep(Duration::from_secs(1)).await;
         });
 
-        put_with_timeout(
+        request_with_timeout(
             &path,
+            Method::PUT,
             "machine-config",
             &json!({"vcpu_count": 2}),
             Duration::from_millis(250),
@@ -273,8 +295,9 @@ mod tests {
             stream.write_all(b"request body").await.unwrap();
         });
 
-        let err = put_with_timeout(
+        let err = request_with_timeout(
             &path,
+            Method::PUT,
             "machine-config",
             &json!({"vcpu_count": 2}),
             Duration::from_secs(1),
@@ -297,8 +320,9 @@ mod tests {
             sleep(Duration::from_secs(1)).await;
         });
 
-        let err = put_with_timeout(
+        let err = request_with_timeout(
             &path,
+            Method::PUT,
             "machine-config",
             &json!({"vcpu_count": 2}),
             Duration::from_millis(50),

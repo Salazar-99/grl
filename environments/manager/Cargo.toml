@@ -15,6 +15,7 @@ opentelemetry-semantic-conventions = "0.27"
 opentelemetry_sdk = { version = "0.27", features = ["metrics", "rt-tokio"] }
 prost = "0.13"
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time", "fs"] }
 tonic = "0.12"
 tower = { version = "0.5", features = ["timeout"] }

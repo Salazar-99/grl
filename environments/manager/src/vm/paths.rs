@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VmPaths {
     pub kernel: PathBuf,
+    pub initrd: PathBuf,
     pub base_image: PathBuf,
     pub task_image: PathBuf,
+    pub environment_image: PathBuf,
 }
 
 /// Node-local cache root (`GRL_VM_CACHE_DIR`, default `/var/lib/grl`).
@@ -65,11 +67,22 @@ pub fn resolve_kernel(cache_root: &Path) -> Result<PathBuf, String> {
     })
 }
 
-pub fn join_and_verify(
-    cache_root: &Path,
-    relative: &str,
-    label: &str,
-) -> Result<PathBuf, String> {
+/// Resolve the required external bootstrap initramfs.
+pub fn resolve_initrd(cache_root: &Path) -> Result<PathBuf, String> {
+    if let Ok(value) = std::env::var("GRL_INITRD_FILE") {
+        let path = PathBuf::from(value);
+        return path
+            .is_file()
+            .then_some(path.clone())
+            .ok_or_else(|| format!("GRL_INITRD_FILE not found: {}", path.display()));
+    }
+    let path = cache_root.join("bootstrap/active.cpio.gz");
+    path.is_file()
+        .then_some(path.clone())
+        .ok_or_else(|| format!("required bootstrap not found: {}", path.display()))
+}
+
+pub fn join_and_verify(cache_root: &Path, relative: &str, label: &str) -> Result<PathBuf, String> {
     let path = cache_root.join(relative);
     if path.is_file() {
         Ok(path)
@@ -113,6 +126,18 @@ mod tests {
             scratch_template_path(&cache),
             PathBuf::from("/var/lib/grl/scratch-template.ext4")
         );
+    }
+
+    #[test]
+    fn resolve_initrd_is_required() {
+        let dir = std::env::temp_dir().join(format!("grl-paths-initrd-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bootstrap")).unwrap();
+        assert!(resolve_initrd(&dir).is_err());
+        let initrd = dir.join("bootstrap/active.cpio.gz");
+        fs::write(&initrd, b"initrd").unwrap();
+        assert_eq!(resolve_initrd(&dir).unwrap(), initrd);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

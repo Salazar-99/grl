@@ -16,7 +16,7 @@ def rust_target(platform: str) -> str:
     return "x86_64-unknown-linux-gnu"
 
 
-def resolve_grl_env_binary(*, platform: str) -> Path:
+def resolve_grl_env_binary(*, platform: str, force: bool = False) -> Path:
     """Return a linux grl-env binary, building the env crate when needed."""
     override = os.environ.get("GRL_ENV_BIN")
     if override:
@@ -27,15 +27,36 @@ def resolve_grl_env_binary(*, platform: str) -> Path:
 
     target = rust_target(platform)
     release = ENV_CRATE / "target" / target / "release" / "env"
-    if release.is_file():
+    if release.is_file() and not force:
         return release
 
     print(f"building grl-env for {target}...", file=sys.stderr)
-    subprocess.run(
-        ["cargo", "build", "--release", "--target", target],
-        cwd=ENV_CRATE,
-        check=True,
-    )
+    if sys.platform.startswith("linux"):
+        subprocess.run(
+            ["cargo", "build", "--release", "--target", target],
+            cwd=ENV_CRATE,
+            check=True,
+        )
+    else:
+        environments_root = ENV_CRATE.parents[1]
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--platform",
+                platform,
+                "-v",
+                f"{environments_root.resolve()}:/workspace/environments",
+                "-w",
+                "/workspace/environments/swebench-lite/env",
+                "rust:1.93-bookworm",
+                "bash",
+                "-c",
+                f"rustup target add {target} && cargo build --release --target {target}",
+            ],
+            check=True,
+        )
     if not release.is_file():
         raise FileNotFoundError(
             f"grl-env build did not produce {release}; set GRL_ENV_BIN to a prebuilt binary"

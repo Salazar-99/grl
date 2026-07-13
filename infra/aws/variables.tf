@@ -99,6 +99,12 @@ variable "vm_images_scratch_gb" {
   description = "Size (GiB) of the per-VM scratch template staged by vm-image-cache."
 }
 
+variable "vm_bootstrap_key" {
+  type        = string
+  default     = ""
+  description = "Immutable S3 key for the active Firecracker initrd."
+}
+
 variable "model_tag" {
   type        = string
   default     = ""
@@ -182,6 +188,18 @@ variable "manager_image" {
   type        = string
   default     = "grl-manager:latest"
   description = "Environment manager image run as a DaemonSet on environment nodes (environments/manager/Dockerfile)."
+}
+
+variable "manager_snapshots_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable node-local Firecracker golden snapshots."
+}
+
+variable "manager_snapshot_cache_max_entries" {
+  type        = string
+  default     = "64"
+  description = "Maximum node-local golden snapshot entries."
 }
 
 variable "ray_version" {

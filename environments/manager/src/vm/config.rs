@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::paths::VmPaths;
 
@@ -11,8 +11,8 @@ pub const EXECUTOR_VSOCK_PORT: u32 = 5005;
 pub fn boot_args() -> String {
     std::env::var("GRL_VM_BOOT_ARGS").unwrap_or_else(|_| {
         // `ro`: the root device is a read-only squashfs (Firecracker appends
-        // `root=/dev/vda` for the root drive). `init=/init` is grl-init, which
-        // stacks a writable overlay and pivots into it.
+        // `root=/dev/vda` for the root drive). `init=/init` is the required
+        // external grl-bootstrap, which assembles and pivots into the overlay.
         "console=ttyS0 reboot=k panic=1 pci=off ro init=/init".to_string()
     })
 }
@@ -36,6 +36,7 @@ pub fn machine_config() -> Value {
 pub fn boot_source(paths: &VmPaths) -> Value {
     json!({
         "kernel_image_path": paths.kernel.display().to_string(),
+        "initrd_path": paths.initrd.display().to_string(),
         "boot_args": boot_args(),
     })
 }
@@ -53,6 +54,15 @@ pub fn task_drive(paths: &VmPaths) -> Value {
     json!({
         "drive_id": "task",
         "path_on_host": paths.task_image.display().to_string(),
+        "is_root_device": false,
+        "is_read_only": true,
+    })
+}
+
+pub fn environment_drive(paths: &VmPaths) -> Value {
+    json!({
+        "drive_id": "environment",
+        "path_on_host": paths.environment_image.display().to_string(),
         "is_root_device": false,
         "is_read_only": true,
     })
@@ -88,8 +98,10 @@ mod tests {
     fn sample_paths() -> VmPaths {
         VmPaths {
             kernel: PathBuf::from("/cache/kernel/vmlinux"),
+            initrd: PathBuf::from("/cache/bootstrap/active.cpio.gz"),
             base_image: PathBuf::from("/cache/images/bases/b.squashfs"),
             task_image: PathBuf::from("/cache/images/tasks/t.squashfs"),
+            environment_image: PathBuf::from("/cache/active/environment.squashfs"),
         }
     }
 
@@ -108,6 +120,14 @@ mod tests {
         assert_eq!(d["drive_id"], "task");
         assert_eq!(d["is_root_device"], false);
         assert_eq!(d["is_read_only"], true);
+    }
+
+    #[test]
+    fn environment_drive_is_required_and_readonly() {
+        let drive = environment_drive(&sample_paths());
+        assert_eq!(drive["drive_id"], "environment");
+        assert_eq!(drive["is_read_only"], true);
+        assert_eq!(drive["path_on_host"], "/cache/active/environment.squashfs");
     }
 
     #[test]
@@ -136,5 +156,15 @@ mod tests {
         let args = boot_args();
         assert!(args.contains(" ro "), "boot args must mark root ro: {args}");
         assert!(args.contains("init=/init"));
+        assert_eq!(
+            boot_source(&sample_paths())["initrd_path"],
+            "/cache/bootstrap/active.cpio.gz"
+        );
+    }
+
+    #[test]
+    fn boot_source_includes_required_external_initrd() {
+        let source = boot_source(&sample_paths());
+        assert_eq!(source["initrd_path"], "/cache/bootstrap/active.cpio.gz");
     }
 }

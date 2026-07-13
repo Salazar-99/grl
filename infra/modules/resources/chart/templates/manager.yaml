@@ -63,6 +63,10 @@ spec:
               value: "$(POD_IP):{{ .Values.manager.port }}"
             - name: GRL_MAX_CONCURRENT_ENVS
               value: {{ .Values.manager.maxConcurrentEnvs | quote }}
+            - name: GRL_VM_SNAPSHOTS
+              value: {{ ternary "true" "false" .Values.manager.snapshotsEnabled | quote }}
+            - name: GRL_SNAPSHOT_CACHE_MAX_ENTRIES
+              value: {{ .Values.manager.snapshotCacheMaxEntries | quote }}
           ports:
             - name: grpc
               containerPort: {{ .Values.manager.port }}
@@ -72,7 +76,9 @@ spec:
           volumeMounts:
             - name: vm-cache
               mountPath: {{ .Values.vmImageCache.hostPath | quote }}
-              readOnly: true
+              # Base artifacts are immutable; the manager writes only its
+              # content-keyed snapshots/ subtree.
+              readOnly: false
           resources:
             requests:
               cpu: "2"

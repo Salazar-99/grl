@@ -47,6 +47,8 @@ manager:
   activeDir: active
   # Max rollout environments in flight on this manager pod (admission control).
   maxConcurrentEnvs: "32"
+  snapshotsEnabled: false
+  snapshotCacheMaxEntries: "64"
 
 vmImageCache:
   namespace: default
@@ -59,6 +61,9 @@ vmImageCache:
   # Node-local cache directory; the manager mounts this read-only and boots
   # Firecracker VMs from it.
   hostPath: /var/lib/grl
+  # Immutable S3 key (for example bootstrap/grl-bootstrap-<sha>.cpio.gz).
+  # Required whenever the VM image cache is enabled.
+  bootstrapKey: ""
   # Size of the per-VM scratch template (sparse, journal-less ext4). Bounds each
   # microVM's writable overlay; sparse so it costs only what's written.
   scratchGb: 2

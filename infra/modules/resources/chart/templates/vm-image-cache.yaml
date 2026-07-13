@@ -1,4 +1,7 @@
 {{- if .Values.vmImageCache.bucket }}
+{{- if not .Values.vmImageCache.bootstrapKey }}
+{{- fail "vmImageCache.bootstrapKey is required when vmImageCache.bucket is set" }}
+{{- end }}
 # Pre-pulls Firecracker VM artifacts (guest kernel, base/task squashfs images)
 # from S3 onto each environment node's local disk, so the manager can boot
 # microVMs from local files without touching S3 on the hot path. It also stages
@@ -38,15 +41,24 @@ spec:
               value: {{ .Values.vmImageCache.bucket | quote }}
             - name: SCRATCH_GB
               value: {{ .Values.vmImageCache.scratchGb | quote }}
+            - name: BOOTSTRAP_KEY
+              value: {{ .Values.vmImageCache.bootstrapKey | quote }}
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -eu
               rm -f /data/.ready
-              mkdir -p /data/kernel /data/images/bases /data/images/tasks
+              mkdir -p /data/kernel /data/bootstrap /data/images/bases /data/images/tasks
               /s5cmd sync "s3://${BUCKET}/kernel/*" /data/kernel/
               /s5cmd sync "s3://${BUCKET}/bases/*"  /data/images/bases/
               /s5cmd sync "s3://${BUCKET}/tasks/*"  /data/images/tasks/
+              rm -f /data/bootstrap/active.cpio.gz.tmp /data/bootstrap/active.sha256.tmp
+              /s5cmd cp "s3://${BUCKET}/${BOOTSTRAP_KEY}" /data/bootstrap/active.cpio.gz.tmp
+              /s5cmd cp "s3://${BUCKET}/${BOOTSTRAP_KEY}.sha256" /data/bootstrap/active.sha256.tmp
+              test -s /data/bootstrap/active.cpio.gz.tmp
+              EXPECTED=$(awk '{print $1}' /data/bootstrap/active.sha256.tmp)
+              echo "$EXPECTED  /data/bootstrap/active.cpio.gz.tmp" | sha256sum -c -
+              mv /data/bootstrap/active.cpio.gz.tmp /data/bootstrap/active.cpio.gz
               # Node-local per-VM scratch template: a pre-formatted, journal-less
               # ext4 the manager copies per boot as each microVM's writable
               # overlay upper. Journalless keeps its real footprint at a few MB

@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +13,8 @@ from botocore.exceptions import ClientError
 
 BASES_PREFIX = "bases"
 TASKS_PREFIX = "tasks"
+BOOTSTRAP_PREFIX = "bootstrap"
+ENVIRONMENTS_PREFIX = "environments"
 # The trainer dataset (tasks.jsonl) lives under its own prefix, separate from
 # the task disk images under TASKS_PREFIX.
 DATASETS_PREFIX = "datasets"
@@ -38,7 +42,9 @@ def s3_config() -> tuple[str, str]:
     if not bucket:
         raise SystemExit("VMS_S3_BUCKET environment variable is required")
     if not region:
-        raise SystemExit("VMS_S3_REGION or AWS_DEFAULT_REGION environment variable is required")
+        raise SystemExit(
+            "VMS_S3_REGION or AWS_DEFAULT_REGION environment variable is required"
+        )
     return bucket, region
 
 
@@ -146,7 +152,9 @@ def _upload_items(
     )
     with ThreadPoolExecutor(max_workers=jobs) as executor:
         futures = {
-            executor.submit(_upload_one, item, bucket=bucket, region=region, force=force): item
+            executor.submit(
+                _upload_one, item, bucket=bucket, region=region, force=force
+            ): item
             for item in items
         }
         for i, future in enumerate(as_completed(futures), start=1):
@@ -205,6 +213,91 @@ def upload_tasks_file(path: Path, *, split: str, force: bool = False) -> str:
     return uri
 
 
+def upload_bootstrap(path: Path, *, force: bool = False) -> str:
+    """Upload one immutable initrd and return its S3 URI."""
+    if not path.is_file():
+        raise SystemExit(f"bootstrap artifact not found: {path}")
+    bucket, region = s3_config()
+    item = UploadItem(path=path, key=f"{BOOTSTRAP_PREFIX}/{path.name}")
+    _upload_items(
+        [item],
+        bucket=bucket,
+        region=region,
+        force=force,
+        jobs=1,
+    )
+    _upload_checksum(item, bucket=bucket, region=region)
+    return f"s3://{bucket}/{item.key}"
+
+
+def upload_environment(path: Path, *, force: bool = False) -> str:
+    """Upload one immutable environment runtime squashfs."""
+    if not path.is_file():
+        raise SystemExit(f"environment artifact not found: {path}")
+    bucket, region = s3_config()
+    item = UploadItem(path=path, key=f"{ENVIRONMENTS_PREFIX}/{path.name}")
+    _upload_items([item], bucket=bucket, region=region, force=force, jobs=1)
+    _upload_checksum(item, bucket=bucket, region=region)
+    return f"s3://{bucket}/{item.key}"
+
+
+def upload_environment_bundle(
+    path: Path, *, bundle_uri: str, force: bool = False
+) -> str:
+    """Publish an environment package and manifest into a run bundle."""
+    if not bundle_uri.startswith("s3://"):
+        raise SystemExit("bundle URI must start with s3://")
+    bucket_and_prefix = bundle_uri[5:].rstrip("/")
+    bucket, separator, prefix = bucket_and_prefix.partition("/")
+    if not bucket or not separator or not prefix:
+        raise SystemExit("bundle URI must include a bucket and prefix")
+    region = os.environ.get("VMS_S3_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    if not region:
+        raise SystemExit(
+            "VMS_S3_REGION or AWS_DEFAULT_REGION environment variable is required"
+        )
+    item = UploadItem(path=path, key=f"{prefix}/environment.squashfs")
+    s3 = _s3_client(region)
+    # The bundle key is mutable during publication; size equality is not a
+    # content check. Always upload bytes before publishing their digest.
+    _upload_items([item], bucket=bucket, region=region, force=True, jobs=1)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "environment": "swebench-lite",
+        "entrypoint": "/entrypoint",
+        "protocol_version": 1,
+        "sha256": digest,
+    }
+    s3.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}/environment-manifest.json",
+        Body=json.dumps(manifest, sort_keys=True, indent=2).encode(),
+        ContentType="application/json",
+    )
+    s3.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}/environment.squashfs.sha256",
+        Body=f"{digest}  environment.squashfs\n".encode(),
+        ContentType="text/plain",
+    )
+    return f"s3://{bucket}/{item.key}"
+
+
+def _upload_checksum(item: UploadItem, *, bucket: str, region: str) -> None:
+    digest = hashlib.sha256()
+    with item.path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    body = f"{digest.hexdigest()}  artifact\n".encode()
+    _s3_client(region).put_object(
+        Bucket=bucket,
+        Key=f"{item.key}.sha256",
+        Body=body,
+        ContentType="text/plain",
+    )
+
+
 def upload_all(
     base_dir: Path,
     task_dir: Path,
@@ -213,7 +306,9 @@ def upload_all(
     jobs: int | None = None,
 ) -> None:
     bucket, region = s3_config()
-    items = _list_uploads(base_dir, BASES_PREFIX) + _list_uploads(task_dir, TASKS_PREFIX)
+    items = _list_uploads(base_dir, BASES_PREFIX) + _list_uploads(
+        task_dir, TASKS_PREFIX
+    )
     _upload_items(
         items,
         bucket=bucket,

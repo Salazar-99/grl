@@ -35,12 +35,15 @@ resource "helm_release" "resources" {
         }
       }
       manager = {
-        image = var.manager_image
+        image                   = var.manager_image
+        snapshotsEnabled        = var.manager_snapshots_enabled
+        snapshotCacheMaxEntries = var.manager_snapshot_cache_max_entries
       }
       vmImageCache = {
-        bucket    = var.vm_images_bucket
-        region    = var.vm_images_region
-        scratchGb = var.vm_images_scratch_gb
+        bucket       = var.vm_images_bucket
+        region       = var.vm_images_region
+        scratchGb    = var.vm_images_scratch_gb
+        bootstrapKey = var.vm_bootstrap_key
       }
       modelCache = {
         tag              = var.model_tag

@@ -99,6 +99,18 @@ variable "manager_image" {
   description = "Environment manager image run as a DaemonSet."
 }
 
+variable "manager_snapshots_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable node-local Firecracker golden snapshots."
+}
+
+variable "manager_snapshot_cache_max_entries" {
+  type        = string
+  default     = "64"
+  description = "Maximum node-local golden snapshot entries."
+}
+
 variable "vm_images_bucket" {
   type        = string
   default     = ""
@@ -115,6 +127,12 @@ variable "vm_images_scratch_gb" {
   type        = number
   default     = 2
   description = "Size (GiB) of the per-VM scratch template staged by vm-image-cache."
+}
+
+variable "vm_bootstrap_key" {
+  type        = string
+  default     = ""
+  description = "Immutable S3 key for the active Firecracker initrd."
 }
 
 variable "model_tag" {

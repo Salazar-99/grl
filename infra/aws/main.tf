@@ -31,15 +31,17 @@ module "resources" {
   count  = var.deploy_workloads ? 1 : 0
   source = "../modules/resources"
 
-  release_name          = var.release_name
-  release_namespace     = var.release_namespace
-  ray_cluster_name      = var.ray_cluster_name
-  ray_cluster_namespace = var.ray_cluster_namespace
-  ray_head_image        = var.ray_head_image
-  ray_rollouts_image    = var.ray_rollouts_image
-  ray_training_image    = var.ray_training_image
-  ray_version           = var.ray_version
-  manager_image         = var.manager_image
+  release_name                       = var.release_name
+  release_namespace                  = var.release_namespace
+  ray_cluster_name                   = var.ray_cluster_name
+  ray_cluster_namespace              = var.ray_cluster_namespace
+  ray_head_image                     = var.ray_head_image
+  ray_rollouts_image                 = var.ray_rollouts_image
+  ray_training_image                 = var.ray_training_image
+  ray_version                        = var.ray_version
+  manager_image                      = var.manager_image
+  manager_snapshots_enabled          = var.manager_snapshots_enabled
+  manager_snapshot_cache_max_entries = var.manager_snapshot_cache_max_entries
 
   ray_rollouts_gpus_per_node = var.ray_rollouts_gpus_per_node
   ray_training_gpus_per_node = var.ray_training_gpus_per_node
@@ -49,6 +51,7 @@ module "resources" {
   vm_images_bucket     = var.vm_images_bucket
   vm_images_region     = var.vm_images_region != "" ? var.vm_images_region : var.region
   vm_images_scratch_gb = var.vm_images_scratch_gb
+  vm_bootstrap_key     = var.vm_bootstrap_key
 
   model_tag         = var.model_tag
   model_revision    = var.model_revision

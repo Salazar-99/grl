@@ -46,13 +46,41 @@ spec:
             - |
               set -eu
               ACTIVE="${GRL_VM_CACHE_DIR}/${GRL_ACTIVE_DIR}"
-              mkdir -p "${ACTIVE}"
-              # Clear the sentinel before syncing so the manager never reloads a
-              # partial bundle; re-touch it only after a complete sync.
-              rm -f "${ACTIVE}/.ready"
-              echo "syncing bundle ${GRL_BUNDLE_URI} -> ${ACTIVE}/"
-              /s5cmd sync "${GRL_BUNDLE_URI}/*" "${ACTIVE}/"
-              touch "${ACTIVE}/.ready"
+              BUNDLES="${GRL_VM_CACHE_DIR}/bundles"
+              STAGE="${BUNDLES}/.staging-$$"
+              mkdir -p "${BUNDLES}"
+              rm -rf "${STAGE}"
+              mkdir -p "${STAGE}"
+              echo "syncing immutable bundle ${GRL_BUNDLE_URI} -> ${STAGE}/"
+              /s5cmd sync "${GRL_BUNDLE_URI}/*" "${STAGE}/"
+              test -s "${STAGE}/tasks.jsonl"
+              test -s "${STAGE}/environment.squashfs"
+              test -s "${STAGE}/environment-manifest.json"
+              test -s "${STAGE}/environment.squashfs.sha256"
+              EXPECTED=$(awk '{print $1}' "${STAGE}/environment.squashfs.sha256")
+              echo "$EXPECTED  ${STAGE}/environment.squashfs" | sha256sum -c -
+              VERSION=$(
+                cd "${STAGE}"
+                find . -type f -exec sha256sum {} \; | sort | sha256sum | awk '{print $1}'
+              )
+              FINAL="${BUNDLES}/${VERSION}"
+              touch "${STAGE}/.ready"
+              if [ -d "${FINAL}" ]; then
+                rm -rf "${STAGE}"
+              else
+                mv "${STAGE}" "${FINAL}"
+              fi
+
+              # Publish the entire bundle with one rename. Catalog loading
+              # canonicalizes this symlink, so an old catalog remains pinned to
+              # its matching environment package after the switch.
+              rm -f "${ACTIVE}.next"
+              ln -s "${FINAL}" "${ACTIVE}.next"
+              if [ -d "${ACTIVE}" ] && [ ! -L "${ACTIVE}" ]; then
+                rm -rf "${ACTIVE}"
+              fi
+              mv -Tf "${ACTIVE}.next" "${ACTIVE}"
+
           volumeMounts:
             - name: vm-cache
               mountPath: {{ .Values.hostPath | quote }}

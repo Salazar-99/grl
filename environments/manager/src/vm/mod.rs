@@ -6,11 +6,12 @@ mod firecracker;
 mod jailer;
 mod paths;
 mod scratch;
+mod snapshot;
 mod vsock;
 
 pub use executor::ExecutorConn;
 pub use paths::{
-    VmPaths, cache_root, join_and_verify, resolve_kernel, run_root, scratch_path,
+    VmPaths, cache_root, join_and_verify, resolve_initrd, resolve_kernel, run_root, scratch_path,
     scratch_template_path,
 };
 
@@ -43,6 +44,7 @@ pub struct VmHandle {
     pub run_dir: PathBuf,
     pub executor: Arc<ExecutorConn>,
     child: Option<Child>,
+    _snapshot_lease: Option<snapshot::Lease>,
 }
 
 impl VmHandle {
@@ -61,6 +63,7 @@ impl VmHandle {
             run_dir: PathBuf::from("/tmp/grl-test-vm"),
             executor,
             child: Some(child),
+            _snapshot_lease: None,
         }
     }
 }
@@ -119,6 +122,20 @@ impl BootGuard {
         self.child.as_mut().expect("boot child must be set")
     }
 
+    async fn restart_child(
+        &mut self,
+        env_id: &str,
+        api_sock: &std::path::Path,
+    ) -> Result<(), String> {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        }
+        let _ = std::fs::remove_file(api_sock);
+        self.child = Some(jailer::spawn(env_id, api_sock).await?);
+        Ok(())
+    }
+
     async fn cleanup(mut self) {
         self.scratch_cancel.store(true, Ordering::Relaxed);
         if let Some(mut child) = self.child.take() {
@@ -130,12 +147,18 @@ impl BootGuard {
         }
     }
 
-    fn into_handle(mut self, guest_cid: u32, executor: Arc<ExecutorConn>) -> VmHandle {
+    fn into_handle(
+        mut self,
+        guest_cid: u32,
+        executor: Arc<ExecutorConn>,
+        snapshot_lease: Option<snapshot::Lease>,
+    ) -> VmHandle {
         VmHandle {
             guest_cid,
             run_dir: self.run_dir.take().expect("boot run dir must be set"),
             executor,
             child: Some(self.child.take().expect("boot child must be set")),
+            _snapshot_lease: snapshot_lease,
         }
     }
 }
@@ -174,14 +197,43 @@ pub async fn boot(
     let _ = std::fs::remove_file(&api_sock);
     let _ = std::fs::remove_file(&vsock_uds);
 
+    let mut snapshot_acquire = if snapshot::enabled() {
+        match snapshot::cache_key(&paths).await {
+            Ok(key) => match snapshot::acquire(&cache, key).await {
+                Ok(acquire) => Some(acquire),
+                Err(error) => {
+                    eprintln!("snapshot cache unavailable for {env_id}: {error}; cold booting");
+                    None
+                }
+            },
+            Err(error) => {
+                eprintln!("snapshot key failed for {env_id}: {error}; cold booting");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Per-VM writable scratch: sparse/reflink copy of the node-local template.
     // Must preserve holes — std::fs::copy densifies across mounts (XFS cache →
     // overlay run dir) and a full multi-GB write per env stalls the node.
     let template = scratch_template_path(&cache);
     let scratch = scratch_path(&run_dir);
+    let (scratch_source, scratch_destination, boot_scratch) = match &snapshot_acquire {
+        Some(snapshot::Acquire::Hit(entry, _)) => {
+            (entry.scratch(), scratch.clone(), scratch.clone())
+        }
+        Some(snapshot::Acquire::Build(builder)) => (
+            template.clone(),
+            builder.entry.scratch(),
+            builder.entry.scratch(),
+        ),
+        None => (template, scratch.clone(), scratch.clone()),
+    };
     {
-        let src = template.clone();
-        let dst = scratch.clone();
+        let src = scratch_source.clone();
+        let dst = scratch_destination.clone();
         let copy_cancel = boot_guard.scratch_cancel();
         let worker_cancel = Arc::clone(&copy_cancel);
         let mut copy = tokio::task::spawn_blocking(move || {
@@ -202,16 +254,57 @@ pub async fn boot(
             .map_err(|e| {
                 format!(
                     "copy scratch template {} -> {}: {e}",
-                    template.display(),
-                    scratch.display()
+                    scratch_source.display(),
+                    scratch_destination.display()
                 )
             })?;
     }
 
     let child = jailer::spawn(env_id, &api_sock).await?;
     boot_guard.set_child(child);
+    let snapshot_copy_cancel = boot_guard.scratch_cancel();
 
     let sequence = async {
+        let boot_timeout = boot_timeout();
+        if matches!(
+            snapshot_acquire.as_ref(),
+            Some(snapshot::Acquire::Hit(_, _))
+        ) {
+            let Some(snapshot::Acquire::Hit(entry, lease)) = snapshot_acquire.take() else {
+                unreachable!();
+            };
+            let restore = match snapshot::load(&api_sock, &entry, &scratch, &vsock_uds).await {
+                Ok(()) => connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await,
+                Err(error) => Err(error),
+            };
+            match restore {
+                Ok(executor) => {
+                    crate::telemetry::counter("grl.manager.snapshot.restores").add(1, &[]);
+                    return Ok((executor, Some(lease)));
+                }
+                Err(error) => {
+                    crate::telemetry::counter("grl.manager.snapshot.fallbacks").add(1, &[]);
+                    snapshot::invalidate(&entry);
+                    snapshot::disable();
+                    eprintln!(
+                        "snapshot restore failed for {env_id}; invalidating and cold booting: {error}"
+                    );
+                    let _ = std::fs::remove_file(&vsock_uds);
+                    boot_guard.restart_child(env_id, &api_sock).await?;
+                    let source = scratch_template_path(&cache);
+                    let destination = scratch.clone();
+                    let cancel = Arc::clone(&snapshot_copy_cancel);
+                    tokio::task::spawn_blocking(move || {
+                        scratch::copy_scratch_template_cancelable(&source, &destination, &cancel)
+                    })
+                    .await
+                    .map_err(|e| format!("snapshot fallback scratch copy join: {e}"))?
+                    .map_err(|e| format!("snapshot fallback scratch copy: {e}"))?;
+                }
+            }
+            drop(lease);
+        }
+
         // The first API operation also serves as readiness: its connect phase
         // retries until Firecracker is listening. No idle probe connection is
         // opened ahead of the real request.
@@ -221,20 +314,50 @@ pub async fn boot(
         firecracker::put(&api_sock, "drives/task", &config::task_drive(&paths)).await?;
         firecracker::put(
             &api_sock,
+            "drives/environment",
+            &config::environment_drive(&paths),
+        )
+        .await?;
+        firecracker::put(
+            &api_sock,
             "drives/scratch",
-            &config::scratch_drive(&scratch),
+            &config::scratch_drive(&boot_scratch),
         )
         .await?;
         firecracker::put(&api_sock, "vsock", &config::vsock(guest_cid, &vsock_uds)).await?;
         firecracker::put(&api_sock, "actions", &config::instance_start()).await?;
 
-        let boot_timeout = Duration::from_secs(
-            std::env::var("GRL_VM_BOOT_TIMEOUT_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(120),
-        );
-        vsock::connect_executor(&vsock_uds, boot_timeout).await
+        let executor = connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await?;
+
+        if let Some(snapshot::Acquire::Build(builder)) = snapshot_acquire.take() {
+            drop(executor);
+            let create_result = snapshot::create(&api_sock, &builder.entry).await;
+            let source = builder.entry.scratch();
+            let destination = scratch.clone();
+            let cancel = Arc::clone(&snapshot_copy_cancel);
+            tokio::task::spawn_blocking(move || {
+                scratch::copy_scratch_template_cancelable(&source, &destination, &cancel)
+            })
+            .await
+            .map_err(|e| format!("snapshot scratch clone join: {e}"))?
+            .map_err(|e| format!("snapshot scratch clone: {e}"))?;
+            snapshot::activate_builder(&api_sock, &scratch).await?;
+            let executor =
+                connect_executor_or_exit(&mut boot_guard, &vsock_uds, boot_timeout).await?;
+            if let Err(error) = create_result {
+                crate::telemetry::counter("grl.manager.snapshot.fallbacks").add(1, &[]);
+                snapshot::disable();
+                eprintln!(
+                    "snapshot creation failed for {env_id}; continuing cold and disabling snapshots: {error}"
+                );
+                return Ok((executor, None));
+            }
+            let entry = builder.publish()?;
+            crate::telemetry::counter("grl.manager.snapshot.builds").add(1, &[]);
+            return Ok((executor, Some(snapshot::lease(&entry))));
+        }
+
+        Ok((executor, None))
     };
 
     let result = tokio::select! {
@@ -242,19 +365,40 @@ pub async fn boot(
         _ = wait_cancelled(&mut cancel) => {
             Err("VM boot cancelled".into())
         },
-        status = boot_guard.child_mut().wait() => {
-            match status {
-                Ok(status) => Err(format!("Firecracker exited during boot with {status}")),
-                Err(err) => Err(format!("wait for Firecracker during boot: {err}")),
-            }
-        }
     };
 
     match result {
-        Ok(executor) => Ok(boot_guard.into_handle(guest_cid, Arc::new(executor))),
+        Ok((executor, snapshot_lease)) => {
+            Ok(boot_guard.into_handle(guest_cid, Arc::new(executor), snapshot_lease))
+        }
         Err(err) => {
             boot_guard.cleanup().await;
             Err(err)
+        }
+    }
+}
+
+fn boot_timeout() -> Duration {
+    Duration::from_secs(
+        std::env::var("GRL_VM_BOOT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(120),
+    )
+}
+
+async fn connect_executor_or_exit(
+    boot_guard: &mut BootGuard,
+    vsock_uds: &std::path::Path,
+    timeout: Duration,
+) -> Result<ExecutorConn, String> {
+    tokio::select! {
+        result = vsock::connect_executor(vsock_uds, timeout) => result,
+        status = boot_guard.child_mut().wait() => {
+            match status {
+                Ok(status) => Err(format!("Firecracker exited during boot with {status}")),
+                Err(error) => Err(format!("wait for Firecracker during boot: {error}")),
+            }
         }
     }
 }

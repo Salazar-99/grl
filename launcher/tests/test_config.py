@@ -85,6 +85,22 @@ def test_helm_values_overlay_scratch_gb_override():
     assert config.helm_values_overlay()["vmImageCache"]["scratchGb"] == 4
 
 
+def test_bootstrap_key_flows_to_helm_and_terraform():
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "infra": {
+                "vm_image_cache": {
+                    "bucket": "my-bucket",
+                    "bootstrap_key": "bootstrap/grl-bootstrap-abc.cpio.gz",
+                }
+            },
+        }
+    )
+    cache = config.helm_values_overlay()["vmImageCache"]
+    assert cache["bootstrapKey"].endswith(".cpio.gz")
+
+
 def test_env_helm_values_carries_bundle():
     config = GRLConfig.model_validate(
         {

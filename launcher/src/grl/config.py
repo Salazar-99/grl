@@ -210,6 +210,10 @@ class ManagerConfig(BaseModel):
     env_id: str = Field(default="", alias="envId")
     active_dir: str = Field(default="active", alias="activeDir")
     max_concurrent_envs: str = Field(default="32", alias="maxConcurrentEnvs")
+    snapshots_enabled: bool = Field(default=False, alias="snapshotsEnabled")
+    snapshot_cache_max_entries: str = Field(
+        default="64", alias="snapshotCacheMaxEntries"
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -221,6 +225,7 @@ class VmImageCacheConfig(BaseModel):
     image: str = "peakcom/s5cmd:v2.3.0"
     pause_image: str = Field(default="registry.k8s.io/pause:3.10", alias="pauseImage")
     host_path: str = Field(default="/var/lib/grl", alias="hostPath")
+    bootstrap_key: str = Field(default="", alias="bootstrapKey")
     # Per-VM writable scratch template size (GiB). Copied into each microVM's
     # run dir at boot; keep small — copies land in manager container ephemeral.
     scratch_gb: int = Field(default=2, alias="scratchGb", ge=1)
@@ -383,6 +388,8 @@ class GRLConfig(TrainingGRLConfig):
             "manager": {
                 "envId": manager.env_id,
                 "image": manager.image,
+                "snapshotsEnabled": manager.snapshots_enabled,
+                "snapshotCacheMaxEntries": manager.snapshot_cache_max_entries,
             },
             "rayCluster": {
                 "images": {
@@ -407,6 +414,7 @@ class GRLConfig(TrainingGRLConfig):
             overlay["vmImageCache"] = {
                 "bucket": self.infra.vm_image_cache.bucket,
                 "scratchGb": self.infra.vm_image_cache.scratch_gb,
+                "bootstrapKey": self.infra.vm_image_cache.bootstrap_key,
             }
         if self.infra.model_cache.enabled:
             overlay["modelCache"] = self.infra.model_cache.helm_fragment()
@@ -447,11 +455,14 @@ class GRLConfig(TrainingGRLConfig):
             "ray_rollouts_replicas": self.compute.rollouts.nodes,
             "ray_training_replicas": self.compute.training.nodes,
             "manager_image": resolved.manager,
+            "manager_snapshots_enabled": self.infra.manager.snapshots_enabled,
+            "manager_snapshot_cache_max_entries": self.infra.manager.snapshot_cache_max_entries,
             "release_name": self.infra.release_name,
             "release_namespace": self.infra.release_namespace,
             "vm_images_bucket": self.infra.vm_image_cache.bucket,
             "vm_images_region": self.infra.vm_image_cache.region,
             "vm_images_scratch_gb": self.infra.vm_image_cache.scratch_gb,
+            "vm_bootstrap_key": self.infra.vm_image_cache.bootstrap_key,
             "otel_collector_name": self.infra.otel_collector.name,
             "otel_collector_namespace": self.infra.otel_collector.namespace,
             "otel_upstream_endpoint": self.infra.otel_collector.upstream.endpoint,

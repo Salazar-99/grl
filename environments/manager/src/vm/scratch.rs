@@ -239,4 +239,23 @@ mod tests {
         assert!(!dst.exists());
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn restored_scratch_clones_are_write_isolated() {
+        let dir =
+            std::env::temp_dir().join(format!("grl-scratch-isolation-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let prepared = dir.join("prepared.ext4");
+        let first = dir.join("first.ext4");
+        let second = dir.join("second.ext4");
+        fs::write(&prepared, b"golden").unwrap();
+        copy_scratch_template(&prepared, &first).unwrap();
+        copy_scratch_template(&prepared, &second).unwrap();
+
+        fs::write(&first, b"rollout-one").unwrap();
+        assert_eq!(fs::read(&second).unwrap(), b"golden");
+        assert_eq!(fs::read(&prepared).unwrap(), b"golden");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

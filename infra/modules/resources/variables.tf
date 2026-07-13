@@ -46,6 +46,18 @@ variable "manager_image" {
   description = "Environment manager image run as a DaemonSet on environment nodes (environments/manager/Dockerfile)."
 }
 
+variable "manager_snapshots_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable node-local Firecracker golden snapshots."
+}
+
+variable "manager_snapshot_cache_max_entries" {
+  type        = string
+  default     = "64"
+  description = "Maximum node-local golden snapshot entries."
+}
+
 variable "ray_version" {
   type        = string
   default     = "2.55.1"
@@ -91,6 +103,12 @@ variable "vm_images_scratch_gb" {
   type        = number
   default     = 2
   description = "Size (GiB) of the per-VM scratch template staged by vm-image-cache. Each microVM copies this into manager container ephemeral storage at boot."
+}
+
+variable "vm_bootstrap_key" {
+  type        = string
+  default     = ""
+  description = "Immutable S3 key for the active Firecracker initrd. Empty uses the legacy base-baked init."
 }
 
 variable "model_tag" {

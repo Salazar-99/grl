@@ -301,6 +301,35 @@ mod tests {
         let _ = std::fs::remove_file(socket_path);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn firecracker_vsock_reconnects_after_transport_reset() {
+        let socket_path =
+            std::env::temp_dir().join(format!("grl-vsock-reconnect-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let server = thread::spawn(move || {
+            for host_port in [1024, 1025] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut command = [0u8; 13];
+                stream.read_exact(&mut command).unwrap();
+                assert_eq!(&command, b"CONNECT 5005\n");
+                stream
+                    .write_all(format!("OK {host_port}\n").as_bytes())
+                    .unwrap();
+            }
+        });
+
+        for _ in 0..2 {
+            let connection =
+                ExecutorConn::connect_firecracker_vsock(&socket_path, Duration::from_secs(1))
+                    .unwrap();
+            drop(connection);
+        }
+        server.join().unwrap();
+        let _ = std::fs::remove_file(socket_path);
+    }
+
     #[test]
     fn detail_is_infra_error_detects_scorer_errors() {
         assert!(detail_is_infra_error(

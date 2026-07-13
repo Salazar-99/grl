@@ -15,8 +15,9 @@
 //! see [`crate::reload`]. It never restarts to pick up a new bundle.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
-use crate::vm::{join_and_verify, resolve_kernel, VmPaths};
+use crate::vm::{VmPaths, join_and_verify, resolve_initrd, resolve_kernel};
 
 /// One catalog entry: prompt/tools for the trainer plus VM image paths for boot.
 #[derive(Clone, Debug, Default)]
@@ -31,18 +32,30 @@ pub struct TaskSpec {
     pub base_image: String,
     /// Task squashfs path relative to `GRL_VM_CACHE_DIR`.
     pub task_image: String,
+    /// Canonical bundle-pinned environment package path.
+    pub environment_image: PathBuf,
 }
 
 impl TaskSpec {
     /// Resolve absolute kernel and image paths under the node cache root.
     pub fn resolve_vm_paths(&self, cache_root: &std::path::Path) -> Result<VmPaths, String> {
         let kernel = resolve_kernel(cache_root)?;
+        let initrd = resolve_initrd(cache_root)?;
         let base_image = join_and_verify(cache_root, &self.base_image, "base_image")?;
         let task_image = join_and_verify(cache_root, &self.task_image, "task_image")?;
+        if !self.environment_image.is_file() {
+            return Err(format!(
+                "required bundle-pinned environment package not found: {}",
+                self.environment_image.display()
+            ));
+        }
+        let environment_image = self.environment_image.clone();
         Ok(VmPaths {
             kernel,
+            initrd,
             base_image,
             task_image,
+            environment_image,
         })
     }
 }
@@ -67,12 +80,34 @@ impl Catalog {
     /// malformed is still an error so a broken sync never silently empties a
     /// good catalog on reload.
     pub fn from_file(path: &str) -> Result<Catalog, String> {
-        if !std::path::Path::new(path).exists() {
+        let requested = std::path::Path::new(path);
+        if !requested.exists() {
             return Ok(Catalog::default());
         }
-        let raw =
-            std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-        Catalog::from_jsonl(&raw)
+        let file_name = requested
+            .file_name()
+            .ok_or_else(|| format!("tasks path has no file name: {path}"))?;
+        let parent = requested
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let pinned_dir = std::fs::canonicalize(parent)
+            .map_err(|e| format!("canonicalize bundle for {path}: {e}"))?;
+        let pinned_tasks = pinned_dir.join(file_name);
+        let raw = std::fs::read_to_string(&pinned_tasks)
+            .map_err(|e| format!("read {}: {e}", pinned_tasks.display()))?;
+        let mut catalog = Catalog::from_jsonl(&raw)?;
+        let environment = pinned_dir.join("environment.squashfs");
+        if !environment.is_file() {
+            return Err(format!(
+                "required environment package not found: {}",
+                environment.display()
+            ));
+        }
+        for spec in catalog.tasks.values_mut() {
+            spec.environment_image = environment.clone();
+        }
+        Ok(catalog)
     }
 
     /// Parse newline-delimited task records. Blank lines are skipped.
@@ -107,16 +142,12 @@ impl Catalog {
             let base_image = row
                 .get("base_image")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    format!("tasks.jsonl line {}: missing base_image", i + 1)
-                })?
+                .ok_or_else(|| format!("tasks.jsonl line {}: missing base_image", i + 1))?
                 .to_string();
             let task_image = row
                 .get("task_image")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    format!("tasks.jsonl line {}: missing task_image", i + 1)
-                })?
+                .ok_or_else(|| format!("tasks.jsonl line {}: missing task_image", i + 1))?
                 .to_string();
             tasks.insert(
                 task_id,
@@ -126,6 +157,7 @@ impl Catalog {
                     split,
                     base_image,
                     task_image,
+                    environment_image: PathBuf::new(),
                 },
             );
         }
@@ -183,7 +215,10 @@ mod tests {
         let catalog = Catalog::from_jsonl(&jsonl).unwrap();
         assert_eq!(catalog.len(), 2);
         let a = catalog.get("a").unwrap();
-        assert_eq!(a.initial_messages_json, r#"[{"content":"hi","role":"user"}]"#);
+        assert_eq!(
+            a.initial_messages_json,
+            r#"[{"content":"hi","role":"user"}]"#
+        );
         assert_eq!(a.tools_json, r#"[{"type":"function"}]"#);
         assert_eq!(a.base_image, "images/bases/base.squashfs");
         assert_eq!(a.task_image, "images/tasks/a.squashfs");
@@ -208,13 +243,29 @@ mod tests {
 
     #[test]
     fn from_file_existing_but_malformed_is_an_error() {
-        let path = std::env::temp_dir().join(format!(
-            "grl-malformed-{}-tasks.jsonl",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("grl-malformed-{}-tasks.jsonl", std::process::id()));
         std::fs::write(&path, "{ not json").unwrap();
         assert!(Catalog::from_file(path.to_string_lossy().as_ref()).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn from_file_pins_environment_package_to_catalog_generation() {
+        let dir = std::env::temp_dir().join(format!("grl-catalog-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let tasks = dir.join("tasks.jsonl");
+        let environment = dir.join("environment.squashfs");
+        std::fs::write(&tasks, sample_line("task", "dev")).unwrap();
+        std::fs::write(&environment, b"environment").unwrap();
+
+        let catalog = Catalog::from_file(tasks.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(
+            catalog.get("task").unwrap().environment_image,
+            std::fs::canonicalize(environment).unwrap()
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -229,17 +280,28 @@ mod tests {
         std::fs::create_dir_all(dir.join("images/bases")).unwrap();
         std::fs::create_dir_all(dir.join("images/tasks")).unwrap();
         std::fs::create_dir_all(dir.join("kernel")).unwrap();
+        std::fs::create_dir_all(dir.join("bootstrap")).unwrap();
+        std::fs::create_dir_all(dir.join("active")).unwrap();
         std::fs::write(dir.join("kernel/vmlinux-test"), b"k").unwrap();
+        std::fs::write(dir.join("bootstrap/active.cpio.gz"), b"bootstrap").unwrap();
         std::fs::write(dir.join("images/bases/base.squashfs"), b"b").unwrap();
         std::fs::write(dir.join("images/tasks/t1.squashfs"), b"t").unwrap();
+        std::fs::write(dir.join("active/environment.squashfs"), b"environment").unwrap();
 
-        let jsonl = format!("{}\n", sample_line("t1", "dev"));
-        let catalog = Catalog::from_jsonl(&jsonl).unwrap();
+        let tasks = dir.join("active/tasks.jsonl");
+        std::fs::write(&tasks, format!("{}\n", sample_line("t1", "dev"))).unwrap();
+        let catalog = Catalog::from_file(tasks.to_string_lossy().as_ref()).unwrap();
         let spec = catalog.get("t1").unwrap();
         let paths = spec.resolve_vm_paths(&dir).unwrap();
         assert!(paths.kernel.ends_with("vmlinux-test"));
+        assert!(paths.initrd.ends_with("bootstrap/active.cpio.gz"));
         assert!(paths.base_image.ends_with("images/bases/base.squashfs"));
         assert!(paths.task_image.ends_with("images/tasks/t1.squashfs"));
+        assert!(
+            paths
+                .environment_image
+                .ends_with("active/environment.squashfs")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -257,6 +319,9 @@ mod tests {
         let all = catalog.list_tasks(None);
         assert_eq!(all.len(), 3);
         let dev = catalog.list_tasks(Some("dev"));
-        assert_eq!(dev, vec![("a".into(), "dev".into()), ("c".into(), "dev".into())]);
+        assert_eq!(
+            dev,
+            vec![("a".into(), "dev".into()), ("c".into(), "dev".into())]
+        );
     }
 }

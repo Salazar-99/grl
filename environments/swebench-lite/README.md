@@ -9,11 +9,25 @@ This is used by the `vms/` module to generate the Firecracker VM environments fo
 ## vms/
 Python tooling that builds Firecracker-ready squashfs disks for the SWE-bench-lite dev split.
 
-**Base images** (`base-images/`) — one per repo+version environment. Ubuntu, Python, and pip dependencies are baked in via Docker, then packed into a read-only, zstd-compressed squashfs (no baked-in headroom). Each base image is boot-ready: `/init` (grl-init) stacks a per-VM writable ext4 overlay over the squashfs root, pivots into it, copies the task repo into `/testbed`, and starts `grl-env` on vsock port 5005.
+**Base images** (`base-images/`) — one per repo+version environment. Ubuntu,
+Python, and pip dependencies are baked in via Docker, then packed into a
+read-only, zstd-compressed squashfs. Base images contain neither init logic nor
+the environment executor.
 
-**Task images** (`task-images/`) — one per dataset instance. Repo source at `base_commit` packed into a read-only squashfs (typically single-digit MB compressed). Attached as a virtio block device and mounted RO; grl-init copies its contents into the writable `/testbed` overlay so the read-only lower is safely shared across the concurrent VMs GRPO fans out per task.
+**Task images** (`task-images/`) — one per dataset instance. Repo source at
+`base_commit` and the private reward specification are packed into a read-only
+squashfs. The external `grl-bootstrap` mounts it at `/run/grl/task`; the
+environment package copies the task into its writable workspace.
 
-**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`), the opening prompt (`messages`), tool schemas (`tools`), and node-relative VM image paths (`base_image`, `task_image`) for Firecracker boot. It carries no answer keys: the reward spec (held-out tests, test patch, test command) is baked into each task VM image at `/grl/task.json`, where only the in-VM scorer reads it.
+**Bootstrap** (`bootstrap-images/`) — a required, content-addressed initramfs
+containing the static `grl-bootstrap` PID 1. It assembles the writable root,
+mounts task and environment packages, and starts the environment entrypoint.
+
+**Environment package** (`environment-images/`) — a required squashfs
+containing `/entrypoint` (`grl-env`). It owns SWE-bench workspace preparation,
+tools, and scoring.
+
+**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`), the opening prompt (`messages`), tool schemas (`tools`), and node-relative VM image paths (`base_image`, `task_image`) for Firecracker boot.
 
 ### Prerequisites
 
@@ -27,18 +41,22 @@ Python tooling that builds Firecracker-ready squashfs disks for the SWE-bench-li
 cd vms
 uv sync
 
-# full pipeline: generate dockerfiles, build images, upload to S3
+# Configure artifact uploads
 export VMS_S3_BUCKET=my-bucket
 export VMS_S3_REGION=us-west-2   # or set AWS_DEFAULT_REGION
-uv run vms
 ```
 
-Individual steps:
+The tooling requires an explicit operation; there is no base-image-only
+fallback pipeline.
 
 ```bash
 uv run vms generate          # write dockerfiles/
 uv run vms build             # build base-images/*.squashfs (skips existing)
 uv run vms build-tasks       # build task-images/*.squashfs (skips existing)
+uv run vms build-bootstrap   # build the required grl-bootstrap initramfs
+uv run vms build-environment # build the required grl-env package
+uv run vms upload-bootstrap bootstrap-images/grl-bootstrap-<sha>.cpio.gz
+uv run vms build-environment --upload --bundle-uri s3://<bucket>/<bundle>
 uv run vms upload --jobs 4   # upload to s3://$VMS_S3_BUCKET/bases/ and .../tasks/
 uv run vms tasks             # render tasks.jsonl (prompts + tools) for the trainer
 uv run vms tasks --upload    # also upload to s3://$VMS_S3_BUCKET/datasets/swebench-lite/<split>/tasks.jsonl
@@ -52,7 +70,7 @@ Uploads land at `s3://$VMS_S3_BUCKET/bases/<env>.squashfs` and `s3://$VMS_S3_BUC
 
 ## env/
 
-Rust `env` executor binary that runs inside each Firecracker VM. It implements this environment's tools (a persistent `bash` shell) and computes the task reward (`src/score.rs`): on `Score` it applies the held-out test patch, runs the targeted tests from the baked-in `/grl/task.json`, and returns reward 1.0 only if every `FAIL_TO_PASS` and `PASS_TO_PASS` test passes. It is baked into the VM images and invoked by the shared environment manager.
+Rust `env` executor binary that runs inside each Firecracker VM. It implements this environment's tools (a persistent `bash` shell) and computes the task reward (`src/score.rs`): on `Score` it applies the held-out test patch, runs the targeted tests from `/run/grl/task/task.json`, and returns reward 1.0 only if every `FAIL_TO_PASS` and `PASS_TO_PASS` test passes. It is packaged in `environment.squashfs`; it is never baked into a base image.
 
 The environment-agnostic gRPC manager that handles VM lifecycle and tool call dispatch lives at [`environments/manager/`](../manager/) — it is shared across all environments and contains no swebench-lite-specific code.
 

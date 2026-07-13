@@ -2,11 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vms.env_binary import resolve_grl_env_binary
-
 PLATFORM = "linux/amd64"
-ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
-GRL_INIT = ASSETS_DIR / "grl-init"
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -36,16 +32,13 @@ def build_base_image(
 ) -> Path:
     """Build a read-only, zstd-compressed squashfs rootfs from the env Dockerfile.
 
-    The Docker rootfs is exported into a directory, `/init` (grl-init) and
-    `/usr/local/bin/grl-env` are added, then `mksquashfs` packs it. The guest
-    boots this as a read-only lower and stacks a per-VM ext4 overlay on top, so
-    the image itself never needs headroom or a writable filesystem.
+    The Docker rootfs is exported directly into a squashfs. Boot and
+    environment executables are separate artifacts and are never baked into
+    repository-specific bases.
     """
     tag = f"swe-base-{name}"
     squashfs_path = output_dir / f"{name}.squashfs"
     output_dir.mkdir(parents=True, exist_ok=True)
-    grl_env = resolve_grl_env_binary(platform=platform)
-
     run(
         [
             "docker",
@@ -66,9 +59,7 @@ def build_base_image(
     try:
         export = subprocess.Popen(["docker", "export", container], stdout=subprocess.PIPE)
         # Do all filesystem assembly and packing inside a privileged container:
-        # extract the rootfs tar into a dir, drop in the init + env binary, then
-        # mksquashfs it. squashfs-tools + coreutils are all we need — no
-        # e2fsprogs, no loopback mounts.
+        # Extract the rootfs tar and pack it without boot/environment payloads.
         populate = subprocess.run(
             [
                 "docker",
@@ -79,10 +70,6 @@ def build_base_image(
                 platform,
                 "-v",
                 f"{output_dir.resolve()}:/output",
-                "-v",
-                f"{GRL_INIT}:/assets/grl-init:ro",
-                "-v",
-                f"{grl_env}:/assets/grl-env:ro",
                 "ubuntu:22.04",
                 "bash",
                 "-c",
@@ -91,12 +78,6 @@ def build_base_image(
                 apt-get update && apt-get install -y squashfs-tools
                 mkdir -p /rootfs
                 tar -xf - -C /rootfs
-                install -m 755 /assets/grl-init /rootfs/init
-                mkdir -p /rootfs/usr/local/bin
-                install -m 755 /assets/grl-env /rootfs/usr/local/bin/grl-env
-                # grl-init mounts onto these before the root becomes writable,
-                # so they must exist in the read-only squashfs.
-                mkdir -p /rootfs/scratch /rootfs/newroot
                 rm -f /output/{squashfs_path.name}
                 mksquashfs /rootfs /output/{squashfs_path.name} -comp zstd -noappend
                 """,

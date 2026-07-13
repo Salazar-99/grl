@@ -15,7 +15,7 @@ envId: ""
 # Subdirectory under hostPath for the active bundle's tasks.jsonl + .ready.
 activeDir: active
 
-# Node-local cache root the manager mounts read-only and boots VMs from.
+# Node-local cache root used by bundle sync and the manager.
 hostPath: /var/lib/grl
 
 # s5cmd resolves S3 credentials from the node role via IMDS but not the region.

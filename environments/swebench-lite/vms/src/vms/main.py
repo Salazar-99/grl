@@ -2,14 +2,26 @@ import argparse
 import json
 from pathlib import Path
 
+from vms.build_bootstrap import build_bootstrap
+from vms.build_environment import (
+    build_environment_image,
+    build_minimal_environment_image,
+)
 from vms.build_images import build_all
 from vms.build_tasks import build_all_tasks
 from vms.dataset import DEFAULT_DATASET, load_tasks
 from vms.dockerfile import render_dockerfile, slug
 from vms.images import resolve_from_tasks_jsonl
+from vms.kernel_config import validate_kernel_config
 from vms.requirements import fetch_requirements
 from vms.tasks import write_tasks_jsonl
-from vms.upload import upload_all, upload_tasks_file
+from vms.upload import (
+    upload_all,
+    upload_bootstrap,
+    upload_environment,
+    upload_environment_bundle,
+    upload_tasks_file,
+)
 from vms.versions import MAP_REPO_VERSION_TO_SPECS_PY
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,19 +79,7 @@ def main() -> None:
         default=DEFAULT_DATASET,
         help="parquet dataset split (default: data/files/dev.parquet)",
     )
-    parser.add_argument("--platform", default="linux/amd64")
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="rebuild images even if the squashfs output already exists",
-    )
-    parser.add_argument(
-        "--upload-jobs",
-        type=int,
-        default=None,
-        help="parallel uploads for the full pipeline (default: 4 or VMS_UPLOAD_JOBS)",
-    )
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", required=True)
 
     gen = sub.add_parser("generate", help="generate Dockerfiles from dataset")
     gen.add_argument("--output", type=Path, default=ROOT / "dockerfiles")
@@ -124,6 +124,54 @@ def main() -> None:
         help="rebuild images even if the squashfs output already exists",
     )
 
+    upload_bootstrap_cmd = sub.add_parser(
+        "upload-bootstrap", help="upload one immutable bootstrap initramfs to S3"
+    )
+    upload_bootstrap_cmd.add_argument("path", type=Path)
+    upload_bootstrap_cmd.add_argument("--force", action="store_true")
+
+    environment_cmd = sub.add_parser(
+        "build-environment", help="build the SWE-bench guest runtime squashfs"
+    )
+    environment_cmd.add_argument(
+        "--output", type=Path, default=ROOT / "environment-images"
+    )
+    environment_cmd.add_argument("--platform", default="linux/amd64")
+    environment_cmd.add_argument("--upload", action="store_true")
+    environment_cmd.add_argument("--bundle-uri")
+    environment_cmd.add_argument("--force", action="store_true")
+
+    minimal_environment_cmd = sub.add_parser(
+        "build-minimal-environment",
+        help="build the boundary-test managed environment squashfs",
+    )
+    minimal_environment_cmd.add_argument(
+        "--output", type=Path, default=ROOT / "environment-images"
+    )
+    minimal_environment_cmd.add_argument("--platform", default="linux/amd64")
+    minimal_environment_cmd.add_argument("--upload", action="store_true")
+    minimal_environment_cmd.add_argument("--force", action="store_true")
+
+    upload_environment_cmd = sub.add_parser(
+        "upload-environment", help="upload one environment runtime squashfs"
+    )
+    upload_environment_cmd.add_argument("path", type=Path)
+    upload_environment_cmd.add_argument("--bundle-uri")
+    upload_environment_cmd.add_argument("--force", action="store_true")
+
+    bootstrap_cmd = sub.add_parser(
+        "build-bootstrap", help="build the final static Rust bootstrap initramfs"
+    )
+    bootstrap_cmd.add_argument("--output", type=Path, default=ROOT / "bootstrap-images")
+    bootstrap_cmd.add_argument("--platform", default="linux/amd64")
+    bootstrap_cmd.add_argument("--upload", action="store_true")
+
+    kernel_cmd = sub.add_parser(
+        "validate-kernel-config",
+        help="verify built-in initrd and mount support in a Linux kernel config",
+    )
+    kernel_cmd.add_argument("path", type=Path)
+
     upload_cmd = sub.add_parser("upload", help="upload squashfs images to S3")
     upload_cmd.add_argument("--base-images", type=Path, default=ROOT / "base-images")
     upload_cmd.add_argument("--task-images", type=Path, default=ROOT / "task-images")
@@ -142,23 +190,9 @@ def main() -> None:
     args = parser.parse_args()
     tasks = load_tasks(args.dataset)
 
-    dockerfiles = ROOT / "dockerfiles"
-    base_images = ROOT / "base-images"
-    task_images = ROOT / "task-images"
-
-    tasks_jsonl = ROOT / "tasks.jsonl"
     split = split_name(args.dataset)
 
-    if args.command is None:
-        generate(tasks, dockerfiles)
-        build_all(dockerfiles, base_images, platform=args.platform, force=args.force)
-        build_all_tasks(
-            args.dataset, task_images, platform=args.platform, force=args.force
-        )
-        write_tasks_jsonl(tasks, split, tasks_jsonl)
-        upload_all(base_images, task_images, force=args.force, jobs=args.upload_jobs)
-        upload_tasks_file(tasks_jsonl, split=split, force=args.force)
-    elif args.command == "generate":
+    if args.command == "generate":
         generate(tasks, args.output)
     elif args.command == "tasks":
         write_tasks_jsonl(tasks, split, args.output)
@@ -185,6 +219,46 @@ def main() -> None:
             only=args.only,
             force=args.force,
         )
+    elif args.command == "upload-bootstrap":
+        print(f"uploaded {upload_bootstrap(args.path, force=args.force)}")
+    elif args.command == "build-environment":
+        artifact = build_environment_image(
+            args.output, platform=args.platform, force=args.force
+        )
+        print(f"wrote {artifact}")
+        if args.upload:
+            uri = (
+                upload_environment_bundle(
+                    artifact, bundle_uri=args.bundle_uri, force=args.force
+                )
+                if args.bundle_uri
+                else upload_environment(artifact, force=args.force)
+            )
+            print(f"uploaded {uri}")
+    elif args.command == "upload-environment":
+        uri = (
+            upload_environment_bundle(
+                args.path, bundle_uri=args.bundle_uri, force=args.force
+            )
+            if args.bundle_uri
+            else upload_environment(args.path, force=args.force)
+        )
+        print(f"uploaded {uri}")
+    elif args.command == "build-minimal-environment":
+        artifact = build_minimal_environment_image(
+            args.output, platform=args.platform, force=args.force
+        )
+        print(f"wrote {artifact}")
+        if args.upload:
+            print(f"uploaded {upload_environment(artifact, force=args.force)}")
+    elif args.command == "build-bootstrap":
+        artifact = build_bootstrap(args.output, platform=args.platform)
+        print(f"wrote {artifact}")
+        if args.upload:
+            print(f"uploaded {upload_bootstrap(artifact)}")
+    elif args.command == "validate-kernel-config":
+        validate_kernel_config(args.path)
+        print(f"kernel config supports managed bootstrap: {args.path}")
     elif args.command == "upload":
         upload_all(args.base_images, args.task_images, force=args.force, jobs=args.jobs)
 
