@@ -22,6 +22,58 @@ from training.types import PolicyWeightsRef, RolloutResult, TrainingBatch
 __all__ = ["TrainingBatch", "TrainingWorker", "grpo_valid_rollouts"]
 
 
+def chunked_logprobs(
+    lm_head: "torch.nn.Module",
+    hidden: "torch.Tensor",
+    input_ids: "torch.Tensor",
+    *,
+    chunk_size: int,
+) -> tuple["torch.Tensor", "torch.Tensor"]:
+    """Next-token logprobs and per-token entropy, projected to vocab in time chunks.
+
+    Returns two `[batch, seq-1]` tensors: the logprob the model assigns to the token
+    actually generated at each position, and the entropy of the distribution there.
+
+    The naive form (project everything, then log_softmax) needs several `[batch,
+    seq, vocab]` fp32 tensors at once. At Qwen's ~250k vocab that is ~1 MB per token
+    per tensor, so a long trajectory OOMs any GPU. Here each chunk's distribution is
+    built, reduced to the two small outputs, and dropped; the chunk is wrapped in a
+    checkpoint so backward recomputes it rather than keeping it alive. Peak vocab
+    memory becomes `chunk_size x vocab` instead of `seq x vocab`.
+    """
+    import torch
+    import torch.nn.functional as F
+    from torch.utils.checkpoint import checkpoint
+
+    def project(hidden_chunk: torch.Tensor, labels_chunk: torch.Tensor):
+        logits = lm_head(hidden_chunk).float()
+        log_probs = F.log_softmax(logits, dim=-1)
+        gathered = log_probs.gather(-1, labels_chunk.unsqueeze(-1)).squeeze(-1)
+        entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
+        return gathered, entropy
+
+    # Position i predicts token i+1, so the last position has no label.
+    shifted_hidden = hidden[:, :-1, :]
+    labels = input_ids[:, 1:]
+
+    gathered_chunks = []
+    entropy_chunks = []
+    for start in range(0, shifted_hidden.shape[1], chunk_size):
+        stop = start + chunk_size
+        hidden_chunk = shifted_hidden[:, start:stop, :]
+        labels_chunk = labels[:, start:stop]
+        if torch.is_grad_enabled() and hidden_chunk.requires_grad:
+            gathered, entropy = checkpoint(
+                project, hidden_chunk, labels_chunk, use_reentrant=False
+            )
+        else:
+            gathered, entropy = project(hidden_chunk, labels_chunk)
+        gathered_chunks.append(gathered)
+        entropy_chunks.append(entropy.detach())
+
+    return torch.cat(gathered_chunks, dim=1), torch.cat(entropy_chunks, dim=1)
+
+
 def grpo_valid_rollouts(
     group: list[RolloutResult],
     *,
@@ -66,6 +118,8 @@ class TrainingWorker:
         self.loss_scale_factor = cfg.grpo.loss_scale_factor
         learning_rate = cfg.grpo.learning_rate
         self.min_rollouts_per_group = cfg.grpo.min_rollouts_per_group
+        self.micro_batch_size = cfg.trainer.micro_batch_size
+        self.logprob_chunk_size = cfg.trainer.logprob_chunk_size
         self.run_id = run_id
         self.checkpoint_bucket_uri = cfg.checkpoint.bucket_uri
         self.checkpoint_interval_steps = cfg.checkpoint.interval_steps
@@ -92,6 +146,11 @@ class TrainingWorker:
             local_files_only=True,
         ).to("cuda:0")
         self.model.train()
+        if cfg.trainer.gradient_checkpointing:
+            # Long trajectories make stored per-layer activations the second
+            # largest consumer after the vocab projection; recompute them instead.
+            self.model.config.use_cache = False
+            self.model.gradient_checkpointing_enable()
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
         self.policy_version = 0
@@ -114,22 +173,10 @@ class TrainingWorker:
                 return None
 
             current.set_attribute("num_rollouts", len(rollouts))
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             tensors = self._collate_rollouts(rollouts, advantages)
             with record_duration("grl.train.step.duration"):
-                trainer_logprobs, mean_entropy = self._get_logprobs(
-                    tensors["input_ids"],
-                    tensors["attention_mask"],
-                    tensors["prompt_lens"],
-                    tensors["response_lens"],
-                )
-                loss, stats = self._compute_loss(
-                    trainer_logprobs=trainer_logprobs,
-                    inference_logprobs=tensors["inference_logprobs"],
-                    advantages=tensors["advantages"],
-                    mask=tensors["response_mask"],
-                )
-                loss.backward()
+                loss, stats, mean_entropy = self._accumulate_gradients(tensors)
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), float("inf")
                 )
@@ -137,7 +184,7 @@ class TrainingWorker:
 
             self.policy_version = max(self.policy_version, batch.policy_version) + 1
             self._record_train_metrics(
-                loss=float(loss.item()),
+                loss=loss,
                 stats=stats,
                 grad_norm=float(grad_norm),
                 mean_entropy=mean_entropy,
@@ -146,7 +193,7 @@ class TrainingWorker:
                 rewards=rewards,
                 num_rollouts=len(rollouts),
             )
-            current.set_attribute("loss", float(loss.item()))
+            current.set_attribute("loss", loss)
 
             with span("weight_sync"), record_duration("grl.train.weight_sync.duration"):
                 weights_ref = self.send_weights()
@@ -160,6 +207,63 @@ class TrainingWorker:
                 ray.get(update_refs)
             self.checkpoint()
             return self.policy_version
+
+    def _accumulate_gradients(
+        self,
+        tensors: dict[str, "torch.Tensor"],
+    ) -> tuple[float, dict[str, float], float]:
+        """Backward the batch in micro-batches, leaving accumulated grads on the model.
+
+        Each micro-batch is normalized by the *whole batch's* denominator, so the
+        summed gradients equal the gradient of the whole-batch loss: the objective
+        is unchanged, only the peak memory is. Telemetry is likewise accumulated as
+        mask-weighted sums and averaged over the full batch at the end.
+        """
+        mask = tensors["response_mask"]
+        batch_size = int(mask.shape[0])
+        # Padded response width of the *whole* batch, matching the pre-micro-batch
+        # normalizer; a per-micro-batch width would silently reweight the loss.
+        loss_scale = self.loss_scale_factor or int(mask.shape[1])
+        denom = float(batch_size * loss_scale)
+
+        total_loss = 0.0
+        stat_sums: dict[str, float] = {}
+        entropy_sum = 0.0
+        token_count = 0
+
+        for start in range(0, batch_size, self.micro_batch_size):
+            stop = min(start + self.micro_batch_size, batch_size)
+            micro = {name: tensor[start:stop] for name, tensor in tensors.items()}
+            # Trim right padding to this micro-batch's longest sequence: the batch is
+            # padded to its global longest, and carrying that into every forward wastes
+            # the memory this loop exists to save.
+            width = int(micro["attention_mask"].sum(dim=1).max().item())
+            trainer_logprobs, micro_entropy_sum, micro_tokens = self._forward_logprobs(
+                micro["input_ids"][:, :width],
+                micro["attention_mask"][:, :width],
+                micro["prompt_lens"],
+                micro["response_lens"],
+                max_resp=int(mask.shape[1]),
+            )
+            loss, sums = self._compute_loss(
+                trainer_logprobs=trainer_logprobs,
+                inference_logprobs=micro["inference_logprobs"],
+                advantages=micro["advantages"],
+                mask=micro["response_mask"],
+                denom=denom,
+            )
+            loss.backward()
+
+            total_loss += float(loss.item())
+            for key, value in sums.items():
+                stat_sums[key] = stat_sums.get(key, 0.0) + value
+            entropy_sum += micro_entropy_sum
+            token_count += micro_tokens
+
+        tokens = float(stat_sums.pop("tokens", 0.0)) or 1.0
+        stats = {key: value / tokens for key, value in stat_sums.items()}
+        mean_entropy = entropy_sum / token_count if token_count else 0.0
+        return total_loss, stats, mean_entropy
 
     def save_checkpoint(self) -> str:
         return self.checkpoint(final=True)
@@ -337,25 +441,45 @@ class TrainingWorker:
             "advantages": advantages_t,
         }
 
-    def _get_logprobs(
+    def _forward_logprobs(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         prompt_lens: torch.Tensor,
         response_lens: torch.Tensor,
-    ) -> tuple["torch.Tensor", float]:
-        """Per-response-token logprobs and mean token entropy over the batch."""
-        import torch.nn.functional as F
+        *,
+        max_resp: int,
+    ) -> tuple["torch.Tensor", float, int]:
+        """Response-token logprobs for one micro-batch, plus its entropy sum/count.
 
-        outputs = self.model(input_ids, attention_mask=attention_mask)
-        logits = outputs.logits.float()
-        shifted_logits = logits[:, :-1, :]
-        shifted_labels = input_ids[:, 1:]
-        log_probs = F.log_softmax(shifted_logits, dim=-1)
-        per_token_entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
-        gathered = log_probs.gather(-1, shifted_labels.unsqueeze(-1)).squeeze(-1)
+        Runs the backbone and the vocab projection separately so the projection can
+        be chunked; calling the full causal-LM head in one shot would materialize
+        the `[batch, seq, vocab]` tensor this whole path exists to avoid.
 
-        batch_size, max_resp = input_ids.shape[0], response_lens.max().item()
+        ``max_resp`` is the whole batch's padded response width, so the returned
+        rows line up with the caller's mask and inference-logprob slices.
+        """
+        import torch
+
+        decoder = self.model.get_decoder()
+        lm_head = self.model.get_output_embeddings()
+        if decoder is None or lm_head is None:
+            raise RuntimeError(
+                f"{type(self.model).__name__} exposes no decoder/output embeddings; "
+                "cannot compute logprobs without materializing full-vocab logits"
+            )
+        hidden = decoder(
+            input_ids=input_ids, attention_mask=attention_mask
+        ).last_hidden_state
+
+        gathered, entropy = chunked_logprobs(
+            lm_head,
+            hidden,
+            input_ids,
+            chunk_size=self.logprob_chunk_size,
+        )
+
+        batch_size = int(input_ids.shape[0])
         trainer_logprobs = torch.zeros(
             batch_size,
             max_resp,
@@ -371,11 +495,10 @@ class TrainingWorker:
             end = prompt_len + resp_len - 1
             trainer_logprobs[i, :resp_len] = gathered[i, start:end]
             if resp_len > 0:
-                entropy_sum += float(per_token_entropy[i, start:end].sum().item())
+                entropy_sum += float(entropy[i, start:end].sum().item())
                 token_count += resp_len
 
-        mean_entropy = entropy_sum / token_count if token_count else 0.0
-        return trainer_logprobs, mean_entropy
+        return trainer_logprobs, entropy_sum, token_count
 
     def _compute_loss(
         self,
@@ -383,6 +506,8 @@ class TrainingWorker:
         inference_logprobs: torch.Tensor,
         advantages: torch.Tensor,
         mask: torch.Tensor,
+        *,
+        denom: float,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """
         DrGRPO clipped policy loss with KL against rollout-time logprobs
@@ -392,9 +517,14 @@ class TrainingWorker:
         length constant, avoiding per-rollout token-mean length bias. When
         ``loss_scale_factor`` is unset, use the current padded response width.
 
-        Returns the differentiable loss plus a dict of scalar telemetry stats
-        (policy-gradient term, KL, mean ratio, clip fraction) computed from the
-        same tensors so observability adds no extra forward pass.
+        ``denom`` is that normalizer for the *whole* batch and is supplied by the
+        caller, so a micro-batch contributes its true share of the gradient rather
+        than being rescaled to its own size.
+
+        Returns the differentiable loss plus unnormalized, mask-weighted telemetry
+        sums (policy-gradient term, KL, ratio, clip count, token count) computed from
+        the same tensors, so observability adds no extra forward pass. The caller
+        divides the sums by the batch's total token count.
         """
         import torch
 
@@ -411,37 +541,32 @@ class TrainingWorker:
         per_token_loss = per_token_pg + self.beta * per_token_kl
 
         masked = per_token_loss * mask
-        loss_scale = self.loss_scale_factor or mask.shape[1]
-        loss = masked.sum() / (mask.shape[0] * loss_scale)
-        stats = self._loss_stats(per_token_pg, per_token_kl, ratio, mask)
-        return loss, stats
+        loss = masked.sum() / denom
+        sums = self._loss_stat_sums(per_token_pg, per_token_kl, ratio, mask)
+        return loss, sums
 
-    def _loss_stats(
+    def _loss_stat_sums(
         self,
         per_token_pg: torch.Tensor,
         per_token_kl: torch.Tensor,
         ratio: torch.Tensor,
         mask: torch.Tensor,
     ) -> dict[str, float]:
-        """Mask-weighted scalar summaries of the loss components for telemetry."""
+        """Mask-weighted sums of the loss components, to be averaged across micro-batches."""
         import torch
 
         with torch.no_grad():
             mask_f = mask.to(ratio.dtype)
-            denom = mask_f.sum().clamp(min=1.0)
-            pg = (per_token_pg * mask_f).sum() / denom
-            kl = (per_token_kl * mask_f).sum() / denom
-            ratio_mean = (ratio * mask_f).sum() / denom
             clipped = (
                 (ratio < 1 - self.epsilon) | (ratio > 1 + self.epsilon)
             ) & mask.bool()
-            clip_fraction = clipped.to(ratio.dtype).sum() / denom
-        return {
-            "pg_loss": float(pg.item()),
-            "kl": float(kl.item()),
-            "ratio_mean": float(ratio_mean.item()),
-            "clip_fraction": float(clip_fraction.item()),
-        }
+            return {
+                "pg_loss": float((per_token_pg * mask_f).sum().item()),
+                "kl": float((per_token_kl * mask_f).sum().item()),
+                "ratio_mean": float((ratio * mask_f).sum().item()),
+                "clip_fraction": float(clipped.to(ratio.dtype).sum().item()),
+                "tokens": float(mask_f.sum().item()),
+            }
 
     def _compute_kl(
         self,

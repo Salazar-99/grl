@@ -243,6 +243,10 @@ class ModelCacheConfig(BaseModel):
     image: str = "python:3.12-slim"
     pause_image: str = Field(default="registry.k8s.io/pause:3.10", alias="pauseImage")
     host_path: str = Field(default="/models", alias="hostPath")
+    # How long TRAINING waits for the weights to land on every node. Generous by
+    # default: a cold cluster pulls the full model per node, and an unauthenticated
+    # Hugging Face pull of a 4B model already takes >10 min.
+    ready_timeout_secs: float = Field(default=1800.0, alias="readyTimeoutSecs")
 
     model_config = {"populate_by_name": True}
 
@@ -259,9 +263,12 @@ class ModelCacheConfig(BaseModel):
         return f"{self.host_path.rstrip('/')}/{self.local_model_name()}"
 
     def helm_fragment(self) -> dict[str, Any]:
+        # ready_timeout_secs gates the launcher's submit; the chart has no use for it.
         return {
             key: value
-            for key, value in self.model_dump(by_alias=True).items()
+            for key, value in self.model_dump(
+                by_alias=True, exclude={"ready_timeout_secs"}
+            ).items()
             if value != ""
         }
 
@@ -509,6 +516,7 @@ class GRLConfig(TrainingGRLConfig):
             include={
                 "model",
                 "grpo",
+                "trainer",
                 "workers",
                 "rollout",
                 "pipeline",

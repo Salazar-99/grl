@@ -29,6 +29,26 @@ class GRPOConfig(BaseModel):
         return {"temperature": self.temperature, "top_p": self.top_p}
 
 
+class TrainerConfig(BaseModel):
+    """Memory/throughput knobs for one policy update. No effect on the objective.
+
+    The training step is the memory bottleneck: logprobs need a `[batch, seq,
+    vocab]` distribution, and Qwen vocabularies are ~250k, so a single fp32
+    full-vocab tensor costs ~1 MB *per token*. Sequences are long (a 30-turn
+    SWE-bench trajectory carries every tool output), so the batch is split into
+    micro-batches and the vocab projection is chunked over time; gradients
+    accumulate across micro-batches, leaving the update mathematically identical
+    to the whole-batch one.
+    """
+
+    micro_batch_size: int = Field(default=1, ge=1)
+    """Rollouts per forward/backward. Peak activation memory scales with this."""
+    logprob_chunk_size: int = Field(default=512, ge=1)
+    """Timesteps per vocab projection. Caps the transient `[chunk, vocab]` tensor."""
+    gradient_checkpointing: bool = True
+    """Recompute transformer activations in backward instead of storing them."""
+
+
 class WorkersConfig(BaseModel):
     num_rollout_workers: int | None = None
     """Ray RolloutWorker actors. None = derive from compute capacity at launch."""
@@ -159,6 +179,7 @@ class RayConfig(BaseModel):
 class GRLConfig(BaseModel):
     model: str
     grpo: GRPOConfig = Field(default_factory=GRPOConfig)
+    trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     workers: WorkersConfig = Field(default_factory=WorkersConfig)
     rollout: RolloutConfig = Field(default_factory=RolloutConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
