@@ -47,7 +47,6 @@ def build_bootstrap(output_dir: Path, *, platform: str = "linux/amd64") -> Path:
         )
         binary = temp_dir / "grl-bootstrap"
         provisional = output_dir / f".grl-bootstrap-{os.getpid()}.cpio.gz"
-        os.chmod(binary, 0o755)
         subprocess.run(
             [
                 "docker",
