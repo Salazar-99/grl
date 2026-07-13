@@ -31,6 +31,11 @@ def _stub_launch_prelude(monkeypatch, launcher_module, calls):
     )
     monkeypatch.setattr(
         launcher_module,
+        "wait_for_model_cache",
+        lambda *a, **k: calls.append("model_cache"),
+    )
+    monkeypatch.setattr(
+        launcher_module,
         "submit_training_job",
         lambda *a, **k: (calls.append("submit"), "grl-run-x")[1],
     )
@@ -230,7 +235,7 @@ def test_training_only_asserts_envs_then_submits(monkeypatch):
         }
     )
     launcher_module.launch(config)
-    assert calls == ["assert_envs", "submit"]
+    assert calls == ["assert_envs", "model_cache", "submit"]
 
 
 def test_envs_only_asserts_resources_then_activates(monkeypatch):
@@ -293,4 +298,66 @@ def test_full_launch_runs_all_layers(monkeypatch):
     )
     launcher_module.launch(config)
     # FULL: single EKS apply (CLUSTER step) covers resources, then envs, then training.
-    assert calls == ["apply_infra", "activate", "submit"]
+    # The model-cache gate must land before submit: on a cold cluster the weights
+    # are still downloading when the layers above finish.
+    assert calls == ["apply_infra", "activate", "model_cache", "submit"]
+
+
+def test_wait_for_model_cache_blocks_until_daemonset_ready(monkeypatch):
+    from grl import launcher as launcher_module
+
+    waited: list[dict] = []
+    monkeypatch.setattr(launcher_module, "daemonset_exists", lambda *a, **k: True)
+    monkeypatch.setattr(
+        launcher_module,
+        "wait_for_rollout",
+        lambda api, name, namespace, **kwargs: waited.append(
+            {"name": name, "namespace": namespace, **kwargs}
+        ),
+    )
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "infra": {
+                "model_cache": {
+                    "tag": "org/model",
+                    "namespace": "models",
+                    "ready_timeout_secs": 900,
+                }
+            },
+        }
+    )
+
+    launcher_module.wait_for_model_cache(config, object())
+
+    assert waited == [
+        {"name": "model-cache", "namespace": "models", "timeout_secs": 900}
+    ]
+
+
+def test_wait_for_model_cache_skips_when_cache_absent(monkeypatch):
+    """Weights baked into the image: no DaemonSet, nothing to wait for."""
+    from grl import launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "daemonset_exists", lambda *a, **k: False)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not wait on a rollout that does not exist")
+
+    monkeypatch.setattr(launcher_module, "wait_for_rollout", fail_if_called)
+    config = GRLConfig.model_validate({"model": "org/model"})
+
+    launcher_module.wait_for_model_cache(config, object())
+
+
+def test_wait_for_model_cache_dry_run_skips_cluster_calls(monkeypatch):
+    from grl import launcher as launcher_module
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("should not call cluster APIs in dry-run")
+
+    monkeypatch.setattr(launcher_module, "daemonset_exists", fail_if_called)
+    monkeypatch.setattr(launcher_module, "wait_for_rollout", fail_if_called)
+    config = GRLConfig.model_validate({"model": "org/model"})
+
+    launcher_module.wait_for_model_cache(config, None, dry_run=True)

@@ -40,6 +40,7 @@ from grl.tools import ensure_tools
 from grl_proto.environment_client import ListTasksError, list_task_ids
 
 BUNDLE_SYNC_DAEMONSET = "grl-bundle-sync"
+MODEL_CACHE_DAEMONSET = "model-cache"
 ACTIVE_RUN_CONFIGMAP = "grl-active-run"
 
 
@@ -353,6 +354,37 @@ def wait_for_manager_catalog(
     return count
 
 
+def wait_for_model_cache(
+    config: GRLConfig,
+    api_client,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Block until every model-cache node holds a complete copy of the weights.
+
+    The DaemonSet pulls the model in an initContainer, so a Ready pod means that
+    node's copy is complete. Without this gate a cold cluster submits TRAINING
+    while the pull is still running: `hf download` moves shards into place only at
+    the very end, so the trainer reads the (already present) safetensors index and
+    then dies opening a shard that does not exist yet.
+    """
+    namespace = config.infra.model_cache.namespace
+    if dry_run:
+        print(f"dry-run: wait for model cache {namespace}/{MODEL_CACHE_DAEMONSET}")
+        return
+    # Absent when the deployment bakes weights into the image instead of caching.
+    if not daemonset_exists(api_client, MODEL_CACHE_DAEMONSET, namespace):
+        return
+    print(f"Waiting for model cache ({config.infra.model_cache.tag}) on every node...")
+    wait_for_rollout(
+        api_client,
+        MODEL_CACHE_DAEMONSET,
+        namespace,
+        timeout_secs=config.infra.model_cache.ready_timeout_secs,
+    )
+    print("Model cache ready.")
+
+
 def submit_training_job(
     config: GRLConfig,
     run_id: str,
@@ -463,6 +495,7 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     # --- TRAINING layer ---
     rayjob_name: str | None = None
     if launch_cfg.runs_training():
+        wait_for_model_cache(config, api_client, dry_run=dry_run)
         rayjob_name = submit_training_job(config, run_id, api_client, dry_run=dry_run)
         print(f"Submitted RayJob {rayjob_name}")
 
