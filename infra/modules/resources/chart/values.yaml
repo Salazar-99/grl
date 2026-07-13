@@ -49,8 +49,8 @@ manager:
   maxConcurrentEnvs: "32"
   snapshotsEnabled: false
   snapshotCacheMaxEntries: "64"
-  # Enable only after direct and jailed KVM conformance pass.
-  useJailer: false
+  # Publication is gated on both direct and jailed KVM conformance.
+  useJailer: true
   jailerRoot: /srv/jailer
 
 vmImageCache:
