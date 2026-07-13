@@ -1,6 +1,7 @@
 //! Spawn Firecracker directly or via the jailer wrapper.
 
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -39,16 +40,26 @@ pub fn jailer_base_dir() -> String {
 }
 
 fn id(env_id: &str) -> String {
-    env_id
+    let mut sanitized: String = env_id
         .chars()
         .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+            if character.is_ascii_alphanumeric() || character == '-' {
                 character
             } else {
-                '_'
+                '-'
             }
         })
-        .collect()
+        .collect();
+    if sanitized.is_empty() {
+        return "vm".into();
+    }
+    if sanitized.len() > 64 {
+        let mut hasher = DefaultHasher::new();
+        env_id.hash(&mut hasher);
+        sanitized.truncate(47);
+        sanitized = format!("{sanitized}-{:016x}", hasher.finish());
+    }
+    sanitized
 }
 
 pub fn jail_root(env_id: &str) -> PathBuf {
@@ -166,7 +177,13 @@ mod tests {
 
     #[test]
     fn jail_id_cannot_escape_configured_root() {
-        assert_eq!(id("../../rollout/task"), "______rollout_task");
+        assert_eq!(id("../../rollout_task"), "------rollout-task");
+        let long = id(&"task_".repeat(30));
+        assert_eq!(long.len(), 64);
+        assert!(
+            long.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        );
     }
 
     #[test]
