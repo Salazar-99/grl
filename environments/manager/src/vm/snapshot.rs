@@ -412,7 +412,7 @@ fn runtime_file(api_sock: &Path, name: &str, direct: &Path) -> (PathBuf, PathBuf
 pub async fn create(api_sock: &Path, entry: &Entry) -> Result<(), String> {
     let (state_host, state_api) = runtime_file(api_sock, "snapshot.state", &entry.state());
     let (memory_host, memory_api) = runtime_file(api_sock, "snapshot.memory", &entry.memory());
-    firecracker::put(api_sock, "actions", &json!({"action_type": "Pause"})).await?;
+    firecracker::patch(api_sock, "vm", &json!({"state": "Paused"})).await?;
     firecracker::put_timeout(
         api_sock,
         "snapshot/create",
@@ -445,7 +445,7 @@ pub async fn activate_builder(api_sock: &Path, scratch: &Path) -> Result<(), Str
         }),
     )
     .await?;
-    firecracker::put(api_sock, "actions", &json!({"action_type": "Resume"})).await
+    firecracker::patch(api_sock, "vm", &json!({"state": "Resumed"})).await
 }
 
 pub async fn load(
@@ -475,7 +475,7 @@ pub async fn load(
         }),
     )
     .await?;
-    firecracker::put(api_sock, "actions", &json!({"action_type": "Resume"})).await
+    firecracker::patch(api_sock, "vm", &json!({"state": "Resumed"})).await
 }
 
 fn load_config(state: &Path, memory: &Path, vsock_uds: &Path) -> serde_json::Value {
