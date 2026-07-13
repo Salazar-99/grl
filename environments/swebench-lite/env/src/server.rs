@@ -247,7 +247,7 @@ mod tests {
     fn roundtrip_persists_state_across_framed_requests() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let sessions = Arc::new(Sessions::default());
+        let sessions = Arc::new(Sessions::with_workspace("/tmp"));
         std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             handle_conn(stream, &sessions);

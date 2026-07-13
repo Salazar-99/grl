@@ -12,17 +12,22 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 /// Marker prefix emitted after every command. The full sentinel is
 /// `__GRL_DONE_<id>__<exit_code>\n`, where `<id>` is unique per command so a
 /// command that happens to print this string can't be mistaken for the fence.
 const SENTINEL_PREFIX: &str = "__GRL_DONE_";
+const SHELL_PROGRAM: &str = "/bin/bash";
+const WORKSPACE: &str = "/testbed";
+const SHELL_PATH: &str =
+    "/opt/testbed/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -51,6 +56,10 @@ impl Session {
     /// no command echo, empty prompts. After this returns the session is ready
     /// to accept `run`.
     pub fn spawn() -> std::io::Result<Session> {
+        Self::spawn_in(Path::new(WORKSPACE))
+    }
+
+    fn spawn_in(workspace: &Path) -> std::io::Result<Session> {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -60,10 +69,14 @@ impl Session {
             })
             .map_err(to_io)?;
 
-        // --norc/--noprofile so behavior doesn't drift with image-baked dotfiles.
-        let mut cmd = CommandBuilder::new("bash");
+        // The manager boots an exported rootfs, not an OCI container, so Docker
+        // ENV and WORKDIR metadata are unavailable. Set both explicitly, and
+        // use an absolute shell path because PID 1 does not provide PATH.
+        let mut cmd = CommandBuilder::new(SHELL_PROGRAM);
         cmd.args(["--norc", "--noprofile", "-i"]);
+        cmd.cwd(workspace);
         cmd.env("TERM", "xterm-256color");
+        cmd.env("PATH", SHELL_PATH);
         let child = pair.slave.spawn_command(cmd).map_err(to_io)?;
         // The child holds its own handle to the slave; we don't need ours.
         drop(pair.slave);
@@ -118,10 +131,7 @@ impl Session {
         // Send the command, then a printf that prints the sentinel with `$?`.
         // The leading \n guarantees the sentinel starts on its own line even if
         // the command left the cursor mid-line with no trailing newline.
-        write!(
-            self.writer,
-            "{command}\nprintf '\\n{marker}%d\\n' \"$?\"\n"
-        )?;
+        write!(self.writer, "{command}\nprintf '\\n{marker}%d\\n' \"$?\"\n")?;
         self.writer.flush()?;
 
         let needle = marker.as_bytes();
@@ -216,12 +226,29 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Per-executor registry of live sessions, keyed by `env_id`. In the common
 /// one-VM-per-env deployment this holds a single entry, but keying by `env_id`
 /// keeps the door open for multiplexing and matches the gRPC contract.
-#[derive(Default)]
 pub struct Sessions {
     inner: Mutex<HashMap<String, Session>>,
+    workspace: PathBuf,
+}
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::default(),
+            workspace: PathBuf::from(WORKSPACE),
+        }
+    }
 }
 
 impl Sessions {
+    #[cfg(test)]
+    pub(crate) fn with_workspace(workspace: impl Into<PathBuf>) -> Self {
+        Self {
+            inner: Mutex::default(),
+            workspace: workspace.into(),
+        }
+    }
+
     /// Run `command` in the session for `env_id`, spawning the shell on first
     /// use. (In the one-VM-per-env model the manager boots a VM per env, so the
     /// first forwarded tool call lazily brings the shell up.)
@@ -233,7 +260,7 @@ impl Sessions {
     ) -> std::io::Result<CommandOutput> {
         let mut guard = self.inner.lock().unwrap();
         if !guard.contains_key(env_id) {
-            guard.insert(env_id.to_string(), Session::spawn()?);
+            guard.insert(env_id.to_string(), Session::spawn_in(&self.workspace)?);
         }
         // Present unconditionally: just inserted or already there.
         guard.get_mut(env_id).unwrap().run(command, timeout)
@@ -248,4 +275,41 @@ impl Sessions {
 
 fn to_io<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::other(e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_starts_in_workspace_with_explicit_runtime_path() {
+        let workspace =
+            std::env::temp_dir().join(format!("grl-session-test-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let sessions = Sessions::with_workspace(&workspace);
+        let output = sessions
+            .execute(
+                "test",
+                "printf '%s\\n%s\\n' \"$PWD\" \"$PATH\"",
+                Duration::from_secs(10),
+            )
+            .unwrap();
+
+        assert_eq!(output.exit_code, 0);
+        let lines: Vec<_> = output
+            .content
+            .lines()
+            .map(|line| line.trim_end_matches('\r'))
+            .filter(|line| !line.is_empty())
+            .collect();
+        let canonical_workspace = workspace.canonicalize().unwrap();
+        assert_eq!(
+            lines,
+            [canonical_workspace.to_string_lossy().as_ref(), SHELL_PATH]
+        );
+
+        sessions.close("test");
+        std::fs::remove_dir(workspace).unwrap();
+    }
 }
