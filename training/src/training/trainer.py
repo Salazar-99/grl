@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 import ray
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import torch
 
 from grl_config.training import GRLConfig
@@ -20,6 +22,67 @@ from training.types import PolicyWeightsRef, RolloutResult, TrainingBatch
 
 # Re-export for callers that historically imported TrainingBatch from here.
 __all__ = ["TrainingBatch", "TrainingWorker", "grpo_valid_rollouts"]
+
+
+# The language stack of a checkpoint-shaped state dict. Everything else (e.g. a
+# vision tower) is carried for the rollout engine's benefit but never trained.
+LANGUAGE_PARAM_PREFIXES = ("model.language_model.", "model.layers.", "model.embed", "lm_head.")
+
+
+def load_policy_model(model_path: "str | Path") -> "torch.nn.Module":
+    """Load the policy under the checkpoint's own architecture.
+
+    This must match the architecture the rollout engine serves, because the state
+    dict produced here is fed straight back into it. Reaching for
+    AutoModelForCausalLM on a `*ForConditionalGeneration` checkpoint silently
+    builds the text-only tower: the parameters come out named `model.*` instead of
+    `model.language_model.*` and the vision tower is missing entirely. vLLM's
+    reload moves every parameter to `meta` before repopulating it from the names it
+    is given, so those mismatched names leave the real embedding on `meta` and the
+    next forward pass dies with "Cannot copy out of meta tensor".
+    """
+    import torch
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+
+    config = AutoConfig.from_pretrained(model_path, local_files_only=True)
+    architectures = getattr(config, "architectures", None) or [""]
+    auto_class = (
+        AutoModelForImageTextToText
+        if architectures[0].endswith("ForConditionalGeneration")
+        else AutoModelForCausalLM
+    )
+    model = auto_class.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        local_files_only=True,
+    )
+    assert_covers_checkpoint(model, model_path)
+    return model.to("cuda:0")
+
+
+def assert_covers_checkpoint(model: "torch.nn.Module", model_path: "str | Path") -> None:
+    """Fail fast unless the policy's state dict names every weight in the checkpoint.
+
+    The rollout engine repopulates its parameters from these names and leaves any it
+    was not given on `meta`, where they detonate on the next forward pass rather than
+    at load time. Checking the invariant here turns a silent, hour-deep engine crash
+    into an error before the first rollout.
+    """
+    import json
+    from pathlib import Path
+
+    index = Path(model_path) / "model.safetensors.index.json"
+    if not index.is_file():
+        return
+    checkpoint_names = set(json.loads(index.read_text())["weight_map"])
+    missing = checkpoint_names - set(model.state_dict())
+    if missing:
+        sample = ", ".join(sorted(missing)[:3])
+        raise RuntimeError(
+            f"{type(model).__name__} does not expose {len(missing)} of the "
+            f"checkpoint's weights (e.g. {sample}). The rollout engine would leave "
+            "them on the meta device. Load the checkpoint's own architecture."
+        )
 
 
 def chunked_logprobs(
@@ -107,7 +170,7 @@ class TrainingWorker:
         )
 
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
 
         from training.checkpoints import BackgroundCheckpointUploader
 
@@ -140,11 +203,7 @@ class TrainingWorker:
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.pad_token_id = int(self.tokenizer.pad_token_id)
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.bfloat16,
-            local_files_only=True,
-        ).to("cuda:0")
+        self.model = load_policy_model(model_path)
         self.model.train()
         if cfg.trainer.gradient_checkpointing:
             # Long trajectories make stored per-layer activations the second
@@ -152,7 +211,17 @@ class TrainingWorker:
             self.model.config.use_cache = False
             self.model.gradient_checkpointing_enable()
 
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
+        # Freeze everything outside the language stack. A vision tower rides along
+        # so the state dict stays checkpoint-shaped for the rollout engine, but it
+        # sees no text gradients and would only cost optimizer memory.
+        self.trainable_params = []
+        for name, param in self.model.named_parameters():
+            if name.startswith(LANGUAGE_PARAM_PREFIXES):
+                self.trainable_params.append(param)
+            else:
+                param.requires_grad_(False)
+
+        self.optimizer = torch.optim.AdamW(self.trainable_params, lr=learning_rate)
         self.policy_version = 0
 
     def train_batch(
@@ -178,7 +247,7 @@ class TrainingWorker:
             with record_duration("grl.train.step.duration"):
                 loss, stats, mean_entropy = self._accumulate_gradients(tensors)
                 grad_norm = torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), float("inf")
+                    self.trainable_params, float("inf")
                 )
                 self.optimizer.step()
 
