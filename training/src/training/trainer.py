@@ -28,6 +28,12 @@ __all__ = ["TrainingBatch", "TrainingWorker", "grpo_valid_rollouts"]
 # vision tower) is carried for the rollout engine's benefit but never trained.
 LANGUAGE_PARAM_PREFIXES = ("model.language_model.", "model.layers.", "model.embed", "lm_head.")
 
+# Auxiliary heads that ship in the checkpoint but that neither transformers nor the
+# rollout engine instantiates for ordinary decoding. `mtp.*` is Qwen's multi-token
+# prediction head, used only for speculative decoding: feeding vLLM a state dict
+# without it still leaves zero parameters on meta, so its absence is not a mismatch.
+IGNORED_CHECKPOINT_PREFIXES = ("mtp.",)
+
 
 def load_policy_model(model_path: "str | Path") -> "torch.nn.Module":
     """Load the policy under the checkpoint's own architecture.
@@ -74,14 +80,19 @@ def assert_covers_checkpoint(model: "torch.nn.Module", model_path: "str | Path")
     index = Path(model_path) / "model.safetensors.index.json"
     if not index.is_file():
         return
-    checkpoint_names = set(json.loads(index.read_text())["weight_map"])
+    checkpoint_names = {
+        name
+        for name in json.loads(index.read_text())["weight_map"]
+        if not name.startswith(IGNORED_CHECKPOINT_PREFIXES)
+    }
     missing = checkpoint_names - set(model.state_dict())
     if missing:
         sample = ", ".join(sorted(missing)[:3])
         raise RuntimeError(
             f"{type(model).__name__} does not expose {len(missing)} of the "
             f"checkpoint's weights (e.g. {sample}). The rollout engine would leave "
-            "them on the meta device. Load the checkpoint's own architecture."
+            "them on the meta device. Load the checkpoint's own architecture, or add "
+            "the prefix to IGNORED_CHECKPOINT_PREFIXES if the engine ignores it too."
         )
 
 

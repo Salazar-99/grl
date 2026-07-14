@@ -115,6 +115,27 @@ class CheckpointCoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assert_covers_checkpoint(FakeModel(["anything"]), tmp)
 
+    def test_speculative_decoding_head_is_not_a_mismatch(self) -> None:
+        """`mtp.*` ships in the checkpoint but no engine instantiates it.
+
+        Feeding vLLM a state dict without these leaves zero parameters on meta, so
+        treating their absence as a mismatch only blocks legitimate runs.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_index(
+                tmp,
+                [
+                    "model.language_model.embed_tokens.weight",
+                    "mtp.fc.weight",
+                    "mtp.layers.0.input_layernorm.weight",
+                ],
+            )
+            model = FakeModel(["model.language_model.embed_tokens.weight"])
+
+            assert_covers_checkpoint(model, tmp)
+
 
 if __name__ == "__main__":
     unittest.main()
