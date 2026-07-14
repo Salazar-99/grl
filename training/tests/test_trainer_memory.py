@@ -100,6 +100,52 @@ class TinyCausalLM(torch.nn.Module):
     def get_output_embeddings(self):
         return self.head
 
+    @property
+    def device(self):
+        # HF models expose this; plain nn.Modules do not.
+        return torch.device("cpu")
+
+
+class CollationDeviceTests(unittest.TestCase):
+    """The batch must be collated on the host, not the accelerator.
+
+    These tensors span the whole batch and scale with batch x longest-response: 32
+    rollouts of ~30k tokens put ~5 GiB of fp32 logprobs and mask on the card for the
+    entire step, while the micro-batch loop only ever reads one row. That was enough
+    to OOM the training worker on top of an otherwise-fitting forward pass.
+    """
+
+    def test_collated_batch_stays_on_cpu(self) -> None:
+        from training.types import RolloutResult
+
+        worker_cls = TrainingWorker.__ray_metadata__.modified_class
+        worker = object.__new__(worker_cls)
+        worker.pad_token_id = 0
+        worker.model = TinyCausalLM(16, 4)
+
+        rollouts = [
+            RolloutResult(
+                task_id="t",
+                group_id="g",
+                env_id="e",
+                rollout_index=0,
+                expected_group_size=1,
+                policy_version_current=0,
+                request_id="r",
+                num_turns=1,
+                prompt_ids=[1, 2, 3],
+                response_ids=[4, 5],
+                inference_logprobs=[-0.1, -0.2],
+                response_mask=[True, True],
+                reward=1.0,
+            )
+        ]
+        tensors = worker._collate_rollouts(rollouts, [torch.tensor(1.0)])
+
+        for name, tensor in tensors.items():
+            with self.subTest(tensor=name):
+                self.assertEqual(tensor.device.type, "cpu")
+
 
 class MicroBatchEquivalenceTests(unittest.TestCase):
     """Accumulated micro-batch gradients must equal the whole-batch gradient."""
