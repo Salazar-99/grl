@@ -44,7 +44,7 @@ otelCollector:
       issuer: ""
 
 grafana:
-  image: ghcr.io/grl/grl-grafana:latest
+  image: ghcr.io/salazar-99/grl-grafana:latest
   # Set to false when using a stock Grafana image without the private panel.
   installPlugin: true
   adminUser: admin

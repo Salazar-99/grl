@@ -125,17 +125,10 @@ infra:
   release_namespace: default
   cluster_name: grl
   region: us-west-2
-  helm_chart_path: infra/modules/resources/chart
-  ray_address: ray://grl-ray-head:10001
   ray_cluster:
     name: grl-ray
     namespace: default
     version: "2.55.1"
-    # images below are overridden at launch from images.*
-    images:
-      head: grl-training:head
-      rollouts: grl-training:rollouts
-      training: grl-training:training
   otel_collector:
     name: grl-collector
     namespace: default
@@ -146,10 +139,7 @@ infra:
   manager:
     name: grl-manager
     namespace: default
-    image: grl-manager:latest
     port: 50051
-    bundle_uri: ""
-    env_id: ""
     active_dir: active
     max_concurrent_envs: "32"
   vm_image_cache:
@@ -157,7 +147,6 @@ infra:
     bucket: grl-swebench-lite
     region: us-west-2
     image: peakcom/s5cmd:v2.3.0
-    pause_image: registry.k8s.io/pause:3.10
     host_path: /var/lib/grl
     # Per-VM scratch template (GiB). Copied into manager ephemeral at boot.
     scratch_gb: 2

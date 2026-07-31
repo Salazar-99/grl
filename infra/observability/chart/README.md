@@ -12,13 +12,12 @@ chart's `otelCollector.upstream` to use the collector hostname and the
 collector credentials. The in-cluster collector remains the OTLP gRPC entry
 point for GRL services and forwards OTLP/HTTP to this chart.
 
-The default Grafana image is `ghcr.io/grl/grl-grafana:latest`. Build and push it
-from the repository root with:
+The default Grafana image is `ghcr.io/salazar-99/grl-grafana:latest`. Build and push it
+from `infra/observability` with:
 
 ```sh
-docker build -f infra/observability/Dockerfile \
-  -t ghcr.io/grl/grl-grafana:latest .
-docker push ghcr.io/grl/grl-grafana:latest
+docker buildx build --platform linux/arm64 --push \
+  -t ghcr.io/salazar-99/grl-grafana:latest .
 ```
 
 TLS, cert-manager annotations, ingress classes, storage classes, scheduling,
