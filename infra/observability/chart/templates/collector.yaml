@@ -25,9 +25,9 @@ data:
       health_check:
         endpoint: 0.0.0.0:13133
       basicauth/server:
-        server_auth:
-          username: ${env:OTEL_AUTH_USERNAME}
-          password: ${env:OTEL_AUTH_PASSWORD}
+        htpasswd:
+          inline: |
+            {{ htpasswd .Values.otelCollector.username .Values.otelCollector.password }}
     receivers:
       otlp:
         protocols:
@@ -97,6 +97,9 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        # Roll the collector when its generated auth or ClickHouse settings change.
+        checksum/config: {{ printf "%s:%s:%s:%s:%s" .Values.otelCollector.username .Values.otelCollector.password .Values.clickhouse.database .Values.clickhouse.username .Values.clickhouse.password | sha256sum }}
       labels:
         app.kubernetes.io/component: collector
         app.kubernetes.io/instance: {{ .Release.Name }}
