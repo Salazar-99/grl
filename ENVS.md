@@ -67,14 +67,15 @@ Each `tasks.jsonl` row should include:
 
 - `task_id`: stable task identifier.
 - `split`: split label such as `train`, `dev`, or `test`.
-- `messages`: OpenAI-style initial chat messages, serialized as JSON.
-- `tools`: tool/function schemas, serialized as JSON.
+    - `task_payload_json`: opaque JSON delivered to the guest during initialization.
+    - `messages` / `tools`: optional protocol-v1 compatibility fields.
 - `base_image`: node-relative path to the bootable base ext4 image.
 - `task_image`: node-relative path to the task ext4 image.
 
-The manager treats `messages` and `tools` as opaque JSON and returns them from
-`CreateEnvironment`. The trainer forwards them to the policy. The manager uses
-`base_image` and `task_image` to boot Firecracker.
+The manager validates only generic payload encoding and size, then passes
+`task_payload_json` to the guest in `InitializeRequest`. `CreateEnvironment`
+waits for initialization and returns the guest-generated messages and tools.
+The manager uses `base_image` and `task_image` to boot Firecracker.
 
 ### In-VM Executor Contract
 
@@ -106,7 +107,7 @@ commands like:
 The important validation path is:
 
 1. `ListTasks` returns the expected task catalog.
-2. `CreateEnvironment` returns initial messages and tools for one task.
+2. `CreateEnvironment` boots and initializes the guest, then returns initial messages and tools.
 3. `Execute` can run at least one tool call.
 4. `Evaluate` returns a reward and detail payload.
 5. `Teardown` cleans up the environment.
@@ -138,10 +139,12 @@ The custom service implements:
 
 - `ListTasks`: return task IDs and splits, optionally filtered by split.
 - `CreateEnvironment`: allocate or initialize one task environment and return
-  the opening messages and tool schemas.
+  the guest-generated opening messages and tool schemas. Initialization receives
+  the catalog's opaque `task_payload_json`.
 - `Execute`: run one policy-requested tool call against the environment.
 - `Evaluate`: return the scalar reward, optional JSON details, and whether the
-  failure was infrastructure-related.
+  failure was infrastructure-related. The request may include the final
+  assistant response and termination reason.
 - `Teardown`: clean up the allocated environment.
 
 This is the lowest-friction extension point for users with existing systems:

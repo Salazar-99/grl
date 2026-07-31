@@ -18,7 +18,7 @@ use super::firecracker;
 use super::jailer;
 use super::paths::VmPaths;
 
-const SNAPSHOT_FORMAT: &str = "grl-snapshot-v1";
+const SNAPSHOT_FORMAT: &str = "grl-snapshot-v2-init";
 
 #[derive(Clone, Eq)]
 struct FileIdentity {

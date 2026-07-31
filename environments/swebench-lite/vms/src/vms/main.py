@@ -6,8 +6,10 @@ from vms.build_bootstrap import build_bootstrap
 from vms.build_environment import (
     build_environment_image,
     build_minimal_environment_image,
+    build_string_reverse_environment_image,
 )
 from vms.build_images import build_all
+from vms.build_string_reverse import build_string_reverse_images
 from vms.build_tasks import build_all_tasks
 from vms.dataset import DEFAULT_DATASET, load_tasks
 from vms.dockerfile import render_dockerfile, slug
@@ -152,6 +154,26 @@ def main() -> None:
     minimal_environment_cmd.add_argument("--upload", action="store_true")
     minimal_environment_cmd.add_argument("--force", action="store_true")
 
+    reverse_environment_cmd = sub.add_parser(
+        "build-string-reverse-environment",
+        help="build the protocol-v2 string-reverse guest runtime squashfs",
+    )
+    reverse_environment_cmd.add_argument(
+        "--output", type=Path, default=ROOT / "environment-images"
+    )
+    reverse_environment_cmd.add_argument("--platform", default="linux/amd64")
+    reverse_environment_cmd.add_argument("--upload", action="store_true")
+    reverse_environment_cmd.add_argument("--bundle-uri")
+    reverse_environment_cmd.add_argument("--force", action="store_true")
+
+    reverse_images_cmd = sub.add_parser(
+        "build-string-reverse-images",
+        help="build shared reverse base and task squashfs images",
+    )
+    reverse_images_cmd.add_argument("--output", type=Path, default=ROOT / "reverse-images")
+    reverse_images_cmd.add_argument("--platform", default="linux/amd64")
+    reverse_images_cmd.add_argument("--force", action="store_true")
+
     upload_environment_cmd = sub.add_parser(
         "upload-environment", help="upload one environment runtime squashfs"
     )
@@ -251,6 +273,26 @@ def main() -> None:
         print(f"wrote {artifact}")
         if args.upload:
             print(f"uploaded {upload_environment(artifact, force=args.force)}")
+    elif args.command == "build-string-reverse-environment":
+        artifact = build_string_reverse_environment_image(
+            args.output, platform=args.platform, force=args.force
+        )
+        print(f"wrote {artifact}")
+        if args.upload:
+            uri = upload_environment_bundle(
+                artifact,
+                bundle_uri=args.bundle_uri,
+                force=args.force,
+                environment="string-reverse",
+                protocol_version=2,
+            ) if args.bundle_uri else upload_environment(artifact, force=args.force)
+            print(f"uploaded {uri}")
+    elif args.command == "build-string-reverse-images":
+        base, task = build_string_reverse_images(
+            args.output, platform=args.platform, force=args.force
+        )
+        print(f"wrote {base}")
+        print(f"wrote {task}")
     elif args.command == "build-bootstrap":
         artifact = build_bootstrap(args.output, platform=args.platform)
         print(f"wrote {artifact}")

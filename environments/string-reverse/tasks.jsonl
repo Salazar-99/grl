@@ -1,0 +1,2 @@
+{"task_id":"reverse-000001","split":"train","task_payload_json":"{\"input\":\"abc\",\"target\":\"cba\"}","base_image":"images/bases/reverse.squashfs","task_image":"images/tasks/reverse-common.squashfs"}
+{"task_id":"reverse-000002","split":"train","task_payload_json":"{\"input\":\"qzm\",\"target\":\"mzq\"}","base_image":"images/bases/reverse.squashfs","task_image":"images/tasks/reverse-common.squashfs"}

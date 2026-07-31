@@ -1,0 +1,64 @@
+model: Qwen/Qwen3.5-4B
+
+environment:
+  id: string-reverse
+  bundle_uri: s3://grl-swebench-lite/datasets/string-reverse/train
+  split: train
+  server_addr: grl-manager.default.svc:50051
+
+grpo:
+  num_rollouts: 4
+  groups_per_batch: 1
+  min_rollouts_per_group: 2
+
+rollout:
+  max_assistant_turns: 1
+  max_tokens_per_turn: 32
+
+pipeline:
+  max_train_steps: 1
+
+checkpoint:
+  bucket_uri: s3://grl-swebench-lite/checkpoints/string-reverse
+
+compute:
+  ray:
+    instance_type: m5.large
+    nodes: 1
+    disk_size: 100
+  rollouts:
+    instance_type: g5.xlarge
+    nodes: 1
+    disk_size: 100
+  training:
+    instance_type: g5.xlarge
+    nodes: 1
+    disk_size: 100
+  environments:
+    instance_type: c5.metal
+    nodes: 1
+    disk_size: 100
+
+launch:
+  deployment_type: FULL
+  cluster_type: EKS
+  environment:
+    verify: true
+    refresh_vm_cache: always
+  job:
+    wait: true
+
+images:
+  mode: published
+  registry: ghcr.io/salazar-99/grl
+  tag: reverse-v2-5a07d51
+
+infra:
+  region: us-west-2
+  cluster_name: grl
+  vm_image_cache:
+    bucket: grl-swebench-lite
+    region: us-west-2
+    bootstrap_key: bootstrap/grl-bootstrap-e9eb9c2f0c74affb.cpio.gz
+  model_cache:
+    tag: Qwen/Qwen3.5-4B

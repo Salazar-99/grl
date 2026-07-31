@@ -17,11 +17,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::vm::{VmPaths, join_and_verify, resolve_initrd, resolve_kernel};
+use crate::vm::{join_and_verify, resolve_initrd, resolve_kernel, VmPaths};
 
 /// One catalog entry: prompt/tools for the trainer plus VM image paths for boot.
 #[derive(Clone, Debug, Default)]
 pub struct TaskSpec {
+    /// Opaque JSON payload delivered to the guest during initialization.
+    pub task_payload_json: String,
     /// JSON array of OpenAI-style chat messages.
     pub initial_messages_json: String,
     /// JSON array of tool/function schemas.
@@ -130,6 +132,25 @@ impl Catalog {
                 .get("messages")
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "[]".to_string());
+            let task_payload_json = match row.get("task_payload_json") {
+                None => String::new(),
+                Some(value) => {
+                    let encoded = value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string());
+                    if encoded.len() > 1024 * 1024 {
+                        return Err(format!(
+                            "tasks.jsonl line {}: task_payload_json exceeds 1 MiB",
+                            i + 1
+                        ));
+                    }
+                    serde_json::from_str::<serde_json::Value>(&encoded).map_err(|e| {
+                        format!("tasks.jsonl line {}: invalid task_payload_json: {e}", i + 1)
+                    })?;
+                    encoded
+                }
+            };
             let tools_json = row
                 .get("tools")
                 .map(|v| v.to_string())
@@ -152,6 +173,7 @@ impl Catalog {
             tasks.insert(
                 task_id,
                 TaskSpec {
+                    task_payload_json,
                     initial_messages_json,
                     tools_json,
                     split,
@@ -297,11 +319,9 @@ mod tests {
         assert!(paths.initrd.ends_with("bootstrap/active.cpio.gz"));
         assert!(paths.base_image.ends_with("images/bases/base.squashfs"));
         assert!(paths.task_image.ends_with("images/tasks/t1.squashfs"));
-        assert!(
-            paths
-                .environment_image
-                .ends_with("active/environment.squashfs")
-        );
+        assert!(paths
+            .environment_image
+            .ends_with("active/environment.squashfs"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -95,14 +95,16 @@ The umbrella chart also deploys node-local caches: a model cache on GPU nodes an
 
 An environment is data, not code: prebuilt Firecracker VM images, a `tasks.jsonl` catalog, and an in-VM executor binary. The shared Rust [`manager`](environments/manager/) handles VM lifecycle and tool dispatch for every environment and contains no environment-specific logic.
 
-**Per-rollout lifecycle:** `CreateEnvironment → Execute* → Evaluate → Teardown`. On `CreateEnvironment` the manager boots a microVM from the task's images, waits for the in-VM executor on vsock, and returns the task's opening prompt and tool schemas. Tool calls are forwarded to the executor; `Evaluate` relays the reward the executor computes in-VM. Admission is capped per pod by `GRL_MAX_CONCURRENT_ENVS` (default 32), so total environment capacity ≈ environment nodes × that cap.
+**Per-rollout lifecycle:** `CreateEnvironment → Execute* → Evaluate → Teardown`. `CreateEnvironment` synchronously boots the microVM, connects to the guest, sends `InitializeRequest` with the catalog's opaque `task_payload_json`, and returns guest-generated opening messages and tools only after initialization succeeds. Tool calls are forwarded to the executor; `Evaluate` also carries the final assistant message and termination reason. Admission is capped per pod by `GRL_MAX_CONCURRENT_ENVS` (default 32), so total environment capacity ≈ environment nodes × that cap.
 
 **SWE-bench-Lite** ([`environments/swebench-lite/`](environments/swebench-lite/)) is the first environment:
 
 - **Base images** — one read-only squashfs per repo+version, with Ubuntu, Python, and dependencies baked in. Each boots with a per-VM writable overlay so one image safely serves all the concurrent VMs GRPO fans out per task.
 - **Task images** — one small squashfs per dataset instance with the repo at `base_commit`, mounted read-only and copied into the writable `/testbed`.
-- **`tasks.jsonl`** — one line per instance: `task_id`, split, opening prompt, tool schemas, and VM image paths. It carries no answer keys; the reward spec (held-out tests, test patch) is baked into each task image at `/grl/task.json` where only the in-VM scorer reads it.
+- **`tasks.jsonl`** — one line per instance: `task_id`, split, opaque `task_payload_json`, and VM image paths. Legacy `messages` and `tools` fields remain supported during migration, but protocol-v2 guests generate these during initialization. It carries no answer keys; the reward spec (held-out tests, test patch) is baked into each task image at `/grl/task.json` where only the in-VM scorer reads it.
 - **`env` executor** — implements the tools (a persistent bash shell) and scoring: it applies the held-out test patch, runs the targeted tests, and returns reward 1.0 only if every `FAIL_TO_PASS` and `PASS_TO_PASS` test passes.
+
+**String-reverse** ([`environments/string-reverse/`](environments/string-reverse/)) is a static single-turn example. Each catalog row carries a hidden three-character payload; the guest emits a neutral transformation prompt and scores the first three normalized response characters independently, returning an integer reward from 0 to 3. Multiple rows share the same task image.
 
 The `vms` tooling builds all of this and uploads it to S3 as a bundle; the launcher's `ENVS` layer syncs the bundle onto environment nodes and rolling-restarts the manager DaemonSet to activate it.
 
@@ -112,8 +114,8 @@ The training stack only speaks the `EnvironmentService` gRPC API, so there are t
 
 **Managed Firecracker bundle** — no manager or trainer code changes; you ship data that satisfies the bundle contract:
 
-- **`tasks.jsonl`** — one row per task with `task_id`, `split`, `messages` (opening prompt, OpenAI-style JSON), `tools` (tool schemas, must include the standard `submit` tool), and node-relative `base_image` / `task_image` paths. The manager treats `messages` and `tools` as opaque JSON and just returns them from `CreateEnvironment`.
-- **A bootable base image** — a squashfs that boots under Firecracker and starts your in-VM executor listening on vsock port 5005. The executor speaks the framed-protobuf relay protocol (the `Execute`/`Evaluate` messages from the shared proto): it implements whatever tools your `tools` schemas declare and computes the reward on `Evaluate`. Anything the policy must not see — answer keys, held-out tests, scoring logic — lives inside the image (the `submit` tool itself is handled by the manager).
+- **`tasks.jsonl`** — one row per task with `task_id`, `split`, `task_payload_json`, and node-relative `base_image` / `task_image` paths. A payload is opaque to the manager and is sent to the guest in `InitializeRequest`; legacy `messages` and `tools` are retained only for compatibility.
+- **A bootable base image** — a squashfs that boots under Firecracker and starts your in-VM executor listening on vsock port 5005. The executor speaks the framed-protobuf relay protocol (`Initialize`, `Execute`, and `Evaluate`): it validates the payload, generates messages/tools, implements its tools, and computes the reward. Anything the policy must not see — answer keys, held-out tests, scoring logic — lives inside the image.
 - **Per-task images** — small read-only disks with per-task state, referenced from `tasks.jsonl` and mounted at boot.
 
 Upload the bundle to S3, set `environment.bundle_uri` in the launch config, and the `ENVS` layer activates it. VM lifecycle, tool dispatch, admission control, and teardown all come for free from the manager.

@@ -242,7 +242,8 @@ def upload_environment(path: Path, *, force: bool = False) -> str:
 
 
 def upload_environment_bundle(
-    path: Path, *, bundle_uri: str, force: bool = False
+    path: Path, *, bundle_uri: str, force: bool = False,
+    environment: str = "swebench-lite", protocol_version: int = 2
 ) -> str:
     """Publish an environment package and manifest into a run bundle."""
     if not bundle_uri.startswith("s3://"):
@@ -264,9 +265,9 @@ def upload_environment_bundle(
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     manifest = {
         "schema_version": 1,
-        "environment": "swebench-lite",
+        "environment": environment,
         "entrypoint": "/entrypoint",
-        "protocol_version": 1,
+        "protocol_version": protocol_version,
         "sha256": digest,
     }
     s3.put_object(

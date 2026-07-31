@@ -188,6 +188,7 @@ class Session:
     assistant_turns: int = 0
     submitted: bool = False
     done: bool = False
+    final_message: str = ""
 
 
 @ray.remote
@@ -398,7 +399,8 @@ class RolloutWorker:
         if not token_ids:
             return ""
         try:
-            return self.tokenizer.decode(token_ids)
+            tokenizer = getattr(self, "tokenizer", None)
+            return tokenizer.decode(token_ids) if tokenizer is not None else ""
         except Exception:
             return ""
 
@@ -440,7 +442,10 @@ class RolloutWorker:
                     except InfraError:
                         done_reason = "infra_error"
                     try:
-                        result = await env.evaluate()
+                        result = await env.evaluate(
+                            session.final_message,
+                            "completed" if session.done else "truncated",
+                        )
                         if result.infra_error:
                             done_reason = "infra_error"
                         reward = result.reward
@@ -544,6 +549,7 @@ class RolloutWorker:
             session.inference_logprobs += generation.logprobs
 
             if not tool_call_specs:
+                session.final_message = self._safe_decode(generation.token_ids)
                 session.prompt_ids = turn_prompt_ids + generation.token_ids
                 session.done = True
                 break

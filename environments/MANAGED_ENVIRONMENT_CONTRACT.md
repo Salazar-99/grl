@@ -29,6 +29,11 @@ The environment package owns:
 - reward evaluation and environment-specific failure details;
 - cleanup of environment-owned processes and files.
 
+During `CreateEnvironment`, the manager delivers the catalog row's opaque
+`task_payload_json` to the guest. The guest validates that payload, prepares
+task state, and returns the initial messages and tools. The manager does not
+interpret task-specific fields.
+
 Generic boot code must not contain environment paths or concepts such as
 `/testbed`, `task.json`, pytest, SWE-bench patches, or reward semantics.
 
@@ -108,6 +113,13 @@ One connection may carry many requests. Implementations must support:
 
 - kind `0`: `ExecuteRequest` to `ExecuteResponse`;
 - kind `1`: `EvaluateRequest` to `EvaluateResponse`.
+- kind `2`: `InitializeRequest` to `InitializeResponse`.
+
+Initialization is the first request on a session and may occur only once. The
+manager does not expose the session as ready until initialization succeeds.
+`EvaluateRequest` includes `final_message_json` and `termination_reason`, so a
+single-turn environment can grade a plain assistant response without a tool
+call.
 
 Protocol changes must remain backward compatible or increment an explicit
 protocol version included in the environment artifact manifest and snapshot

@@ -285,11 +285,20 @@ mod linux {
                 libc::sigprocmask(libc::SIG_SETMASK, &previous, std::ptr::null_mut());
             }
             if unsafe { libc::unshare(libc::CLONE_NEWNS) } != 0 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::EINVAL) {
+                    eprintln!(
+                        "grl-bootstrap: create workload mount namespace: {error}"
+                    );
+                    unsafe { libc::_exit(127) };
+                }
+                // Some supported guest kernels omit mount-namespace support.
+                // The VM is already a single-tenant boundary, so keep running
+                // in the existing namespace rather than failing before the
+                // environment can initialize.
                 eprintln!(
-                    "grl-bootstrap: create workload mount namespace: {}",
-                    io::Error::last_os_error()
+                    "grl-bootstrap: mount namespaces unavailable; continuing in the guest namespace"
                 );
-                unsafe { libc::_exit(127) };
             }
             if let Err(error) = mount("", "/", "", libc::MS_PRIVATE | libc::MS_REC, None) {
                 eprintln!("grl-bootstrap: make workload mounts private: {error}");

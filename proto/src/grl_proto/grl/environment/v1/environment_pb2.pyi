@@ -47,10 +47,30 @@ class CreateEnvironmentResponse(_message.Message):
     def __init__(self, env_id: _Optional[str] = ..., manager_addr: _Optional[str] = ..., initial_messages_json: _Optional[str] = ..., tools_json: _Optional[str] = ...) -> None: ...
 
 class EvaluateRequest(_message.Message):
-    __slots__ = ("env_id",)
+    __slots__ = ("env_id", "final_message_json", "termination_reason")
     ENV_ID_FIELD_NUMBER: _ClassVar[int]
+    FINAL_MESSAGE_JSON_FIELD_NUMBER: _ClassVar[int]
+    TERMINATION_REASON_FIELD_NUMBER: _ClassVar[int]
     env_id: str
-    def __init__(self, env_id: _Optional[str] = ...) -> None: ...
+    final_message_json: str
+    termination_reason: str
+    def __init__(self, env_id: _Optional[str] = ..., final_message_json: _Optional[str] = ..., termination_reason: _Optional[str] = ...) -> None: ...
+
+class InitializeRequest(_message.Message):
+    __slots__ = ("env_id", "task_payload_json")
+    ENV_ID_FIELD_NUMBER: _ClassVar[int]
+    TASK_PAYLOAD_JSON_FIELD_NUMBER: _ClassVar[int]
+    env_id: str
+    task_payload_json: str
+    def __init__(self, env_id: _Optional[str] = ..., task_payload_json: _Optional[str] = ...) -> None: ...
+
+class InitializeResponse(_message.Message):
+    __slots__ = ("initial_messages_json", "tools_json")
+    INITIAL_MESSAGES_JSON_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_JSON_FIELD_NUMBER: _ClassVar[int]
+    initial_messages_json: str
+    tools_json: str
+    def __init__(self, initial_messages_json: _Optional[str] = ..., tools_json: _Optional[str] = ...) -> None: ...
 
 class EvaluateResponse(_message.Message):
     __slots__ = ("reward", "detail_json", "infra_error")

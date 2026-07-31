@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use prost::Message;
 
-use crate::pb::{EvaluateRequest, ExecuteRequest, ExecuteResponse};
+use crate::pb::{EvaluateRequest, ExecuteRequest, ExecuteResponse, InitializeRequest, InitializeResponse};
 use crate::score;
 use crate::session::Sessions;
 
@@ -33,6 +33,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 enum MsgKind {
     Execute,
     Evaluate,
+    Initialize,
 }
 
 impl MsgKind {
@@ -40,6 +41,7 @@ impl MsgKind {
         match b {
             0 => Some(MsgKind::Execute),
             1 => Some(MsgKind::Evaluate),
+            2 => Some(MsgKind::Initialize),
             _ => None,
         }
     }
@@ -48,6 +50,7 @@ impl MsgKind {
         match self {
             MsgKind::Execute => 0,
             MsgKind::Evaluate => 1,
+            MsgKind::Initialize => 2,
         }
     }
 }
@@ -123,11 +126,21 @@ pub fn handle_conn<S: Read + Write>(mut stream: S, sessions: &Sessions) {
                 Err(e) => score::error_score(format!("malformed EvaluateRequest: {e}"))
                     .encode_to_vec(),
             },
+            MsgKind::Initialize => match InitializeRequest::decode(frame.as_slice()) {
+                Ok(_req) => initialize_response().encode_to_vec(),
+                Err(e) => InitializeResponse { initial_messages_json: format!("{{\"error\":{}}}", serde_json::json!(format!("malformed InitializeRequest: {e}"))), tools_json: "[]".into() }.encode_to_vec(),
+            },
         };
         if write_frame(&mut stream, &payload).is_err() {
             break;
         }
     }
+}
+
+fn initialize_response() -> InitializeResponse {
+    let messages = std::fs::read_to_string("/grl/messages.json").unwrap_or_else(|_| "[]".into());
+    let tools = std::fs::read_to_string("/grl/tools.json").unwrap_or_else(|_| "[]".into());
+    InitializeResponse { initial_messages_json: messages, tools_json: tools }
 }
 
 /// Map one [`ExecuteRequest`] onto the persistent shell.

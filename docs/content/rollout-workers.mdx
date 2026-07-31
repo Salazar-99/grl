@@ -17,6 +17,13 @@ The agent loop sends tool requests to an environment session rather than mutatin
 result = await environment.execute_tool(name="bash", arguments={"cmd": "pytest"})
 ```
 
+Environment creation is fully initialized before the worker renders the
+prompt. The guest supplies `initial_messages` and `tools`; the worker does not
+interpret task-specific payloads. When generation ends without a tool call,
+the worker forwards the final assistant message to `Evaluate`, which lets
+single-turn environments return shaped rewards while preserving submit-based
+multi-turn behavior.
+
 ## Sampling
 
 Workers generate multiple completions per prompt so the trainer can compare outcomes within a group.

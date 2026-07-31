@@ -87,8 +87,7 @@ class EnvironmentServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def CreateEnvironment(self, request, context):
-        """Non-blocking: returns catalog prompt/tools immediately while the VM boots
-        asynchronously. Execute/Evaluate return UNAVAILABLE until the env is ready.
+        """Boots and initializes the guest synchronously before returning.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

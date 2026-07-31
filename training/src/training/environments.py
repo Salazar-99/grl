@@ -302,12 +302,20 @@ class EnvironmentSession:
             content = f"Error: {content}"
         return {"role": "tool", "content": content}
 
-    async def evaluate(self) -> EvaluateResult:
+    async def evaluate(self, final_message: str | None = None, termination_reason: str = "") -> EvaluateResult:
         """Grade the finished trajectory. Callable once per env after Execute."""
 
         async def _evaluate_once() -> environment_pb2.EvaluateResponse:
             return await self._stub.Evaluate(
-                environment_pb2.EvaluateRequest(env_id=self.env_id),
+                environment_pb2.EvaluateRequest(
+                    env_id=self.env_id,
+                    final_message_json=(
+                        json.dumps({"role": "assistant", "content": final_message})
+                        if final_message is not None
+                        else ""
+                    ),
+                    termination_reason=termination_reason,
+                ),
                 timeout=self._rpc.evaluate_secs,
             )
 

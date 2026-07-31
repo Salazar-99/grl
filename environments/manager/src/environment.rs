@@ -10,7 +10,7 @@ use crate::pb::environment_service_server::EnvironmentService;
 use crate::pb::{
     CreateEnvironmentRequest, CreateEnvironmentResponse, EvaluateRequest, EvaluateResponse,
     ExecuteRequest, ExecuteResponse, ListTasksRequest, ListTasksResponse, TaskIndexEntry,
-    TeardownRequest, TeardownResponse,
+    TeardownRequest, TeardownResponse, InitializeRequest, InitializeResponse,
 };
 use crate::registry::{BootControl, Registry, RegistryError, SUBMIT_TOOL};
 use crate::telemetry;
@@ -70,8 +70,9 @@ impl EnvironmentServiceImpl {
         registry: Arc<Registry>,
         env_id: String,
         spec: crate::catalog::TaskSpec,
-    ) -> (BootControl, tokio::sync::oneshot::Sender<()>) {
+    ) -> (BootControl, tokio::sync::oneshot::Sender<()>, tokio::sync::oneshot::Receiver<Result<InitializeResponse, String>>) {
         let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+        let (init_tx, init_rx) = tokio::sync::oneshot::channel();
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(async move {
             // Do not let a fast boot finish before its control is stored in
@@ -81,13 +82,23 @@ impl EnvironmentServiceImpl {
             }
             if !vm::boot_enabled() {
                 let _ = registry.set_ready(&env_id).await;
+                let _ = init_tx.send(Ok(InitializeResponse {
+                    initial_messages_json: spec.initial_messages_json.clone(),
+                    tools_json: spec.tools_json.clone(),
+                }));
                 return;
             }
             let start = Instant::now();
             match vm::boot(&env_id, &spec, cancel_rx).await {
                 Ok(handle) => {
-                    match registry.attach_ready_vm(&env_id, handle).await {
+                    let initialized = handle.executor.initialize(InitializeRequest {
+                        env_id: env_id.clone(),
+                        task_payload_json: spec.task_payload_json.clone(),
+                    }).await;
+                    match initialized {
+                        Ok(response) => match registry.attach_ready_vm(&env_id, handle).await {
                         Ok(()) => {
+                            let _ = init_tx.send(Ok(response));
                             telemetry::histogram("grl.manager.vm.boot.duration")
                                 .record(start.elapsed().as_secs_f64(), &[]);
                             telemetry::counter("grl.manager.vm.boots")
@@ -97,6 +108,13 @@ impl EnvironmentServiceImpl {
                             // Teardown removed the registry record while boot
                             // was finishing; never leave the completed VMM live.
                             handle.stop().await;
+                            let _ = init_tx.send(Err("environment was torn down during initialization".into()));
+                        }
+                        },
+                        Err(err) => {
+                            handle.stop().await;
+                            let _ = registry.mark_failed(&env_id).await;
+                            let _ = init_tx.send(Err(format!("guest initialization failed: {err}")));
                         }
                     }
                 }
@@ -108,6 +126,7 @@ impl EnvironmentServiceImpl {
                     telemetry::counter("grl.manager.vm.boot.failures").add(1, &[]);
                     eprintln!("VM boot failed for {env_id}: {err}");
                     let _ = registry.mark_failed(&env_id).await;
+                    let _ = init_tx.send(Err(format!("VM boot failed: {err}")));
                 }
             }
         });
@@ -117,6 +136,7 @@ impl EnvironmentServiceImpl {
                 task,
             },
             start_tx,
+            init_rx,
         )
     }
 
@@ -180,7 +200,7 @@ impl EnvironmentService for EnvironmentServiceImpl {
                 .ok_or_else(|| Status::not_found(format!("task {task_id} not in catalog")))?;
 
             let env_id = self.registry.new_env_id(&task_id);
-            let (boot, start_boot) =
+            let (boot, start_boot, initialized) =
                 Self::spawn_boot_task(Arc::clone(&self.registry), env_id.clone(), spec.clone());
             if let Err(err) = self
                 .registry
@@ -193,11 +213,19 @@ impl EnvironmentService for EnvironmentServiceImpl {
             // teardown remains the source of truth.
             let _ = start_boot.send(());
 
+            let response = match initialized.await {
+                Ok(Ok(response)) => response,
+                Ok(Err(_)) | Err(_) => {
+                    let _ = self.registry.teardown(&env_id).await;
+                    return Err(Status::internal("environment initialization failed"));
+                }
+            };
+
             Ok(Response::new(CreateEnvironmentResponse {
                 env_id,
                 manager_addr: self.manager_addr.clone(),
-                initial_messages_json: spec.initial_messages_json.clone(),
-                tools_json: spec.tools_json.clone(),
+                initial_messages_json: response.initial_messages_json,
+                tools_json: response.tools_json,
             }))
         }
         .await;
@@ -268,7 +296,8 @@ impl EnvironmentService for EnvironmentServiceImpl {
     ) -> Result<Response<EvaluateResponse>, Status> {
         let start = Instant::now();
         let result: Result<Response<EvaluateResponse>, Status> = async {
-            let env_id = request.into_inner().env_id;
+            let request = request.into_inner();
+            let env_id = request.env_id.clone();
 
             self.registry
                 .require_evaluate(&env_id)
@@ -277,7 +306,7 @@ impl EnvironmentService for EnvironmentServiceImpl {
 
             let response = if let Some(executor) = self.registry.executor(&env_id).await {
                 let eval_start = Instant::now();
-                let forwarded = executor.forward_evaluate(&env_id).await;
+                let forwarded = executor.forward_evaluate(request).await;
                 telemetry::histogram("grl.manager.evaluate.duration")
                     .record(eval_start.elapsed().as_secs_f64(), &[]);
                 match forwarded {
@@ -411,6 +440,7 @@ mod tests {
 
         svc.evaluate(Request::new(EvaluateRequest {
             env_id: env_id.clone(),
+            ..Default::default()
         }))
         .await
         .unwrap();
@@ -479,6 +509,7 @@ mod tests {
         let resp = svc
             .evaluate(Request::new(EvaluateRequest {
                 env_id: env_id.clone(),
+                ..Default::default()
             }))
             .await
             .unwrap()

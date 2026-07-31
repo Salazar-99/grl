@@ -5,19 +5,35 @@ eyebrow: Operations
 intro: GRL exports metrics through OpenTelemetry into ClickHouse and Grafana so long training runs can be inspected from cluster to model behavior.
 ---
 
+## Standalone deployment
+
+The recommended backend is the standalone chart at `infra/observability/chart`. It owns a persistent single-node ClickHouse, an HTTP-only remote OTel collector, Grafana, the GRL schema, and the `grl-traces-panel` plugin. Install it with one required domain:
+
+```sh
+helm upgrade --install grl-observability infra/observability/chart \
+  --set global.domain=example.com \
+  --set clickhouse.password='replace-me' \
+  --set otelCollector.password='replace-me' \
+  --set grafana.adminPassword='replace-me'
+```
+
+Create DNS records for `otel.example.com` and `grafana.example.com`. Both Ingresses support an ingress class, annotations, explicit TLS secret names, and optional cert-manager issuer annotations. TLS is enabled by default.
+
+The existing in-cluster collector continues to accept service OTLP gRPC/HTTP and forwards it to `https://otel.example.com` using the same `otelCollector.upstream.username` and `otelCollector.upstream.password` values in the `grl-resources` chart. No Python or Rust service changes are required. The remote collector accepts OTLP/HTTP only on port 4318 and protects writes with Basic Auth.
+
+Grafana enables anonymous read-only Viewer access by default. Admin credentials remain in a Kubernetes Secret for authenticated administration; anonymous users cannot edit dashboards or modify datasources.
+
+ClickHouse data is stored in PVCs and logs/traces default to a 30-day TTL. Back up the ClickHouse PVC or export the GRL tables before cluster maintenance; the chart does not provide a backup system.
+
 ## OTel collector
 
-Collectors receive metrics from cluster components, GPU exporters, and manually instrumented training code.
+Collectors receive metrics from cluster components, GPU exporters, and manually instrumented training code. GRL services still send OTLP gRPC to the in-cluster collector, which forwards OTLP HTTP to the standalone collector.
 
 ## ClickHouse
 
 ClickHouse stores time-series data for high-cardinality run and actor dimensions.
 
-```sql
-SELECT run_id, avg(reward)
-FROM grl_rewards
-GROUP BY run_id;
-```
+The chart initializes `grl_*` landing tables, promoted metrics, logs, traces, typed trajectories, and their materialized views.
 
 ## Grafana
 

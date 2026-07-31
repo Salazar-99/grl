@@ -8,6 +8,7 @@ use manager::vm;
 
 fn fixture_spec(root: &std::path::Path) -> TaskSpec {
     TaskSpec {
+        task_payload_json: "{}".into(),
         initial_messages_json: "[]".into(),
         tools_json: "[]".into(),
         split: "conformance".into(),

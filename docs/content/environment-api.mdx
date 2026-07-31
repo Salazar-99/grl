@@ -2,21 +2,41 @@
 title: Environment API
 navTitle: Environment API
 eyebrow: Reference
-intro: The protobuf environment API is the contract between rollout workers and the Rust manager for create, execute, reset, and teardown operations.
+intro: The protobuf environment API is the contract between rollout workers, the Rust manager, and guest environments for catalog lookup, synchronous initialization, execution, evaluation, and teardown.
 ---
 
 ## Service
 
-The service defines the lifecycle and tool execution methods used by rollout workers.
+The service lifecycle is:
+
+`ListTasks → CreateEnvironment → Initialize (inside CreateEnvironment) → Execute* → Evaluate → Teardown`.
+
+`CreateEnvironment` does not return until the guest has validated the opaque
+catalog payload and generated initial messages and tool schemas.
 
 ## Requests
 
-Requests carry session identifiers, tool names, arguments, and timeout information.
+`EvaluateRequest` carries `env_id`, an optional `final_message_json`, and a
+`termination_reason`. This allows single-turn environments to grade a plain
+assistant response. Guest initialization receives `env_id` and opaque
+`task_payload_json` and returns `initial_messages_json` and `tools_json`.
 
 ```protobuf
-message ExecuteToolRequest {
-  string session_id = 1;
+message InitializeRequest {
+  string env_id = 1;
+  string task_payload_json = 2;
+}
+
+message ExecuteRequest {
+  string env_id = 1;
   string tool_name = 2;
+  string arguments_json = 3;
+}
+
+message EvaluateRequest {
+  string env_id = 1;
+  string final_message_json = 2;
+  string termination_reason = 3;
 }
 ```
 

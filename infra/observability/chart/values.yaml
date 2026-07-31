@@ -1,0 +1,73 @@
+global:
+  # Required. otel.<domain> and grafana.<domain> are created from this value.
+  domain: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+clickhouse:
+  image: clickhouse/clickhouse-server:25.3
+  database: default
+  username: otel
+  password: change-me
+  storage:
+    size: 100Gi
+    storageClassName: ""
+  retentionDays: 30
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+otelCollector:
+  image: otel/opentelemetry-collector-contrib:0.132.0
+  replicas: 1
+  username: grl-collector
+  password: change-me
+  service:
+    port: 4318
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  ingress:
+    enabled: true
+    className: nginx
+    annotations: {}
+    path: /
+    pathType: Prefix
+    tls:
+      enabled: true
+      secretName: ""
+    certManager:
+      enabled: false
+      issuer: ""
+
+grafana:
+  image: ghcr.io/grl/grl-grafana:latest
+  # Set to false when using a stock Grafana image without the private panel.
+  installPlugin: true
+  adminUser: admin
+  adminPassword: change-me
+  anonymous:
+    enabled: true
+    orgRole: Viewer
+  storage:
+    size: 10Gi
+    storageClassName: ""
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  ingress:
+    enabled: true
+    className: nginx
+    annotations: {}
+    path: /
+    pathType: Prefix
+    tls:
+      enabled: true
+      secretName: ""
+    certManager:
+      enabled: false
+      issuer: ""

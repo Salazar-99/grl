@@ -146,6 +146,25 @@ def table(title: str, sql: str, w: int = 24, h: int = 10) -> None:
     })
 
 
+def custom_panel(
+    plugin_type: str,
+    title: str,
+    sql: str,
+    options: dict | None = None,
+    w: int = 24,
+    h: int = 10,
+) -> None:
+    panels.append({
+        "datasource": DS,
+        "gridPos": place(w, h),
+        "id": nid(),
+        "options": options or {},
+        "targets": [target(sql, fmt=1)],
+        "title": title,
+        "type": plugin_type,
+    })
+
+
 # ---- query builders ----------------------------------------------------------
 
 def q_otlp_multi(names: list[str]) -> str:
@@ -499,23 +518,18 @@ timeseries("Resources (by ray_group)",
 
 # 9. Trajectories -------------------------------------------------------------
 row("Trajectories")
-table(
-    "Recent trajectories",
+custom_panel(
+    "grl-traces-panel",
+    "Recent trajectories (full body)",
     "SELECT TimeUnix AS time, TaskId, GroupId, RolloutIndex, Reward, NumTurns,\n"
     "       DoneReason, PromptTokens, ResponseTokens, PolicyVersionStart,\n"
-    "       PolicyVersionCurrent\n"
+    "       PolicyVersionCurrent, Body\n"
     "FROM default.grl_trajectories\n"
     "WHERE RunId = '${run_id}'\n"
-    "ORDER BY TimeUnix DESC\nLIMIT 500",
-    w=24, h=12,
-)
-table(
-    "Trajectory detail (full prompt + response in Body)",
-    "SELECT TimeUnix AS time, TaskId, Reward, DoneReason, Body\n"
-    "FROM default.grl_trajectories\n"
-    "WHERE RunId = '${run_id}'\n"
-    "ORDER BY TimeUnix DESC\nLIMIT 50",
-    w=24, h=12,
+    "ORDER BY TimeUnix DESC\nLIMIT 20",
+    options={"bodyPreviewLength": 60},
+    w=24,
+    h=24,
 )
 
 

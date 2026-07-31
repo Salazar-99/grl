@@ -110,3 +110,29 @@ def build_minimal_environment_image(
         output_dir,
         platform=platform,
     )
+
+
+def build_string_reverse_environment_image(
+    output_dir: Path,
+    *,
+    platform: str = "linux/amd64",
+    force: bool = False,
+) -> Path:
+    """Build the protocol-v2 string-reverse guest package."""
+    environments = Path(__file__).resolve().parents[4]
+    crate = environments / "string-reverse"
+    target = "x86_64-unknown-linux-musl"
+    binary = crate / "target" / target / "release" / "grl-string-reverse"
+    if force or not binary.is_file():
+        subprocess.run(
+            [
+                "docker", "run", "--rm", "--platform", platform,
+                "-v", f"{environments.resolve()}:/workspace/environments",
+                "-w", "/workspace/environments/string-reverse",
+                "rust:1.93-bookworm", "bash", "-c",
+                "apt-get update -qq && apt-get install -y -qq musl-tools && "
+                f"rustup target add {target} && cargo build --release --locked --target {target}",
+            ],
+            check=True,
+        )
+    return _package_binary(binary, "string-reverse", output_dir, platform=platform)

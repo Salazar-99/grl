@@ -29,7 +29,7 @@ mount namespace chrooted to the assembled OverlayFS root.
 containing `/entrypoint` (`grl-env`). It owns SWE-bench workspace preparation,
 tools, and scoring.
 
-**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`), the opening prompt (`messages`), tool schemas (`tools`), and node-relative VM image paths (`base_image`, `task_image`) for Firecracker boot.
+**Task dataset** (`tasks.jsonl`) — one line per instance with the index fields the trainer enumerates (`task_id`, `split`), opaque `task_payload_json`, and node-relative VM image paths (`base_image`, `task_image`) for Firecracker boot. Legacy `messages` and `tools` fields may remain while guests migrate to initialization-generated prompts and schemas.
 
 ### Prerequisites
 
@@ -60,7 +60,7 @@ uv run vms build-environment # build the required grl-env package
 uv run vms upload-bootstrap bootstrap-images/grl-bootstrap-<sha>.cpio.gz
 uv run vms build-environment --upload --bundle-uri s3://<bucket>/<bundle>
 uv run vms upload --jobs 4   # upload to s3://$VMS_S3_BUCKET/bases/ and .../tasks/
-uv run vms tasks             # render tasks.jsonl (prompts + tools) for the trainer
+uv run vms tasks             # render tasks.jsonl (payloads and VM paths)
 uv run vms tasks --upload    # also upload to s3://$VMS_S3_BUCKET/datasets/swebench-lite/<split>/tasks.jsonl
 uv run vms resolve <task_id>              # look up image paths from tasks.jsonl
 uv run vms resolve <task_id> --tasks tasks.jsonl  # from a specific tasks.jsonl
@@ -89,4 +89,3 @@ The environment-agnostic gRPC manager that handles VM lifecycle and tool call di
 cd env
 cargo build
 ```
-

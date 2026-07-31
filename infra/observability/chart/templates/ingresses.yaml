@@ -1,0 +1,61 @@
+{{- if .Values.otelCollector.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "grl-observability.collector" . }}
+  labels:
+    {{- include "grl-observability.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.otelCollector.ingress.certManager.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.otelCollector.ingress.certManager.issuer | quote }}
+    {{- end }}
+    {{ with .Values.otelCollector.ingress.annotations }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  {{ with .Values.otelCollector.ingress.className }}ingressClassName: {{ . | quote }}{{ end }}
+  rules:
+    - host: otel.{{ include "grl-observability.domain" . }}
+      http:
+        paths:
+          - path: {{ .Values.otelCollector.ingress.path }}
+            pathType: {{ .Values.otelCollector.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "grl-observability.collector" . }}
+                port: {name: otlp-http}
+  {{- if .Values.otelCollector.ingress.tls.enabled }}
+  tls:
+    - hosts: [otel.{{ include "grl-observability.domain" . }}]
+      secretName: {{ default (printf "%s-otel-tls" (include "grl-observability.fullname" .)) .Values.otelCollector.ingress.tls.secretName }}
+  {{- end }}
+---
+{{- end }}
+{{- if .Values.grafana.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "grl-observability.grafana" . }}
+  labels:
+    {{- include "grl-observability.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.grafana.ingress.certManager.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.grafana.ingress.certManager.issuer | quote }}
+    {{- end }}
+    {{ with .Values.grafana.ingress.annotations }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  {{ with .Values.grafana.ingress.className }}ingressClassName: {{ . | quote }}{{ end }}
+  rules:
+    - host: grafana.{{ include "grl-observability.domain" . }}
+      http:
+        paths:
+          - path: {{ .Values.grafana.ingress.path }}
+            pathType: {{ .Values.grafana.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "grl-observability.grafana" . }}
+                port: {name: http}
+  {{- if .Values.grafana.ingress.tls.enabled }}
+  tls:
+    - hosts: [grafana.{{ include "grl-observability.domain" . }}]
+      secretName: {{ default (printf "%s-grafana-tls" (include "grl-observability.fullname" .)) .Values.grafana.ingress.tls.secretName }}
+  {{- end }}
+{{- end }}
