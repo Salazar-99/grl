@@ -16,6 +16,7 @@ def test_aws_provider_gpus_per_instance_lookup():
     provider = AWSProvider()
     assert provider.lookup_gpus_per_instance("g5.12xlarge") == 4
     assert provider.lookup_gpus_per_instance("g5.xlarge") == 1
+    assert provider.lookup_gpus_per_instance("p5.4xlarge") == 1
     assert provider.lookup_gpus_per_instance("unknown.type") is None
 
 

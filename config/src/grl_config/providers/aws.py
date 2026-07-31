@@ -29,6 +29,7 @@ _EC2_GPUS_PER_INSTANCE: dict[str, int] = {
     "p3.16xlarge": 8,
     # p4d / p5 (NVIDIA A100 / H100)
     "p4d.24xlarge": 8,
+    "p5.4xlarge": 1,
     "p5.48xlarge": 8,
 }
 
