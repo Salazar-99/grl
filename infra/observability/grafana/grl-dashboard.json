@@ -5805,7 +5805,7 @@
         "name": "run_id",
         "options": [],
         "query": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
-        "refresh": 1,
+        "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
         "sort": 1,

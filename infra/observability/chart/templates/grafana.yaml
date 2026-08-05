@@ -33,8 +33,11 @@ data:
         uid: clickhouse
         type: grafana-clickhouse-datasource
         access: proxy
-        url: http://{{ include "grl-observability.clickhouse" . }}:8123
         jsonData:
+          # The ClickHouse datasource v4 reads connection details from jsonData.
+          # `url` was accepted by older datasource versions but leaves v4's host
+          # empty, causing every dashboard query to fail at client creation.
+          host: {{ include "grl-observability.clickhouse" . }}
           defaultDatabase: {{ .Values.clickhouse.database }}
           protocol: http
           port: 8123
