@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, cast
 
 import ray
@@ -63,6 +65,47 @@ def _create_base_renderer(tokenizer: Any, model_id: str) -> Any:
     if name == "default":
         return create_renderer(tokenizer, renderer="default", tool_parser="qwen3")
     return create_renderer(tokenizer, renderer=name)
+
+
+def write_vllm_weights_checkpoint(
+    state_dict: dict[str, Any], directory: Path
+) -> str:
+    """Materialize trainer weights for vLLM's engine process to reload.
+
+    ``AsyncLLM`` owns a separate engine process. Passing tensors directly through
+    its ``collective_rpc`` serializes them through that process boundary; for
+    Qwen3.5 this arrives at vLLM's loader as Python lists rather than tensors.
+    vLLM supports checkpoint-path reloads, so write the Ray-transferred CPU state
+    dict to the rollout pod's local filesystem and pass only that path over RPC.
+    """
+    import torch
+    from safetensors.torch import save_file
+
+    directory.mkdir(parents=True, exist_ok=True)
+    tensors: dict[str, torch.Tensor] = {}
+    for name, value in state_dict.items():
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"policy weight {name!r} is not a tensor: {type(value).__name__}")
+        tensors[name] = value.detach().contiguous()
+
+    target = directory / "model.safetensors"
+    temporary = directory / "model.safetensors.tmp"
+    save_file(tensors, str(temporary))
+    temporary.replace(target)
+    return str(directory)
+
+
+def language_model_weights(state_dict: dict[str, Any]) -> dict[str, Any]:
+    """Select the checkpoint weights that exist in vLLM's text-only Qwen engine."""
+    prefixes = ("model.language_model.", "lm_head.")
+    filtered = {
+        name: value
+        for name, value in state_dict.items()
+        if name.startswith(prefixes)
+    }
+    if not filtered:
+        raise ValueError("state dict contains no language-model weights")
+    return filtered
 
 
 class Renderer:
@@ -222,6 +265,7 @@ class RolloutWorker:
         self.max_model_len = rollout.max_model_len
         self.max_tokens_per_turn = rollout.max_tokens_per_turn
         self.max_assistant_turns = rollout.max_assistant_turns
+        self.language_model_only = rollout.language_model_only
         self.generation_timeout_secs = rollout.generation_timeout_secs
         self.trajectory_timeout_secs = rollout.trajectory_timeout_secs
         self.env_server_addr = cfg.environment.server_addr
@@ -238,6 +282,7 @@ class RolloutWorker:
             max_model_len=rollout.max_model_len,
             enable_prefix_caching=rollout.enable_prefix_caching,
             max_num_seqs=rollout.max_num_seqs,
+            language_model_only=rollout.language_model_only,
         )
         if rollout.tensor_parallel_size > 1:
             engine_args.tensor_parallel_size = rollout.tensor_parallel_size
@@ -254,6 +299,7 @@ class RolloutWorker:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.renderer = Renderer(self.tokenizer, model_id)
+        self._weight_sync_dir = Path(tempfile.mkdtemp(prefix="grl-vllm-weights-"))
 
         self._sem = asyncio.Semaphore(rollout.max_concurrent_trajectories)
         self.policy_version = 0
@@ -314,11 +360,17 @@ class RolloutWorker:
         """Load a CPU state dict into the live vLLM engine in place."""
 
         with record_duration("grl.rollout.weight_reload.duration"):
+            weights_path = write_vllm_weights_checkpoint(
+                language_model_weights(state_dict)
+                if self.language_model_only
+                else state_dict,
+                self._weight_sync_dir,
+            )
             await self.engine.pause_generation(mode="keep", clear_cache=True)
             try:
                 await self.engine.collective_rpc(
                     "reload_weights",
-                    kwargs={"weights_iterator": list(state_dict.items())},
+                    kwargs={"weights_path": weights_path},
                 )
                 self.policy_version = policy_version
             finally:

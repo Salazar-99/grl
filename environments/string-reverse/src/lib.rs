@@ -30,7 +30,7 @@ pub fn initialize(payload_json: &str) -> Result<(Task, String, String), String> 
         );
     }
     let prompt = format!(
-        "Transform the following three characters and return the same three characters.\nReturn exactly three characters with no explanation.\n\n{}",
+        "Reverse the string: {}\nRespond with the reversed string in <answer>...</answer> tags.",
         payload.input
     );
     Ok((
@@ -58,6 +58,20 @@ pub fn evaluate(task: &Task, response: &str) -> (f64, String) {
     (matched_positions as f64, detail)
 }
 
+/// Extract the final answer field from an assistant response.
+///
+/// Reasoning may precede the tag, but the answer itself must be enclosed in
+/// `<answer>...</answer>`. Selecting the last opening tag makes a later final
+/// answer unambiguous if a model happens to use an earlier tag while reasoning.
+fn extract_tagged_answer(response: &str) -> Option<&str> {
+    let opening = "<answer>";
+    let closing = "</answer>";
+    let start = response.rfind(opening)? + opening.len();
+    let content_and_suffix = &response[start..];
+    let end = content_and_suffix.find(closing)?;
+    Some(content_and_suffix[..end].trim())
+}
+
 /// Evaluate the JSON envelope used by the host-facing EvaluateRequest.
 /// Invalid or absent assistant content is a valid zero-reward answer.
 pub fn evaluate_final_message_json(task: &Task, final_message_json: &str) -> (f64, String) {
@@ -71,8 +85,8 @@ pub fn evaluate_final_message_json(task: &Task, final_message_json: &str) -> (f6
                     .map(str::to_owned)
             })
         });
-    match response {
-        Some(response) => evaluate(task, &response),
+    match response.and_then(|response| extract_tagged_answer(&response).map(str::to_owned)) {
+        Some(answer) => evaluate(task, &answer),
         None => evaluate(task, ""),
     }
 }
@@ -83,14 +97,29 @@ mod tests {
     #[test]
     fn shaped_positions() {
         let (task, prompt, tools) = initialize(r#"{"input":"abc","target":"cba"}"#).unwrap();
-        assert!(!prompt.to_lowercase().contains("reverse"));
+        assert_eq!(
+            prompt,
+            "Reverse the string: abc\nRespond with the reversed string in <answer>...</answer> tags."
+        );
         assert_eq!(tools, "[]");
         assert_eq!(evaluate(&task, "cxa").0, 2.0);
         assert_eq!(evaluate(&task, " cba ").0, 3.0);
         assert_eq!(evaluate(&task, "cba!").0, 3.0);
         assert_eq!(
-            evaluate_final_message_json(&task, r#"{"role":"assistant","content":"xba"}"#).0,
+            evaluate_final_message_json(
+                &task,
+                r#"{"role":"assistant","content":"reasoning\n<answer>xba</answer>"}"#
+            )
+            .0,
             2.0
+        );
+        assert_eq!(
+            evaluate_final_message_json(&task, r#"{"content":"<answer>cba</answer>"}"#).0,
+            3.0
+        );
+        assert_eq!(
+            evaluate_final_message_json(&task, r#"{"content":"cba"}"#).0,
+            0.0
         );
     }
     #[test]

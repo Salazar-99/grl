@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 from renderers import ParsedResponse
@@ -11,6 +13,8 @@ from training.rollouts import (
     Renderer,
     RolloutWorker,
     Session,
+    language_model_weights,
+    write_vllm_weights_checkpoint,
 )
 from training.types import (
     GenerationResult,
@@ -101,6 +105,39 @@ class GrpoFilterTests(unittest.TestCase):
 
 
 class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
+    def test_weight_checkpoint_preserves_tensor_values(self) -> None:
+        import torch
+        from safetensors.torch import load_file
+
+        with TemporaryDirectory() as temporary:
+            state_dict = {"model.language_model.embed.weight": torch.ones(2, 3)}
+            path = write_vllm_weights_checkpoint(state_dict, Path(temporary))
+
+            self.assertEqual(path, temporary)
+            loaded = load_file(f"{temporary}/model.safetensors")
+            self.assertTrue(
+                torch.equal(
+                    loaded["model.language_model.embed.weight"],
+                    state_dict["model.language_model.embed.weight"],
+                )
+            )
+
+    def test_language_model_weights_excludes_vision_encoder(self) -> None:
+        import torch
+
+        weights = language_model_weights(
+            {
+                "model.language_model.embed_tokens.weight": torch.ones(1),
+                "lm_head.weight": torch.ones(1),
+                "model.visual.patch_embed.weight": torch.ones(1),
+            }
+        )
+
+        self.assertEqual(
+            set(weights),
+            {"model.language_model.embed_tokens.weight", "lm_head.weight"},
+        )
+
     def test_send_weights_puts_cpu_state_dict_in_object_store(self) -> None:
         import torch
 
@@ -257,6 +294,10 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         worker = object.__new__(worker_cls)
         worker.engine = FakeEngine()
         worker.policy_version = 0
+        worker.language_model_only = False
+        tempdir = TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        worker._weight_sync_dir = Path(tempdir.name)
         state_dict = {"model.embed.weight": torch.ones(1)}
         weights_ref = PolicyWeightsRef(ref=object())
 
@@ -271,7 +312,8 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         )
         method, kwargs = worker.engine.calls[1][1]
         self.assertEqual(method, "reload_weights")
-        self.assertEqual(kwargs, {"weights_iterator": list(state_dict.items())})
+        self.assertEqual(kwargs, {"weights_path": tempdir.name})
+        self.assertTrue((Path(tempdir.name) / "model.safetensors").is_file())
         self.assertEqual(worker.engine.calls[2], ("resume", {}))
 
     async def test_trajectory_records_actual_policy_version_span(self) -> None:

@@ -279,6 +279,7 @@ class InfraConfig(BaseModel):
     release_namespace: str = "default"
     cluster_name: str = "grl"
     region: str = "us-west-2"
+    availability_zones: list[str] = Field(default_factory=list)
     helm_chart_path: str = "infra/modules/resources/chart"
     ray_address: str = "ray://grl-ray-head:10001"
     ray_cluster: RayClusterConfig = Field(default_factory=RayClusterConfig)
@@ -482,6 +483,8 @@ class GRLConfig(TrainingGRLConfig):
             "otel_upstream_username": self.infra.otel_collector.upstream.username,
             "otel_upstream_password": self.infra.otel_collector.upstream.password,
         }
+        if self.infra.availability_zones:
+            vars_["availability_zones"] = self.infra.availability_zones
         if self.infra.model_cache.enabled:
             vars_["model_tag"] = self.infra.model_cache.tag
             if self.infra.model_cache.revision:

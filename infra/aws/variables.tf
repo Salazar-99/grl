@@ -8,6 +8,12 @@ variable "cluster_name" {
   default = "grl"
 }
 
+variable "availability_zones" {
+  type        = list(string)
+  default     = []
+  description = "Optional explicit availability zones for VPC subnets and EKS node groups."
+}
+
 variable "cluster_version" {
   type        = string
   default     = "1.32"

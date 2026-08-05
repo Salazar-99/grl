@@ -2,6 +2,7 @@ module "vpc" {
   source       = "./modules/vpc"
   name         = var.cluster_name
   cluster_name = var.cluster_name
+  availability_zones = var.availability_zones
 }
 
 module "cluster" {

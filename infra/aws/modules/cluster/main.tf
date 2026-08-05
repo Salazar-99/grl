@@ -48,9 +48,9 @@ resource "aws_iam_role_policy_attachment" "nodes_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-# Read access to the VM images bucket for the vm-image-cache DaemonSet, which
-# resolves credentials from the node role via IMDS. Attached to the shared
-# node role; the bucket holds only public-dataset-derived VM artifacts.
+# Read access to VM images plus a narrowly-scoped checkpoint write grant for
+# training workers. Both resolve credentials from the shared node role via
+# IMDS; only the checkpoints prefix is writable.
 resource "aws_iam_role_policy" "nodes_vm_images" {
   count = var.vm_images_bucket == "" ? 0 : 1
 
@@ -69,6 +69,11 @@ resource "aws_iam_role_policy" "nodes_vm_images" {
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
         Resource = "arn:aws:s3:::${var.vm_images_bucket}/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "arn:aws:s3:::${var.vm_images_bucket}/checkpoints/*"
       },
     ]
   })
@@ -171,4 +176,3 @@ resource "aws_eks_node_group" "node_groups" {
     aws_iam_role_policy_attachment.nodes_ecr,
   ]
 }
-

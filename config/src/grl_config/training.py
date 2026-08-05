@@ -64,6 +64,8 @@ class RolloutConfig(BaseModel):
     max_tokens_per_turn: int = 512
     max_assistant_turns: int = 8
     enable_prefix_caching: bool = True
+    language_model_only: bool = False
+    """Skip a multimodal model's vision encoder when rollouts use text prompts only."""
     vllm_metrics_port: int = 9090
     # Wall-clock cap on one vLLM completion (prime-rl SWE runs rely on per-turn
     # token limits; this bounds hung generation).

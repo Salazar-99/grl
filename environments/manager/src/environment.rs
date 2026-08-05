@@ -96,7 +96,21 @@ impl EnvironmentServiceImpl {
                         task_payload_json: spec.task_payload_json.clone(),
                     }).await;
                     match initialized {
-                        Ok(response) => match registry.attach_ready_vm(&env_id, handle).await {
+                        Ok(response) => {
+                            // The guest owns prompt construction. Reject an empty response at
+                            // the environment boundary rather than letting a model renderer
+                            // fail later with an opaque "No messages provided" error.
+                            if response.initial_messages_json.trim().is_empty()
+                                || response.initial_messages_json.trim() == "[]"
+                            {
+                                handle.stop().await;
+                                let _ = registry.mark_failed(&env_id).await;
+                                let _ = init_tx.send(Err(
+                                    "guest initialization returned no opening messages".into(),
+                                ));
+                                return;
+                            }
+                            match registry.attach_ready_vm(&env_id, handle).await {
                         Ok(()) => {
                             let _ = init_tx.send(Ok(response));
                             telemetry::histogram("grl.manager.vm.boot.duration")
@@ -110,7 +124,8 @@ impl EnvironmentServiceImpl {
                             handle.stop().await;
                             let _ = init_tx.send(Err("environment was torn down during initialization".into()));
                         }
-                        },
+                            }
+                        }
                         Err(err) => {
                             handle.stop().await;
                             let _ = registry.mark_failed(&env_id).await;

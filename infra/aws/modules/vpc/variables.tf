@@ -22,3 +22,14 @@ variable "az_count" {
     error_message = "az_count must be at least 2 because EKS requires subnets in at least two availability zones."
   }
 }
+
+variable "availability_zones" {
+  type        = list(string)
+  default     = []
+  description = "Explicit availability zones to use instead of selecting the first available zones."
+
+  validation {
+    condition     = length(var.availability_zones) == 0 || length(var.availability_zones) >= 2
+    error_message = "availability_zones must be empty or contain at least two zones because EKS requires two zones."
+  }
+}
