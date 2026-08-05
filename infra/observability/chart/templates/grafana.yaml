@@ -81,6 +81,16 @@ spec:
       {{- with .Values.grafana.nodeSelector }}nodeSelector: {{ toYaml . | nindent 8 }}{{- end }}
       {{- with .Values.grafana.tolerations }}tolerations: {{ toYaml . | nindent 8 }}{{- end }}
       {{- with .Values.grafana.affinity }}affinity: {{ toYaml . | nindent 8 }}{{- end }}
+      {{- if .Values.grafana.installPlugin }}
+      # The Grafana data PVC masks /var/lib/grafana from the image. Copy the
+      # baked-in panel into that PVC before Grafana starts.
+      initContainers:
+        - name: install-grl-traces-panel
+          image: {{ .Values.grafana.image | quote }}
+          command: ["sh", "-ec", "mkdir -p /data/plugins/grl-traces-panel && cp -a /var/lib/grafana/plugins/grl-traces-panel/. /data/plugins/grl-traces-panel/"]
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      {{- end }}
       containers:
         - name: grafana
           image: {{ .Values.grafana.image | quote }}

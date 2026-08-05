@@ -1,6 +1,6 @@
 # Build from infra/observability:
 #   docker buildx build --platform linux/arm64 --push -t ghcr.io/salazar-99/grl-grafana:latest .
-ARG GRAFANA_VERSION=12.0.0
+ARG GRAFANA_VERSION=13.0.2
 FROM grafana/grafana:${GRAFANA_VERSION} AS plugins
 
 USER root
