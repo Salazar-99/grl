@@ -283,6 +283,20 @@ def q_otlp_hist_avg(name: str) -> str:
     )
 
 
+def q_otlp_hist_avg_multi(names: list[str]) -> str:
+    """Mean of several OTLP histograms, one named series per metric."""
+    lst = ", ".join(f"'{name}'" for name in names)
+    return (
+        "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n"
+        "       MetricName AS metric,\n"
+        "       sum(Sum) / nullIf(sum(Count), 0) AS mean\n"
+        "FROM default.grl_metrics_histogram_landing\n"
+        "WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n"
+        f"  AND MetricName IN ({lst})\n"
+        "GROUP BY time, MetricName\nORDER BY time"
+    )
+
+
 # Scraped infra (no run.id) -> landing tables, scoped to the run time window.
 WINDOW = (
     "TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') "
@@ -375,21 +389,26 @@ def q_scraped_hist_quant_by_attr(name: str, svc: str, attr: str) -> str:
 
 # 1. Training -----------------------------------------------------------------
 row("Training")
-timeseries("Loss / PG loss / KL",
-           q_otlp_multi(["grl.train.loss", "grl.train.pg_loss", "grl.train.kl"]))
-timeseries("Grad norm / clip fraction / ratio mean",
-           q_otlp_multi(["grl.train.grad_norm", "grl.train.clip_fraction",
-                         "grl.train.ratio_mean"]))
-timeseries("Reward entering step (p50/p95)", q_otlp_hist_quant("grl.train.reward"), w=8)
-timeseries("Advantage (p50/p95)", q_otlp_hist_quant("grl.train.advantage"), w=8)
-stat("Policy version", q_otlp_stat("grl.train.policy_version"), w=4)
-stat("Rollouts used", q_otlp_stat("grl.train.rollouts_used"), w=4)
+timeseries("Mean training reward", q_otlp_hist_avg("grl.train.reward"), w=8)
+timeseries("Policy stability: KL / entropy",
+           q_otlp_multi(["grl.train.kl", "grl.train.entropy"]), w=8)
+timeseries("Policy update: ratio / clipped fraction",
+           q_otlp_multi(["grl.train.ratio_mean", "grl.train.clip_fraction"]), w=8)
+timeseries("Mean policy staleness (update steps)",
+           q_otlp_hist_avg("grl.rollout.policy_staleness"), w=8)
+timeseries("Optimization: loss / policy-gradient loss",
+           q_otlp_multi(["grl.train.loss", "grl.train.pg_loss"]), w=8)
+timeseries("Optimization health: gradient norm",
+           q_otlp_multi(["grl.train.grad_norm"]), w=8)
+timeseries("Training response tokens / 30s",
+           q_otlp_counter_rate("grl.train.tokens"), w=8)
+stat("Completed policy updates", q_otlp_stat("grl.train.policy_version"), w=4)
+stat("Rollouts per update", q_otlp_stat("grl.train.rollouts_used"), w=4)
 timeseries("Groups dropped / 30s (by reason)",
-           q_otlp_counter_rate("grl.train.groups_dropped", "reason"), w=12)
-timeseries("Step & weight-sync duration (p50/p95)",
-           q_otlp_hist_quant("grl.train.step.duration"), w=6, unit="s")
-timeseries("Weight sync duration (p50/p95)",
-           q_otlp_hist_quant("grl.train.weight_sync.duration"), w=6, unit="s")
+           q_otlp_counter_rate("grl.train.groups_dropped", "reason"), w=6)
+timeseries("Mean training-step / weight-sync duration",
+           q_otlp_hist_avg_multi(["grl.train.step.duration",
+                                  "grl.train.weight_sync.duration"]), w=18, unit="s")
 
 # 2. Rollouts -----------------------------------------------------------------
 row("Rollouts")
@@ -401,8 +420,6 @@ timeseries("Tool calls / 30s (by tool)",
            q_otlp_counter_rate("grl.rollout.tool_calls", "tool"), w=8)
 timeseries("Reward (p50/p95)", q_otlp_hist_quant("grl.rollout.reward"), w=8)
 timeseries("Num turns (p50/p95)", q_otlp_hist_quant("grl.rollout.num_turns"), w=8)
-timeseries("Policy staleness (p50/p95)",
-           q_otlp_hist_quant("grl.rollout.policy_staleness"), w=8)
 timeseries("Response / prompt tokens (mean)",
            q_otlp_hist_avg("grl.rollout.response_tokens"), w=8)
 timeseries("Trajectory duration (p50/p95)",
