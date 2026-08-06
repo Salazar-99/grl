@@ -23,7 +23,7 @@ spec:
           scrape_configs:
             # Ray node metrics — every Ray pod, metrics-export-port 8080.
             - job_name: ray
-              scrape_interval: 15s
+              scrape_interval: 1s
               kubernetes_sd_configs:
                 - role: pod
                   namespaces:
@@ -45,7 +45,7 @@ spec:
             # vLLM engine metrics — rollouts pods only; RolloutWorker starts a
             # prometheus_client HTTP server on this port (see training code).
             - job_name: vllm
-              scrape_interval: 15s
+              scrape_interval: 1s
               kubernetes_sd_configs:
                 - role: pod
                   namespaces:
@@ -65,7 +65,7 @@ spec:
                   target_label: pod
             # GPU metrics from the NVIDIA GPU Operator's dcgm-exporter DaemonSet.
             - job_name: dcgm
-              scrape_interval: 15s
+              scrape_interval: 1s
               kubernetes_sd_configs:
                 - role: pod
                   namespaces:

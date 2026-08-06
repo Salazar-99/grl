@@ -1,9 +1,11 @@
 name: Publish Images
 
-# Builds and pushes the four GRL runtime images to GHCR following the
-# launcher's published-image naming convention (launcher/src/grl/images.py):
+# Builds and pushes the GRL runtime images and Grafana image to GHCR under one
+# release tag. Runtime images follow the launcher's published-image naming
+# convention (launcher/src/grl/images.py):
 #   ghcr.io/<owner>/grl-training-{head,rollouts,training}:<tag>
 #   ghcr.io/<owner>/grl-manager:<tag>
+#   ghcr.io/<owner>/grl-grafana:<tag>
 #
 # Auth is the workflow's own GITHUB_TOKEN (permissions.packages: write);
 # no stored secrets are required. Packages are private on first push —
@@ -39,15 +41,25 @@ jobs:
           - component: training-head
             dockerfile: training/Dockerfile
             target: head
+            platforms: linux/amd64
           - component: training-rollouts
             dockerfile: training/Dockerfile
             target: rollouts
+            platforms: linux/amd64
           - component: training-training
             dockerfile: training/Dockerfile
             target: training
+            platforms: linux/amd64
           - component: manager
             dockerfile: environments/manager/Dockerfile
             target: ""
+            platforms: linux/amd64
+          - component: grafana
+            dockerfile: infra/observability/Dockerfile
+            target: grafana
+            # The observability chart can run on either the x86 or Arm general
+            # node pool, unlike the GPU/KVM runtime images.
+            platforms: linux/amd64,linux/arm64
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -65,6 +77,10 @@ jobs:
           owner="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "name=ghcr.io/${owner}/grl-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: matrix.component == 'grafana'
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -84,7 +100,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
-          platforms: linux/amd64
+          platforms: ${{ matrix.platforms }}
           push: true
           tags: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.component }}

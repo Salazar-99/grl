@@ -1,22 +1,25 @@
-model: Qwen/Qwen3.5-4B
+model: Qwen/Qwen3.5-0.8B
 
 environment:
   id: string-reverse
-  bundle_uri: s3://grl-swebench-lite/datasets/string-reverse/train
+  bundle_uri: s3://grl-swebench-lite/datasets/string-reverse/0.28
   split: train
   server_addr: grl-manager.default.svc:50051
 
 grpo:
-  num_rollouts: 4
-  groups_per_batch: 1
+  num_rollouts: 8
+  groups_per_batch: 4
   min_rollouts_per_group: 2
 
 rollout:
   max_assistant_turns: 1
   max_tokens_per_turn: 32
+  max_num_seqs: 32
+  max_concurrent_trajectories: 32
+  language_model_only: true
 
 pipeline:
-  max_train_steps: 1
+  max_train_steps: 1000
 
 checkpoint:
   bucket_uri: s3://grl-swebench-lite/checkpoints/string-reverse
@@ -51,7 +54,7 @@ launch:
 images:
   mode: published
   registry: ghcr.io/salazar-99/grl
-  tag: reverse-v2-5a07d51
+  tag: "0.28"
 
 infra:
   region: us-west-2
@@ -61,4 +64,4 @@ infra:
     region: us-west-2
     bootstrap_key: bootstrap/grl-bootstrap-e9eb9c2f0c74affb.cpio.gz
   model_cache:
-    tag: Qwen/Qwen3.5-4B
+    tag: Qwen/Qwen3.5-0.8B

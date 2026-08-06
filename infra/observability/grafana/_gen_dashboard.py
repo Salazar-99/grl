@@ -484,7 +484,6 @@ timeseries("Group assembly timeouts / 30s",
 row("Environment")
 timeseries("RPC duration p50/p95 (by rpc)",
            q_otlp_hist_quant_by_attr("grl.env.rpc.duration", "rpc"), w=12, unit="s")
-timeseries("Active sessions", q_otlp_by_attr("grl.env.active", "grl.role"), w=12)
 timeseries("RPC errors / 30s (by rpc)",
            q_otlp_counter_rate("grl.env.rpc.errors", "rpc"), w=8)
 timeseries("RPC retries / 30s (by rpc)",
@@ -542,8 +541,6 @@ timeseries("Node CPU utilization",
            q_scraped_gauge("ray_node_cpu_utilization", "ray", "pod"), w=8, unit="percent")
 timeseries("Node memory used",
            q_scraped_gauge("ray_node_mem_used", "ray", "pod"), w=8, unit="bytes")
-timeseries("Node GPU utilization",
-           q_scraped_gauge("ray_node_gpus_utilization", "ray", "pod"), w=8, unit="percent")
 timeseries("Object store used memory",
            q_scraped_gauge("ray_object_store_used_memory", "ray", "pod"), w=8, unit="bytes")
 timeseries("Cluster active nodes",

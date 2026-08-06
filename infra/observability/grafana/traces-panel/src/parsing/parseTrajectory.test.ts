@@ -175,6 +175,31 @@ echo line2
     expect(parsed.exchanges[0].toolCalls[0].arguments.command).toBe('echo line1\necho line2');
   });
 
+  it('does not flag the terminal assistant generation prompt as an incomplete turn', () => {
+    const prompt =
+      '<|im_start|>user\nReverse the string: ioy\nRespond with the reversed string in <answer>...</answer> tags.<|im_end|>\n<|im_start|>assistant\n';
+    const response =
+      'The reverse of the string "ioy" is "yoi".\n\n<answer>yoi</answer><|im_end|>';
+
+    const parsed = parseTrajectory(body(prompt, response));
+
+    expect(parsed.warnings).not.toContain('incomplete_turn');
+    expect(parsed.userPrompt).toContain('Reverse the string: ioy');
+    expect(parsed.exchanges).toEqual([
+      expect.objectContaining({
+        assistantText: 'The reverse of the string "ioy" is "yoi".\n\n<answer>yoi</answer>',
+      }),
+    ]);
+  });
+
+  it('still flags a terminal assistant turn that contains incomplete content', () => {
+    const parsed = parseTrajectory(
+      body('<|im_start|>user\nx<|im_end|>\n<|im_start|>assistant\npartial answer', '')
+    );
+
+    expect(parsed.warnings).toContain('incomplete_turn');
+  });
+
   it('parses sample.json-style truncated prompt without generation marker', () => {
     // Mirrors the checked-in sample: user turn never closed, response has </think> + tool_call.
     const prompt =

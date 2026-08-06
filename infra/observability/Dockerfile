@@ -13,7 +13,7 @@ RUN npm ci
 COPY grafana/traces-panel/ ./
 RUN npm run build
 
-FROM grafana/grafana:${GRAFANA_VERSION}
+FROM grafana/grafana:${GRAFANA_VERSION} AS grafana
 USER root
 COPY --from=panel /src/dist /var/lib/grafana/plugins/grl-traces-panel
 COPY --from=plugins /var/lib/grafana/plugins /var/lib/grafana/plugins

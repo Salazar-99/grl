@@ -30,7 +30,7 @@ pub fn initialize(payload_json: &str) -> Result<(Task, String, String), String> 
         );
     }
     let prompt = format!(
-        "Reverse the string: {}\nRespond with the reversed string in <answer>...</answer> tags.",
+        "Reverse the string: {}\nRespond with the reversed string in <answer>...</answer> tags. Do not use any extra characters in the response.",
         payload.input
     );
     Ok((
@@ -101,7 +101,7 @@ mod tests {
         let (task, prompt, tools) = initialize(r#"{"input":"abc","target":"cba"}"#).unwrap();
         assert_eq!(
             prompt,
-            "Reverse the string: abc\nRespond with the reversed string in <answer>...</answer> tags."
+            "Reverse the string: abc\nRespond with the reversed string in <answer>...</answer> tags. Do not use any extra characters in the response."
         );
         assert_eq!(tools, "[]");
         assert_eq!(evaluate(&task, "cxa").0, 2.0);

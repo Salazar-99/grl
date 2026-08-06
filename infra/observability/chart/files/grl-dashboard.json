@@ -3060,7 +3060,7 @@
       "gridPos": {
         "x": 12,
         "y": 109,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "id": 38,
@@ -3087,11 +3087,11 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, Attributes['grl.role'] AS series, Value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.env.active'\nORDER BY TimeUnix",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.errors'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
-      "title": "Active sessions",
+      "title": "RPC errors / 30s (by rpc)",
       "type": "timeseries"
     },
     {
@@ -3180,11 +3180,11 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.errors'\n  GROUP BY t, series\n)\nORDER BY t",
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.retries'\n  GROUP BY t, series\n)\nORDER BY t",
           "refId": "A"
         }
       ],
-      "title": "RPC errors / 30s (by rpc)",
+      "title": "RPC retries / 30s (by rpc)",
       "type": "timeseries"
     },
     {
@@ -3250,99 +3250,6 @@
         "h": 8
       },
       "id": 40,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['rpc'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.env.rpc.retries'\n  GROUP BY t, series\n)\nORDER BY t",
-          "refId": "A"
-        }
-      ],
-      "title": "RPC retries / 30s (by rpc)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 117,
-        "w": 8,
-        "h": 8
-      },
-      "id": 41,
       "options": {
         "legend": {
           "calcs": [
@@ -3435,7 +3342,7 @@
         "w": 12,
         "h": 8
       },
-      "id": 42,
+      "id": 41,
       "options": {
         "legend": {
           "calcs": [
@@ -3474,7 +3381,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 43,
+      "id": 42,
       "title": "Manager / Environments",
       "type": "row",
       "panels": []
@@ -3541,7 +3448,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 44,
+      "id": 43,
       "options": {
         "legend": {
           "calcs": [
@@ -3634,7 +3541,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 45,
+      "id": 44,
       "options": {
         "legend": {
           "calcs": [
@@ -3727,7 +3634,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 46,
+      "id": 45,
       "options": {
         "legend": {
           "calcs": [
@@ -3820,7 +3727,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 47,
+      "id": 46,
       "options": {
         "legend": {
           "calcs": [
@@ -3913,7 +3820,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 48,
+      "id": 47,
       "options": {
         "legend": {
           "calcs": [
@@ -4006,7 +3913,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 49,
+      "id": 48,
       "options": {
         "legend": {
           "calcs": [
@@ -4099,7 +4006,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 50,
+      "id": 49,
       "options": {
         "legend": {
           "calcs": [
@@ -4192,7 +4099,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 51,
+      "id": 50,
       "options": {
         "legend": {
           "calcs": [
@@ -4285,7 +4192,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 52,
+      "id": 51,
       "options": {
         "legend": {
           "calcs": [
@@ -4378,7 +4285,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 53,
+      "id": 52,
       "options": {
         "legend": {
           "calcs": [
@@ -4471,7 +4378,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 54,
+      "id": 53,
       "options": {
         "legend": {
           "calcs": [
@@ -4510,7 +4417,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 55,
+      "id": 54,
       "title": "GPU",
       "type": "row",
       "panels": []
@@ -4577,7 +4484,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 56,
+      "id": 55,
       "options": {
         "legend": {
           "calcs": [
@@ -4670,7 +4577,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 57,
+      "id": 56,
       "options": {
         "legend": {
           "calcs": [
@@ -4763,7 +4670,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 58,
+      "id": 57,
       "options": {
         "legend": {
           "calcs": [
@@ -4856,7 +4763,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 59,
+      "id": 58,
       "options": {
         "legend": {
           "calcs": [
@@ -4949,7 +4856,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 60,
+      "id": 59,
       "options": {
         "legend": {
           "calcs": [
@@ -5042,7 +4949,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 61,
+      "id": 60,
       "options": {
         "legend": {
           "calcs": [
@@ -5081,7 +4988,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 62,
+      "id": 61,
       "title": "Ray",
       "type": "row",
       "panels": []
@@ -5148,7 +5055,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 63,
+      "id": 62,
       "options": {
         "legend": {
           "calcs": [
@@ -5241,7 +5148,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 64,
+      "id": 63,
       "options": {
         "legend": {
           "calcs": [
@@ -5324,7 +5231,7 @@
               }
             ]
           },
-          "unit": "percent"
+          "unit": "bytes"
         },
         "overrides": []
       },
@@ -5334,100 +5241,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 65,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_gpus_utilization'\nORDER BY TimeUnix",
-          "refId": "A"
-        }
-      ],
-      "title": "Node GPU utilization",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 192,
-        "w": 8,
-        "h": 8
-      },
-      "id": 66,
+      "id": 64,
       "options": {
         "legend": {
           "calcs": [
@@ -5515,12 +5329,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 8,
+        "x": 0,
         "y": 192,
         "w": 8,
         "h": 8
       },
-      "id": 67,
+      "id": 65,
       "options": {
         "legend": {
           "calcs": [
@@ -5608,12 +5422,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 16,
+        "x": 8,
         "y": 192,
         "w": 8,
         "h": 8
       },
-      "id": 68,
+      "id": 66,
       "options": {
         "legend": {
           "calcs": [
@@ -5652,7 +5466,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 69,
+      "id": 67,
       "title": "Trajectories",
       "type": "row",
       "panels": []
@@ -5668,7 +5482,7 @@
         "w": 24,
         "h": 24
       },
-      "id": 70,
+      "id": 68,
       "options": {
         "bodyPreviewLength": 60
       },

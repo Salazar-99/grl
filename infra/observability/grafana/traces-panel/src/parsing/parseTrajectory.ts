@@ -65,18 +65,22 @@ function splitTurns(text: string, warnings: ParserWarning[]): { prefix: string; 
   const firstStart = text.indexOf(IM_START);
   const prefix = text.slice(0, firstStart);
   const parts = text.slice(firstStart).split(IM_START).slice(1);
-  const turns = parts.map((part) => {
+  const turns = parts.map((part, index) => {
     const nl = part.indexOf('\n');
     const roleRaw = (nl >= 0 ? part.slice(0, nl) : part).trim();
     const rest = nl >= 0 ? part.slice(nl + 1) : '';
+    const role: RawTurn['role'] =
+      roleRaw === 'system' || roleRaw === 'user' || roleRaw === 'assistant' ? roleRaw : 'unknown';
     const endIdx = rest.indexOf(IM_END);
     const complete = endIdx >= 0;
-    if (!complete) {
+    // Chat templates end a prompt by opening an assistant turn for generation.
+    // It has no IM_END because it is not a completed transcript turn.
+    const terminalGenerationPrompt =
+      index === parts.length - 1 && role === 'assistant' && isGenerationPrompt(rest);
+    if (!complete && !terminalGenerationPrompt) {
       pushWarning(warnings, 'incomplete_turn');
     }
     const payload = complete ? rest.slice(0, endIdx) : rest;
-    const role: RawTurn['role'] =
-      roleRaw === 'system' || roleRaw === 'user' || roleRaw === 'assistant' ? roleRaw : 'unknown';
     return { role, payload, complete };
   });
 
@@ -215,6 +219,7 @@ function extractToolResponses(payload: string): ToolResult[] {
 function isGenerationPrompt(payload: string): boolean {
   const trimmed = payload.trim();
   return (
+    trimmed === '' ||
     trimmed === THINK_OPEN ||
     trimmed === `${THINK_OPEN}\n` ||
     trimmed === `${THINK_OPEN}\n\n${THINK_CLOSE}` ||
@@ -306,12 +311,15 @@ function buildTurnSequence(prompt: string, response: string, warnings: ParserWar
   // Response has no role markers: treat entire response as one assistant continuation.
   if (!response.includes(IM_START)) {
     const lastPrompt = promptTurns[promptTurns.length - 1];
+    const responsePayload = response.includes(IM_END)
+      ? response.slice(0, response.indexOf(IM_END))
+      : response;
     if (lastPrompt?.role === 'assistant' && isGenerationPrompt(lastPrompt.payload)) {
       return [
         ...promptTurns.slice(0, -1),
         {
           role: 'assistant',
-          payload: `${lastPrompt.payload}${response}`,
+          payload: `${lastPrompt.payload}${responsePayload}`,
           complete: response.includes(IM_END),
         },
       ];
@@ -320,9 +328,7 @@ function buildTurnSequence(prompt: string, response: string, warnings: ParserWar
       ...promptTurns,
       {
         role: 'assistant',
-        payload: response.includes(IM_END)
-          ? response.slice(0, response.indexOf(IM_END))
-          : response,
+        payload: responsePayload,
         complete: response.includes(IM_END),
       },
     ];

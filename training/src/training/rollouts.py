@@ -277,6 +277,11 @@ class RolloutWorker:
         )
         self.env_rpc_timeouts = RpcTimeouts.from_config(cfg.environment.rpc_timeouts)
 
+        # Start and verify the endpoint before vLLM's comparatively slow engine
+        # initialization.  This keeps the collector from accumulating failed
+        # scrapes during actor startup and makes a missing endpoint fail fast.
+        self._start_metrics_server(rollout.vllm_metrics_port)
+
         engine_args = AsyncEngineArgs(
             model=str(model_path),
             max_model_len=rollout.max_model_len,
@@ -288,7 +293,6 @@ class RolloutWorker:
             engine_args.tensor_parallel_size = rollout.tensor_parallel_size
             engine_args.distributed_executor_backend = "mp"
         self.engine = AsyncLLM.from_engine_args(engine_args)
-        self._start_metrics_server(rollout.vllm_metrics_port)
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             str(model_path),
@@ -321,19 +325,20 @@ class RolloutWorker:
         this actor process; nothing serves them until we start an exposition
         server. The port must match the collector's vllm scrape job.
         """
-        import logging
+        from urllib.request import urlopen
 
         from prometheus_client import start_http_server
 
         try:
             start_http_server(port)
         except OSError as exc:
-            # Another RolloutWorker in this pod already bound the port; its
-            # registry doesn't include this process's metrics, so they would
-            # be missing from scrapes.
-            logging.getLogger(__name__).warning(
-                "vLLM metrics server not started on port %s: %s", port, exc
-            )
+            raise RuntimeError(f"failed to start vLLM metrics server on port {port}") from exc
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/metrics", timeout=5) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"vLLM metrics endpoint returned HTTP {response.status}")
+        except OSError as exc:
+            raise RuntimeError("vLLM metrics endpoint failed its readiness check") from exc
 
     def get_policy_version(self) -> int:
         return self.policy_version
