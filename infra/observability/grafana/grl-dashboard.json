@@ -43,6 +43,130 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 8
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.policy_version'",
+          "refId": "A"
+        }
+      ],
+      "title": "Completed policy updates",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 8
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.rollouts_used'",
+          "refId": "A"
+        }
+      ],
+      "title": "Rollouts per update",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "mode": "palette-classic"
           },
           "custom": {
@@ -92,12 +216,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 0,
+        "x": 8,
         "y": 1,
         "w": 8,
         "h": 8
       },
-      "id": 2,
+      "id": 4,
       "options": {
         "legend": {
           "calcs": [
@@ -185,12 +309,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 8,
+        "x": 16,
         "y": 1,
         "w": 8,
         "h": 8
       },
-      "id": 3,
+      "id": 5,
       "options": {
         "legend": {
           "calcs": [
@@ -278,12 +402,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 16,
-        "y": 1,
-        "w": 8,
+        "x": 0,
+        "y": 9,
+        "w": 6,
         "h": 8
       },
-      "id": 4,
+      "id": 6,
       "options": {
         "legend": {
           "calcs": [
@@ -371,12 +495,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 0,
+        "x": 6,
         "y": 9,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
-      "id": 5,
+      "id": 7,
       "options": {
         "legend": {
           "calcs": [
@@ -464,12 +588,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 8,
+        "x": 12,
         "y": 9,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
-      "id": 6,
+      "id": 8,
       "options": {
         "legend": {
           "calcs": [
@@ -557,12 +681,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 16,
+        "x": 18,
         "y": 9,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
-      "id": 7,
+      "id": 9,
       "options": {
         "legend": {
           "calcs": [
@@ -655,7 +779,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 8,
+      "id": 10,
       "options": {
         "legend": {
           "calcs": [
@@ -694,7 +818,39 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
@@ -706,32 +862,31 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
         "x": 8,
         "y": 17,
-        "w": 4,
-        "h": 4
+        "w": 8,
+        "h": 8
       },
-      "id": 9,
+      "id": 11,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
+        "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "max"
           ],
-          "fields": "",
-          "values": false
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -740,75 +895,13 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "format": 1,
-          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.policy_version'",
+          "format": 0,
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       MetricName AS metric,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName IN ('grl.train.step.duration', 'grl.train.weight_sync.duration')\nGROUP BY time, MetricName\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Completed policy updates",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 17,
-        "w": 4,
-        "h": 4
-      },
-      "id": 10,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 1,
-          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM default.grl_metrics\nWHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n  AND MetricName = 'grl.train.rollouts_used'",
-          "refId": "A"
-        }
-      ],
-      "title": "Rollouts per update",
-      "type": "stat"
+      "title": "Mean training-step / weight-sync duration",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -869,10 +962,10 @@
       "gridPos": {
         "x": 16,
         "y": 17,
-        "w": 6,
+        "w": 8,
         "h": 8
       },
-      "id": 11,
+      "id": 12,
       "options": {
         "legend": {
           "calcs": [
@@ -904,103 +997,10 @@
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 25,
-        "w": 18,
-        "h": 8
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       MetricName AS metric,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName IN ('grl.train.step.duration', 'grl.train.weight_sync.duration')\nGROUP BY time, MetricName\nORDER BY time",
-          "refId": "A"
-        }
-      ],
-      "title": "Mean training-step / weight-sync duration",
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 33,
+        "y": 25,
         "w": 24,
         "h": 1
       },
@@ -1067,7 +1067,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 34,
+        "y": 26,
         "w": 8,
         "h": 8
       },
@@ -1160,7 +1160,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 34,
+        "y": 26,
         "w": 8,
         "h": 8
       },
@@ -1253,7 +1253,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 34,
+        "y": 26,
         "w": 8,
         "h": 8
       },
@@ -1346,7 +1346,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 42,
+        "y": 34,
         "w": 8,
         "h": 8
       },
@@ -1374,11 +1374,11 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName = 'grl.rollout.num_turns'\nGROUP BY time\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Reward (p50/p95)",
+      "title": "Num turns (mean)",
       "type": "timeseries"
     },
     {
@@ -1439,104 +1439,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 42,
+        "y": 34,
         "w": 8,
         "h": 8
       },
       "id": 18,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.num_turns'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
-          "refId": "A"
-        }
-      ],
-      "title": "Num turns (p50/p95)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 42,
-        "w": 8,
-        "h": 8
-      },
-      "id": 19,
       "options": {
         "legend": {
           "calcs": [
@@ -1624,12 +1531,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 0,
-        "y": 50,
+        "x": 16,
+        "y": 34,
         "w": 8,
         "h": 8
       },
-      "id": 20,
+      "id": 19,
       "options": {
         "legend": {
           "calcs": [
@@ -1653,11 +1560,11 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.rollout.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName = 'grl.rollout.duration'\nGROUP BY time\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Trajectory duration (p50/p95)",
+      "title": "Trajectory duration (mean)",
       "type": "timeseries"
     },
     {
@@ -1717,12 +1624,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 8,
-        "y": 50,
+        "x": 0,
+        "y": 42,
         "w": 8,
         "h": 8
       },
-      "id": 21,
+      "id": 20,
       "options": {
         "legend": {
           "calcs": [
@@ -1757,12 +1664,12 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 58,
+        "y": 50,
         "w": 24,
         "h": 1
       },
-      "id": 22,
-      "title": "vLLM (scraped: ServiceName='vllm', by pod)",
+      "id": 21,
+      "title": "vLLM",
       "type": "row",
       "panels": []
     },
@@ -1824,11 +1731,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 59,
+        "y": 51,
         "w": 8,
         "h": 8
       },
-      "id": 23,
+      "id": 22,
       "options": {
         "legend": {
           "calcs": [
@@ -1917,11 +1824,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 59,
+        "y": 51,
         "w": 8,
         "h": 8
       },
-      "id": 24,
+      "id": 23,
       "options": {
         "legend": {
           "calcs": [
@@ -2010,11 +1917,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 59,
+        "y": 51,
         "w": 8,
         "h": 8
       },
-      "id": 25,
+      "id": 24,
       "options": {
         "legend": {
           "calcs": [
@@ -2103,11 +2010,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 67,
+        "y": 59,
         "w": 8,
         "h": 8
       },
-      "id": 26,
+      "id": 25,
       "options": {
         "legend": {
           "calcs": [
@@ -2196,11 +2103,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 67,
+        "y": 59,
         "w": 8,
         "h": 8
       },
-      "id": 27,
+      "id": 26,
       "options": {
         "legend": {
           "calcs": [
@@ -2289,11 +2196,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 67,
+        "y": 59,
         "w": 8,
         "h": 8
       },
-      "id": 28,
+      "id": 27,
       "options": {
         "legend": {
           "calcs": [
@@ -2382,11 +2289,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 75,
+        "y": 67,
         "w": 12,
         "h": 8
       },
-      "id": 29,
+      "id": 28,
       "options": {
         "legend": {
           "calcs": [
@@ -2421,11 +2328,11 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 83,
+        "y": 75,
         "w": 24,
         "h": 1
       },
-      "id": 30,
+      "id": 29,
       "title": "Pipeline",
       "type": "row",
       "panels": []
@@ -2488,11 +2395,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 84,
+        "y": 76,
         "w": 12,
         "h": 8
       },
-      "id": 31,
+      "id": 30,
       "options": {
         "legend": {
           "calcs": [
@@ -2581,11 +2488,11 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 84,
+        "y": 76,
         "w": 12,
         "h": 8
       },
-      "id": 32,
+      "id": 31,
       "options": {
         "legend": {
           "calcs": [
@@ -2674,11 +2581,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 92,
+        "y": 84,
         "w": 8,
         "h": 8
       },
-      "id": 33,
+      "id": 32,
       "options": {
         "legend": {
           "calcs": [
@@ -2761,110 +2668,17 @@
               }
             ]
           },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 92,
-        "w": 8,
-        "h": 8
-      },
-      "id": 34,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.pipeline.batch.size'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
-          "refId": "A"
-        }
-      ],
-      "title": "Batch size (p50/p95)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "x": 16,
-        "y": 92,
+        "x": 8,
+        "y": 84,
         "w": 8,
         "h": 8
       },
-      "id": 35,
+      "id": 33,
       "options": {
         "legend": {
           "calcs": [
@@ -2888,11 +2702,11 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n    AND MetricName = 'grl.pipeline.group.assembly.duration'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName = 'grl.pipeline.group.assembly.duration'\nGROUP BY time\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Group assembly duration (p50/p95)",
+      "title": "Group assembly duration (mean)",
       "type": "timeseries"
     },
     {
@@ -2953,11 +2767,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 100,
+        "y": 92,
         "w": 12,
         "h": 8
       },
-      "id": 36,
+      "id": 34,
       "options": {
         "legend": {
           "calcs": [
@@ -2992,12 +2806,12 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 108,
+        "y": 100,
         "w": 24,
         "h": 1
       },
-      "id": 37,
-      "title": "Environment (trainer-side gRPC client)",
+      "id": 35,
+      "title": "Environment",
       "type": "row",
       "panels": []
     },
@@ -3059,11 +2873,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 109,
+        "y": 101,
         "w": 12,
         "h": 8
       },
-      "id": 38,
+      "id": 36,
       "options": {
         "legend": {
           "calcs": [
@@ -3152,11 +2966,11 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 109,
+        "y": 101,
         "w": 12,
         "h": 8
       },
-      "id": 39,
+      "id": 37,
       "options": {
         "legend": {
           "calcs": [
@@ -3245,11 +3059,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 117,
+        "y": 109,
         "w": 8,
         "h": 8
       },
-      "id": 40,
+      "id": 38,
       "options": {
         "legend": {
           "calcs": [
@@ -3338,11 +3152,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 117,
+        "y": 109,
         "w": 8,
         "h": 8
       },
-      "id": 41,
+      "id": 39,
       "options": {
         "legend": {
           "calcs": [
@@ -3431,11 +3245,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 117,
+        "y": 109,
         "w": 8,
         "h": 8
       },
-      "id": 42,
+      "id": 40,
       "options": {
         "legend": {
           "calcs": [
@@ -3524,11 +3338,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 125,
+        "y": 117,
         "w": 12,
         "h": 8
       },
-      "id": 43,
+      "id": 41,
       "options": {
         "legend": {
           "calcs": [
@@ -3563,12 +3377,12 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 133,
+        "y": 125,
         "w": 24,
         "h": 1
       },
-      "id": 44,
-      "title": "Manager / Environments (scraped: ServiceName='grl-manager', by pod)",
+      "id": 42,
+      "title": "Manager / Environments",
       "type": "row",
       "panels": []
     },
@@ -3630,11 +3444,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 134,
+        "y": 126,
         "w": 8,
         "h": 8
       },
-      "id": 45,
+      "id": 43,
       "options": {
         "legend": {
           "calcs": [
@@ -3723,11 +3537,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 134,
+        "y": 126,
         "w": 8,
         "h": 8
       },
-      "id": 46,
+      "id": 44,
       "options": {
         "legend": {
           "calcs": [
@@ -3816,11 +3630,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 134,
+        "y": 126,
         "w": 8,
         "h": 8
       },
-      "id": 47,
+      "id": 45,
       "options": {
         "legend": {
           "calcs": [
@@ -3909,11 +3723,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 142,
+        "y": 134,
         "w": 8,
         "h": 8
       },
-      "id": 48,
+      "id": 46,
       "options": {
         "legend": {
           "calcs": [
@@ -4002,11 +3816,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 142,
+        "y": 134,
         "w": 8,
         "h": 8
       },
-      "id": 49,
+      "id": 47,
       "options": {
         "legend": {
           "calcs": [
@@ -4095,11 +3909,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 142,
+        "y": 134,
         "w": 8,
         "h": 8
       },
-      "id": 50,
+      "id": 48,
       "options": {
         "legend": {
           "calcs": [
@@ -4188,11 +4002,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 150,
+        "y": 142,
         "w": 8,
         "h": 8
       },
-      "id": 51,
+      "id": 49,
       "options": {
         "legend": {
           "calcs": [
@@ -4281,11 +4095,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 150,
+        "y": 142,
         "w": 8,
         "h": 8
       },
-      "id": 52,
+      "id": 50,
       "options": {
         "legend": {
           "calcs": [
@@ -4368,110 +4182,17 @@
               }
             ]
           },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 150,
-        "w": 8,
-        "h": 8
-      },
-      "id": 53,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "rawSql": "SELECT t AS time,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.5 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p50,\n  arrayElement(eb, greatest(1, least(arrayFirstIndex(c -> c >= 0.95 * arraySum(bc), arrayCumSum(bc)), length(eb)))) AS p95\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n  FROM default.grl_metrics_histogram_landing\n  WHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n    AND ServiceName = 'grl-manager' AND MetricName = 'grl.manager.evaluate.reward'\n  GROUP BY t\n)\nWHERE arraySum(bc) > 0\nORDER BY t",
-          "refId": "A"
-        }
-      ],
-      "title": "Evaluate reward (p50/p95)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "x": 0,
-        "y": 158,
+        "x": 16,
+        "y": 142,
         "w": 8,
         "h": 8
       },
-      "id": 54,
+      "id": 51,
       "options": {
         "legend": {
           "calcs": [
@@ -4559,12 +4280,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 8,
-        "y": 158,
+        "x": 0,
+        "y": 150,
         "w": 8,
         "h": 8
       },
-      "id": 55,
+      "id": 52,
       "options": {
         "legend": {
           "calcs": [
@@ -4652,12 +4373,12 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 16,
-        "y": 158,
+        "x": 8,
+        "y": 150,
         "w": 8,
         "h": 8
       },
-      "id": 56,
+      "id": 53,
       "options": {
         "legend": {
           "calcs": [
@@ -4692,12 +4413,12 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 166,
+        "y": 158,
         "w": 24,
         "h": 1
       },
-      "id": 57,
-      "title": "GPU (scraped: ServiceName='dcgm', by node)",
+      "id": 54,
+      "title": "GPU",
       "type": "row",
       "panels": []
     },
@@ -4759,11 +4480,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 167,
+        "y": 159,
         "w": 8,
         "h": 8
       },
-      "id": 58,
+      "id": 55,
       "options": {
         "legend": {
           "calcs": [
@@ -4852,11 +4573,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 167,
+        "y": 159,
         "w": 8,
         "h": 8
       },
-      "id": 59,
+      "id": 56,
       "options": {
         "legend": {
           "calcs": [
@@ -4945,11 +4666,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 167,
+        "y": 159,
         "w": 8,
         "h": 8
       },
-      "id": 60,
+      "id": 57,
       "options": {
         "legend": {
           "calcs": [
@@ -5038,11 +4759,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 175,
+        "y": 167,
         "w": 8,
         "h": 8
       },
-      "id": 61,
+      "id": 58,
       "options": {
         "legend": {
           "calcs": [
@@ -5131,11 +4852,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 175,
+        "y": 167,
         "w": 8,
         "h": 8
       },
-      "id": 62,
+      "id": 59,
       "options": {
         "legend": {
           "calcs": [
@@ -5224,11 +4945,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 175,
+        "y": 167,
         "w": 8,
         "h": 8
       },
-      "id": 63,
+      "id": 60,
       "options": {
         "legend": {
           "calcs": [
@@ -5263,12 +4984,12 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 183,
+        "y": 175,
         "w": 24,
         "h": 1
       },
-      "id": 64,
-      "title": "Ray (scraped: ServiceName='ray', by pod / ray_group)",
+      "id": 61,
+      "title": "Ray",
       "type": "row",
       "panels": []
     },
@@ -5330,11 +5051,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 184,
+        "y": 176,
         "w": 8,
         "h": 8
       },
-      "id": 65,
+      "id": 62,
       "options": {
         "legend": {
           "calcs": [
@@ -5423,11 +5144,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 184,
+        "y": 176,
         "w": 8,
         "h": 8
       },
-      "id": 66,
+      "id": 63,
       "options": {
         "legend": {
           "calcs": [
@@ -5516,11 +5237,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 184,
+        "y": 176,
         "w": 8,
         "h": 8
       },
-      "id": 67,
+      "id": 64,
       "options": {
         "legend": {
           "calcs": [
@@ -5609,11 +5330,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 192,
+        "y": 184,
         "w": 8,
         "h": 8
       },
-      "id": 68,
+      "id": 65,
       "options": {
         "legend": {
           "calcs": [
@@ -5637,11 +5358,11 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_object_store_memory'\nORDER BY TimeUnix",
+          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_object_store_used_memory'\nORDER BY TimeUnix",
           "refId": "A"
         }
       ],
-      "title": "Object store memory",
+      "title": "Object store used memory",
       "type": "timeseries"
     },
     {
@@ -5702,11 +5423,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 192,
+        "y": 184,
         "w": 8,
         "h": 8
       },
-      "id": 69,
+      "id": 66,
       "options": {
         "legend": {
           "calcs": [
@@ -5795,11 +5516,11 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 192,
+        "y": 184,
         "w": 8,
         "h": 8
       },
-      "id": 70,
+      "id": 67,
       "options": {
         "legend": {
           "calcs": [
@@ -5823,22 +5544,22 @@
           },
           "editorType": "sql",
           "format": 0,
-          "rawSql": "SELECT TimeUnix AS time, if(ResourceAttributes['ray_group'] != '', ResourceAttributes['ray_group'], Attributes['ray_group']) AS series, Value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_resources'\nORDER BY TimeUnix",
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       if(ResourceAttributes['ray_group'] != '', ResourceAttributes['ray_group'], Attributes['ray_group']) AS series,\n       countDistinct(if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod'])) AS value\nFROM default.grl_metrics_landing\nWHERE TimeUnix BETWEEN parseDateTime64BestEffort('${run_start}') AND parseDateTime64BestEffort('${run_end}')\n  AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\nGROUP BY time, series\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Resources (by ray_group)",
+      "title": "Pods by Ray group",
       "type": "timeseries"
     },
     {
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 200,
+        "y": 192,
         "w": 24,
         "h": 1
       },
-      "id": 71,
+      "id": 68,
       "title": "Trajectories",
       "type": "row",
       "panels": []
@@ -5850,11 +5571,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 201,
+        "y": 193,
         "w": 24,
         "h": 24
       },
-      "id": 72,
+      "id": 69,
       "options": {
         "bodyPreviewLength": 60
       },

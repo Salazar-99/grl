@@ -4,6 +4,8 @@ Kept in-tree so the (large) dashboard can be regenerated/extended consistently
 rather than hand-edited. See grl_training_observability plan Part 6.
 """
 
+from __future__ import annotations
+
 import json
 
 DS = {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"}
@@ -194,6 +196,24 @@ def q_otlp_stat(name: str) -> str:
         "FROM default.grl_metrics\n"
         "WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n"
         f"  AND MetricName = '{name}'"
+    )
+
+
+def q_scraped_pods_by_attr(metric: str, service: str, attr: str) -> str:
+    """Distinct scraped pod count, grouped by a resource attribute."""
+    series = (
+        f"if(ResourceAttributes['{attr}'] != '', ResourceAttributes['{attr}'], "
+        f"Attributes['{attr}'])"
+    )
+    pod = "if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod'])"
+    return (
+        "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n"
+        f"       {series} AS series,\n"
+        f"       countDistinct({pod}) AS value\n"
+        "FROM default.grl_metrics_landing\n"
+        f"WHERE {WINDOW}\n"
+        f"  AND ServiceName = '{service}' AND MetricName = '{metric}'\n"
+        "GROUP BY time, series\nORDER BY time"
     )
 
 
@@ -389,26 +409,26 @@ def q_scraped_hist_quant_by_attr(name: str, svc: str, attr: str) -> str:
 
 # 1. Training -----------------------------------------------------------------
 row("Training")
+stat("Completed policy updates", q_otlp_stat("grl.train.policy_version"), w=4, h=8)
+stat("Rollouts per update", q_otlp_stat("grl.train.rollouts_used"), w=4, h=8)
 timeseries("Mean training reward", q_otlp_hist_avg("grl.train.reward"), w=8)
 timeseries("Policy stability: KL / entropy",
            q_otlp_multi(["grl.train.kl", "grl.train.entropy"]), w=8)
 timeseries("Policy update: ratio / clipped fraction",
-           q_otlp_multi(["grl.train.ratio_mean", "grl.train.clip_fraction"]), w=8)
+           q_otlp_multi(["grl.train.ratio_mean", "grl.train.clip_fraction"]), w=6)
 timeseries("Mean policy staleness (update steps)",
-           q_otlp_hist_avg("grl.rollout.policy_staleness"), w=8)
+           q_otlp_hist_avg("grl.rollout.policy_staleness"), w=6)
 timeseries("Optimization: loss / policy-gradient loss",
-           q_otlp_multi(["grl.train.loss", "grl.train.pg_loss"]), w=8)
+           q_otlp_multi(["grl.train.loss", "grl.train.pg_loss"]), w=6)
 timeseries("Optimization health: gradient norm",
-           q_otlp_multi(["grl.train.grad_norm"]), w=8)
+           q_otlp_multi(["grl.train.grad_norm"]), w=6)
 timeseries("Training response tokens / 30s",
            q_otlp_counter_rate("grl.train.tokens"), w=8)
-stat("Completed policy updates", q_otlp_stat("grl.train.policy_version"), w=4)
-stat("Rollouts per update", q_otlp_stat("grl.train.rollouts_used"), w=4)
-timeseries("Groups dropped / 30s (by reason)",
-           q_otlp_counter_rate("grl.train.groups_dropped", "reason"), w=6)
 timeseries("Mean training-step / weight-sync duration",
            q_otlp_hist_avg_multi(["grl.train.step.duration",
-                                  "grl.train.weight_sync.duration"]), w=18, unit="s")
+                                  "grl.train.weight_sync.duration"]), w=8, unit="s")
+timeseries("Groups dropped / 30s (by reason)",
+           q_otlp_counter_rate("grl.train.groups_dropped", "reason"), w=8)
 
 # 2. Rollouts -----------------------------------------------------------------
 row("Rollouts")
@@ -418,17 +438,16 @@ timeseries("Truncated / 30s (by cause)",
            q_otlp_counter_rate("grl.rollout.truncated", "cause"), w=8)
 timeseries("Tool calls / 30s (by tool)",
            q_otlp_counter_rate("grl.rollout.tool_calls", "tool"), w=8)
-timeseries("Reward (p50/p95)", q_otlp_hist_quant("grl.rollout.reward"), w=8)
-timeseries("Num turns (p50/p95)", q_otlp_hist_quant("grl.rollout.num_turns"), w=8)
+timeseries("Num turns (mean)", q_otlp_hist_avg("grl.rollout.num_turns"), w=8)
 timeseries("Response / prompt tokens (mean)",
            q_otlp_hist_avg("grl.rollout.response_tokens"), w=8)
-timeseries("Trajectory duration (p50/p95)",
-           q_otlp_hist_quant("grl.rollout.duration"), w=8, unit="s")
+timeseries("Trajectory duration (mean)",
+           q_otlp_hist_avg("grl.rollout.duration"), w=8, unit="s")
 timeseries("In-flight trajectories", q_otlp_by_attr("grl.rollout.in_flight", "grl.role"),
            w=8)
 
 # 3. vLLM (scraped) -----------------------------------------------------------
-row("vLLM (scraped: ServiceName='vllm', by pod)")
+row("vLLM")
 timeseries("Requests running / waiting",
            q_scraped_gauge("vllm:num_requests_running", "vllm", "pod"), w=8)
 timeseries("KV cache usage %",
@@ -454,14 +473,13 @@ timeseries("Groups partial vs ready",
            q_otlp_multi(["grl.pipeline.groups.partial", "grl.pipeline.groups.ready"]), w=12)
 timeseries("Batches emitted / 30s (by reason)",
            q_otlp_counter_rate("grl.pipeline.batch.emitted", "reason"), w=8)
-timeseries("Batch size (p50/p95)", q_otlp_hist_quant("grl.pipeline.batch.size"), w=8)
-timeseries("Group assembly duration (p50/p95)",
-           q_otlp_hist_quant("grl.pipeline.group.assembly.duration"), w=8, unit="s")
+timeseries("Group assembly duration (mean)",
+           q_otlp_hist_avg("grl.pipeline.group.assembly.duration"), w=8, unit="s")
 timeseries("Group assembly timeouts / 30s",
            q_otlp_counter_rate("grl.pipeline.group.timeout"), w=12)
 
 # 5. Environment (client view) ------------------------------------------------
-row("Environment (trainer-side gRPC client)")
+row("Environment")
 timeseries("RPC duration p50/p95 (by rpc)",
            q_otlp_hist_quant_by_attr("grl.env.rpc.duration", "rpc"), w=12, unit="s")
 timeseries("Active sessions", q_otlp_by_attr("grl.env.active", "grl.role"), w=12)
@@ -475,7 +493,7 @@ timeseries("Tool calls / 30s (by tool)",
            q_otlp_counter_rate("grl.env.tool.calls", "tool"), w=12)
 
 # 6. Manager / Environments (server view) -------------------------------------
-row("Manager / Environments (scraped: ServiceName='grl-manager', by pod)")
+row("Manager / Environments")
 timeseries("Active envs (by pod)",
            q_scraped_gauge("grl.manager.envs.active", "grl-manager", "pod"), w=8)
 timeseries("Active VMs (by pod)",
@@ -493,8 +511,6 @@ timeseries("VM boot duration (p50/p95)",
            q_scraped_hist_quant("grl.manager.vm.boot.duration", "grl-manager"), w=8, unit="s")
 timeseries("VM boot failures / 30s",
            q_scraped_counter_rate("grl.manager.vm.boot.failures", "grl-manager"), w=8)
-timeseries("Evaluate reward (p50/p95)",
-           q_scraped_hist_quant("grl.manager.evaluate.reward", "grl-manager"), w=8)
 timeseries("Manager RPC duration p50/p95 (by rpc)",
            q_scraped_hist_quant_by_attr("grl.manager.rpc.duration", "grl-manager", "rpc"),
            w=8, unit="s")
@@ -504,7 +520,7 @@ timeseries("Evaluate infra errors / 30s",
            q_scraped_counter_rate("grl.manager.evaluate.infra_errors", "grl-manager"), w=8)
 
 # 7. GPU (DCGM, scraped) ------------------------------------------------------
-row("GPU (scraped: ServiceName='dcgm', by node)")
+row("GPU")
 timeseries("GPU utilization %",
            q_scraped_gauge("DCGM_FI_DEV_GPU_UTIL", "dcgm", "node"), w=8, unit="percent")
 timeseries("Framebuffer used (MiB)",
@@ -519,19 +535,19 @@ timeseries("Framebuffer free (MiB)",
            q_scraped_gauge("DCGM_FI_DEV_FB_FREE", "dcgm", "node"), w=8, unit="decmbytes")
 
 # 8. Ray (scraped) ------------------------------------------------------------
-row("Ray (scraped: ServiceName='ray', by pod / ray_group)")
+row("Ray")
 timeseries("Node CPU utilization",
            q_scraped_gauge("ray_node_cpu_utilization", "ray", "pod"), w=8, unit="percent")
 timeseries("Node memory used",
            q_scraped_gauge("ray_node_mem_used", "ray", "pod"), w=8, unit="bytes")
 timeseries("Node GPU utilization",
            q_scraped_gauge("ray_node_gpus_utilization", "ray", "pod"), w=8, unit="percent")
-timeseries("Object store memory",
-           q_scraped_gauge("ray_object_store_memory", "ray", "pod"), w=8, unit="bytes")
+timeseries("Object store used memory",
+           q_scraped_gauge("ray_object_store_used_memory", "ray", "pod"), w=8, unit="bytes")
 timeseries("Cluster active nodes",
            q_scraped_gauge("ray_cluster_active_nodes", "ray", "ray_node_type"), w=8)
-timeseries("Resources (by ray_group)",
-           q_scraped_gauge("ray_resources", "ray", "ray_group"), w=8)
+timeseries("Pods by Ray group",
+           q_scraped_pods_by_attr("ray_node_cpu_utilization", "ray", "ray_group"), w=8)
 
 # 9. Trajectories -------------------------------------------------------------
 row("Trajectories")
