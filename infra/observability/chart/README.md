@@ -18,6 +18,7 @@ does this automatically; to build it locally from `infra/observability`:
 
 ```sh
 docker buildx build --platform linux/arm64 --push \
+  -f infra/observability/Dockerfile \
   -t ghcr.io/salazar-99/grl-grafana:0.28 .
 ```
 
