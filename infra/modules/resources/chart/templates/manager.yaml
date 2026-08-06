@@ -71,6 +71,8 @@ spec:
               value: {{ ternary "true" "false" .Values.manager.useJailer | quote }}
             - name: GRL_JAILER_DIR
               value: {{ .Values.manager.jailerRoot | quote }}
+            - name: GRL_VM_MEM_MIB
+              value: {{ .Values.manager.vmMemoryMiB | quote }}
           ports:
             - name: grpc
               containerPort: {{ .Values.manager.port }}

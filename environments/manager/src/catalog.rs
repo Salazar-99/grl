@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::vm::{join_and_verify, resolve_initrd, resolve_kernel, VmPaths};
+use crate::vm::{VmPaths, join_and_verify, resolve_initrd, resolve_kernel};
 
 /// One catalog entry: prompt/tools for the trainer plus VM image paths for boot.
 #[derive(Clone, Debug, Default)]
@@ -319,9 +319,11 @@ mod tests {
         assert!(paths.initrd.ends_with("bootstrap/active.cpio.gz"));
         assert!(paths.base_image.ends_with("images/bases/base.squashfs"));
         assert!(paths.task_image.ends_with("images/tasks/t1.squashfs"));
-        assert!(paths
-            .environment_image
-            .ends_with("active/environment.squashfs"));
+        assert!(
+            paths
+                .environment_image
+                .ends_with("active/environment.squashfs")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

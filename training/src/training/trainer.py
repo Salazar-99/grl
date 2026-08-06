@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 import ray
@@ -244,6 +245,7 @@ class TrainingWorker:
 
         self.optimizer = torch.optim.AdamW(self.trainable_params, lr=learning_rate)
         self.policy_version = 0
+        self._last_policy_update_completed_at: float | None = None
 
     def train_batch(
         self,
@@ -295,8 +297,21 @@ class TrainingWorker:
                         )
                     )
                 ray.get(update_refs)
+            self._record_policy_update_interval()
             self.checkpoint()
             return self.policy_version
+
+    def _record_policy_update_interval(self) -> None:
+        """Record elapsed wall time between completed synchronized updates."""
+        now = time.perf_counter()
+        previous = self._last_policy_update_completed_at
+        if previous is not None:
+            gauge(
+                "grl.train.policy_update.interval",
+                unit="s",
+                description="Wall time between completed synchronized policy updates",
+            ).set(now - previous)
+        self._last_policy_update_completed_at = now
 
     def _accumulate_gradients(
         self,

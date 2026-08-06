@@ -510,6 +510,27 @@ class InstrumentationTests(unittest.TestCase):
         ):
             self.assertIn(expected, names)
 
+    def test_policy_update_interval_emits_after_first_update(self) -> None:
+        from training import telemetry
+        from training.trainer import TrainingWorker
+
+        reader, provider, meter = self._patched_meter()
+        worker_cls = TrainingWorker.__ray_metadata__.modified_class
+        worker = object.__new__(worker_cls)
+        worker._last_policy_update_completed_at = None
+        try:
+            with patch.object(telemetry, "_meter", lambda: meter), patch(
+                "training.trainer.time.perf_counter", side_effect=[10.0, 12.5]
+            ):
+                self._reset(telemetry)
+                worker._record_policy_update_interval()
+                worker._record_policy_update_interval()
+            names = self._names(reader)
+        finally:
+            provider.shutdown()
+
+        self.assertIn("grl.train.policy_update.interval", names)
+
 
 if __name__ == "__main__":
     unittest.main()

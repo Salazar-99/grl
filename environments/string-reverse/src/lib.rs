@@ -51,11 +51,13 @@ pub fn evaluate(task: &Task, response: &str) -> (f64, String) {
         .map(|i| received_chars.get(i) == target.get(i))
         .collect();
     let matched_positions = matches.iter().filter(|v| **v).count();
+    let extra_characters = received_chars.len().saturating_sub(target.len());
+    let reward = matched_positions as f64 - extra_characters as f64;
     let detail = json!({"input": task.input, "target": task.target, "received": received,
         "matches": matches, "matched_positions": matched_positions,
-        "format_valid": received_chars.len() == 3})
+        "extra_characters": extra_characters, "format_valid": received_chars.len() == 3})
     .to_string();
-    (matched_positions as f64, detail)
+    (reward, detail)
 }
 
 /// Extract the final answer field from an assistant response.
@@ -104,7 +106,8 @@ mod tests {
         assert_eq!(tools, "[]");
         assert_eq!(evaluate(&task, "cxa").0, 2.0);
         assert_eq!(evaluate(&task, " cba ").0, 3.0);
-        assert_eq!(evaluate(&task, "cba!").0, 3.0);
+        assert_eq!(evaluate(&task, "cba!").0, 2.0);
+        assert_eq!(evaluate(&task, "cba!!!").0, 0.0);
         assert_eq!(
             evaluate_final_message_json(
                 &task,

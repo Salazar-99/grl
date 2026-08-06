@@ -11,12 +11,12 @@
 
 use std::time::Instant;
 
+use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
-use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
-use opentelemetry_sdk::{runtime, Resource};
+use opentelemetry_sdk::{Resource, runtime};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tonic::Status;
 

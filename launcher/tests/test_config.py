@@ -68,6 +68,7 @@ def test_helm_values_overlay_excludes_bundle_uri():
     overlay = config.helm_values_overlay()
     assert "bundleUri" not in overlay["manager"]
     assert overlay["manager"]["envId"] == "env-a"
+    assert overlay["manager"]["vmMemoryMiB"] == 2048
     assert overlay["vmImageCache"]["bucket"] == "my-bucket"
     assert overlay["vmImageCache"]["scratchGb"] == 2
     assert overlay["rayCluster"]["workers"]["rollouts"]["replicas"] == 1
@@ -83,6 +84,17 @@ def test_helm_values_overlay_scratch_gb_override():
         }
     )
     assert config.helm_values_overlay()["vmImageCache"]["scratchGb"] == 4
+
+
+def test_manager_vm_memory_flows_to_helm_and_terraform():
+    config = GRLConfig.model_validate(
+        {"model": "org/model", "infra": {"manager": {"vm_memory_mib": 128}}}
+    )
+    assert config.helm_values_overlay()["manager"]["vmMemoryMiB"] == 128
+    from grl.config import ResolvedImages
+
+    images = ResolvedImages(head="head", rollouts="rollouts", training="training", manager="manager")
+    assert config.terraform_vars(images)["manager_vm_memory_mib"] == 128
 
 
 def test_bootstrap_key_flows_to_helm_and_terraform():

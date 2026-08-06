@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use prost::Message;
 
-use crate::pb::{EvaluateRequest, EvaluateResponse, ExecuteRequest, ExecuteResponse, InitializeRequest, InitializeResponse};
+use crate::pb::{
+    EvaluateRequest, EvaluateResponse, ExecuteRequest, ExecuteResponse, InitializeRequest,
+    InitializeResponse,
+};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const EVALUATE_TIMEOUT: Duration = Duration::from_secs(920);
@@ -161,7 +164,12 @@ impl ExecutorConn {
         let stream = Arc::clone(&self.stream);
         tokio::task::spawn_blocking(move || {
             let mut guard = stream.lock().unwrap();
-            let frame = call(MsgKind::Initialize, &mut guard, &payload, Duration::from_secs(30))?;
+            let frame = call(
+                MsgKind::Initialize,
+                &mut guard,
+                &payload,
+                Duration::from_secs(30),
+            )?;
             InitializeResponse::decode(frame.as_slice())
                 .map_err(|e| format!("decode InitializeResponse: {e}"))
         })

@@ -45,6 +45,7 @@ module "resources" {
   manager_snapshot_cache_max_entries = var.manager_snapshot_cache_max_entries
   manager_use_jailer                 = var.manager_use_jailer
   manager_jailer_root                = var.manager_jailer_root
+  manager_vm_memory_mib              = var.manager_vm_memory_mib
 
   ray_rollouts_gpus_per_node = var.ray_rollouts_gpus_per_node
   ray_training_gpus_per_node = var.ray_training_gpus_per_node

@@ -216,6 +216,7 @@ class ManagerConfig(BaseModel):
     )
     use_jailer: bool = Field(default=False, alias="useJailer")
     jailer_root: str = Field(default="/srv/jailer", alias="jailerRoot")
+    vm_memory_mib: int = Field(default=2048, alias="vmMemoryMiB", ge=128)
 
     model_config = {"populate_by_name": True}
 
@@ -402,6 +403,7 @@ class GRLConfig(TrainingGRLConfig):
                 "snapshotCacheMaxEntries": manager.snapshot_cache_max_entries,
                 "useJailer": manager.use_jailer,
                 "jailerRoot": manager.jailer_root,
+                "vmMemoryMiB": manager.vm_memory_mib,
             },
             "rayCluster": {
                 "images": {
@@ -471,6 +473,7 @@ class GRLConfig(TrainingGRLConfig):
             "manager_snapshot_cache_max_entries": self.infra.manager.snapshot_cache_max_entries,
             "manager_use_jailer": self.infra.manager.use_jailer,
             "manager_jailer_root": self.infra.manager.jailer_root,
+            "manager_vm_memory_mib": self.infra.manager.vm_memory_mib,
             "release_name": self.infra.release_name,
             "release_namespace": self.infra.release_namespace,
             "vm_images_bucket": self.infra.vm_image_cache.bucket,

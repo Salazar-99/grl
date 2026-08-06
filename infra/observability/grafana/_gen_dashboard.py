@@ -416,6 +416,8 @@ timeseries("Policy stability: KL / entropy",
            q_otlp_multi(["grl.train.kl", "grl.train.entropy"]), w=8)
 timeseries("Policy update: ratio / clipped fraction",
            q_otlp_multi(["grl.train.ratio_mean", "grl.train.clip_fraction"]), w=6)
+timeseries("Time between completed policy updates",
+           q_otlp_multi(["grl.train.policy_update.interval"]), w=8, unit="s")
 timeseries("Mean policy staleness (update steps)",
            q_otlp_hist_avg("grl.rollout.policy_staleness"), w=6)
 timeseries("Optimization: loss / policy-gradient loss",

@@ -123,6 +123,12 @@ variable "manager_jailer_root" {
   description = "Base directory for per-VM Firecracker jail roots."
 }
 
+variable "manager_vm_memory_mib" {
+  type        = number
+  default     = 2048
+  description = "Guest RAM in MiB allocated to each Firecracker microVM."
+}
+
 variable "vm_images_bucket" {
   type        = string
   default     = ""

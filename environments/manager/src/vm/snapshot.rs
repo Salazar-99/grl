@@ -534,6 +534,27 @@ mod tests {
         assert_eq!(config["vsock_override"]["uds_path"], "/run/env/vsock.sock");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn colocated_snapshot_memory_is_hard_linked_into_the_jail() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = std::env::temp_dir().join(format!("grl-snapshot-link-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("snapshot.memory");
+        let jail_copy = root.join("jail.snapshot.memory");
+        fs::write(&source, b"snapshot memory").unwrap();
+
+        copy_or_link(&source, &jail_copy).unwrap();
+
+        assert_eq!(
+            fs::metadata(&source).unwrap().ino(),
+            fs::metadata(&jail_copy).unwrap().ino()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn publish_turns_a_locked_build_into_a_cache_hit() {
         let root =

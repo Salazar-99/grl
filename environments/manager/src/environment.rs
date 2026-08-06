@@ -9,8 +9,8 @@ use crate::catalog::Catalog;
 use crate::pb::environment_service_server::EnvironmentService;
 use crate::pb::{
     CreateEnvironmentRequest, CreateEnvironmentResponse, EvaluateRequest, EvaluateResponse,
-    ExecuteRequest, ExecuteResponse, ListTasksRequest, ListTasksResponse, TaskIndexEntry,
-    TeardownRequest, TeardownResponse, InitializeRequest, InitializeResponse,
+    ExecuteRequest, ExecuteResponse, InitializeRequest, InitializeResponse, ListTasksRequest,
+    ListTasksResponse, TaskIndexEntry, TeardownRequest, TeardownResponse,
 };
 use crate::registry::{BootControl, Registry, RegistryError, SUBMIT_TOOL};
 use crate::telemetry;
@@ -70,7 +70,11 @@ impl EnvironmentServiceImpl {
         registry: Arc<Registry>,
         env_id: String,
         spec: crate::catalog::TaskSpec,
-    ) -> (BootControl, tokio::sync::oneshot::Sender<()>, tokio::sync::oneshot::Receiver<Result<InitializeResponse, String>>) {
+    ) -> (
+        BootControl,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<Result<InitializeResponse, String>>,
+    ) {
         let (start_tx, start_rx) = tokio::sync::oneshot::channel();
         let (init_tx, init_rx) = tokio::sync::oneshot::channel();
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -91,10 +95,13 @@ impl EnvironmentServiceImpl {
             let start = Instant::now();
             match vm::boot(&env_id, &spec, cancel_rx).await {
                 Ok(handle) => {
-                    let initialized = handle.executor.initialize(InitializeRequest {
-                        env_id: env_id.clone(),
-                        task_payload_json: spec.task_payload_json.clone(),
-                    }).await;
+                    let initialized = handle
+                        .executor
+                        .initialize(InitializeRequest {
+                            env_id: env_id.clone(),
+                            task_payload_json: spec.task_payload_json.clone(),
+                        })
+                        .await;
                     match initialized {
                         Ok(response) => {
                             // The guest owns prompt construction. Reject an empty response at
@@ -111,25 +118,28 @@ impl EnvironmentServiceImpl {
                                 return;
                             }
                             match registry.attach_ready_vm(&env_id, handle).await {
-                        Ok(()) => {
-                            let _ = init_tx.send(Ok(response));
-                            telemetry::histogram("grl.manager.vm.boot.duration")
-                                .record(start.elapsed().as_secs_f64(), &[]);
-                            telemetry::counter("grl.manager.vm.boots")
-                                .add(1, &[KeyValue::new("ok", true)]);
-                        }
-                        Err(handle) => {
-                            // Teardown removed the registry record while boot
-                            // was finishing; never leave the completed VMM live.
-                            handle.stop().await;
-                            let _ = init_tx.send(Err("environment was torn down during initialization".into()));
-                        }
+                                Ok(()) => {
+                                    let _ = init_tx.send(Ok(response));
+                                    telemetry::histogram("grl.manager.vm.boot.duration")
+                                        .record(start.elapsed().as_secs_f64(), &[]);
+                                    telemetry::counter("grl.manager.vm.boots")
+                                        .add(1, &[KeyValue::new("ok", true)]);
+                                }
+                                Err(handle) => {
+                                    // Teardown removed the registry record while boot
+                                    // was finishing; never leave the completed VMM live.
+                                    handle.stop().await;
+                                    let _ = init_tx.send(Err(
+                                        "environment was torn down during initialization".into(),
+                                    ));
+                                }
                             }
                         }
                         Err(err) => {
                             handle.stop().await;
                             let _ = registry.mark_failed(&env_id).await;
-                            let _ = init_tx.send(Err(format!("guest initialization failed: {err}")));
+                            let _ =
+                                init_tx.send(Err(format!("guest initialization failed: {err}")));
                         }
                     }
                 }

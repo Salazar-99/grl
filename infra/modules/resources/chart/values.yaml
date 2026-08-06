@@ -52,6 +52,9 @@ manager:
   # Publication is gated on both direct and jailed KVM conformance.
   useJailer: true
   jailerRoot: /srv/jailer
+  # Guest RAM for each Firecracker VM. Environments with no repository/tool
+  # workload (such as string-reverse) can use a much smaller value.
+  vmMemoryMiB: 2048
 
 vmImageCache:
   namespace: default

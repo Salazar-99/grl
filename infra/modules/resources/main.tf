@@ -40,6 +40,7 @@ resource "helm_release" "resources" {
         snapshotCacheMaxEntries = var.manager_snapshot_cache_max_entries
         useJailer               = var.manager_use_jailer
         jailerRoot              = var.manager_jailer_root
+        vmMemoryMiB             = var.manager_vm_memory_mib
       }
       vmImageCache = {
         bucket       = var.vm_images_bucket
