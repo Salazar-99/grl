@@ -385,25 +385,32 @@ def rayjob_manifest(
     ray_cluster_name: str,
     entrypoint: str,
     shutdown_after_job_finishes: bool = False,
+    run_id: str | None = None,
+    cluster_id: str | None = None,
 ) -> dict[str, Any]:
     # KubeRay RayJob CRD: target an existing cluster via clusterSelector
     # (key ray.io/cluster = RayCluster.metadata.name), submissionMode (not
     # submitMode), and flat string map spec.metadata (Ray job metadata, not
     # nested ObjectMeta labels).
+    labels = {"app.kubernetes.io/managed-by": "grl"}
+    if run_id:
+        labels["grl.ai/run-id"] = run_id
+    if cluster_id:
+        labels["grl.ai/cluster"] = cluster_id
     return {
         "apiVersion": "ray.io/v1",
         "kind": "RayJob",
         "metadata": {
             "name": name,
             "namespace": namespace,
-            "labels": {"app.kubernetes.io/managed-by": "grl"},
+            "labels": labels,
         },
         "spec": {
             "entrypoint": entrypoint,
             "clusterSelector": {"ray.io/cluster": ray_cluster_name},
             "shutdownAfterJobFinishes": shutdown_after_job_finishes,
             "submissionMode": "K8sJobMode",
-            "metadata": {"app.kubernetes.io/managed-by": "grl"},
+            "metadata": labels,
         },
     }
 
@@ -443,6 +450,41 @@ def create_rayjob(
             name=name,
             body=manifest,
         )
+
+
+def rayjob_status(api_client: client.ApiClient, name: str, namespace: str) -> tuple[str, str | None]:
+    """Return a stable lifecycle state and the best controller-provided reason."""
+    try:
+        item = client.CustomObjectsApi(api_client).get_namespaced_custom_object(
+            group="ray.io", version="v1", namespace=namespace, plural="rayjobs", name=name
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            return "FAILED", "RayJob no longer exists"
+        raise KubernetesError(f"RayJob status failed: {exc}") from exc
+    status = item.get("status", {})
+    state = str(status.get("jobStatus") or status.get("state") or "PENDING").upper()
+    conditions = status.get("conditions") or []
+    reason = next((str(c.get("message") or c.get("reason")) for c in reversed(conditions)
+                   if c.get("message") or c.get("reason")), None)
+    mapping = {"SUCCEEDED": "DONE", "FAILED": "FAILED", "STOPPED": "CANCELLED",
+               "RUNNING": "TRAINING", "PENDING": "QUEUED", "NEW": "QUEUED"}
+    return mapping.get(state, "QUEUED"), reason
+
+
+def active_rayjobs(api_client: client.ApiClient, namespace: str, cluster_id: str) -> list[dict[str, Any]]:
+    items = client.CustomObjectsApi(api_client).list_namespaced_custom_object(
+        group="ray.io", version="v1", namespace=namespace, plural="rayjobs",
+        label_selector=f"grl.ai/cluster={cluster_id}",
+    ).get("items", [])
+    return [item for item in items if str(item.get("status", {}).get("jobStatus", "")).upper()
+            not in {"SUCCEEDED", "FAILED", "STOPPED"}]
+
+
+def delete_rayjob(api_client: client.ApiClient, name: str, namespace: str) -> None:
+    client.CustomObjectsApi(api_client).delete_namespaced_custom_object(
+        group="ray.io", version="v1", namespace=namespace, plural="rayjobs", name=name,
+    )
 
 
 def watch_rayjob(

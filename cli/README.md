@@ -4,16 +4,25 @@ Single command to provision infrastructure, activate an environment bundle, and 
 
 ## Install
 
+From PyPI (recommended for users):
+
 ```bash
-cd launcher
+uv tool install grl
+grl --help
+```
+
+For development from this checkout:
+
+```bash
+cd cli
 uv sync
-uv pip install -e .
+uv run grl --help
 ```
 
 Or from anywhere:
 
 ```bash
-uvx --from /path/to/grl/launcher grl launch config.yaml
+uvx --from /path/to/grl/cli grl launch config.yaml
 ```
 
 ## Quick start
@@ -168,7 +177,7 @@ grl clusters list
 ## Development
 
 ```bash
-cd launcher
+cd cli
 uv sync --group dev
 uv run pytest
 ```

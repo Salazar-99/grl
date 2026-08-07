@@ -37,10 +37,10 @@ grl launch run @ path/to/run-config.yaml
 ## Proposed layout
 
 ```
-launcher/
+cli/
   PLAN.md                 # this file
-  pyproject.toml            # uv package: grl-launcher
-  src/grl_launcher/
+  pyproject.toml            # uv package: grl
+  src/grl/
     __init__.py
     cli.py                  # `grl launch run`, `grl launch activate-env`
     config.py               # reads training YAML environment block + launcher opts

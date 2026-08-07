@@ -28,7 +28,7 @@ docker build -f environments/manager/Dockerfile -t grl-manager .
 
 Set `GRL_ENV_SERVER_ADDR` (default `0.0.0.0:50051` on the manager, `localhost:50051` in Python) to point clients at the manager.
 
-**Environment activation (cluster).** Per-run bundle binding is done by the launcher (see [`launcher/PLAN.md`](../../launcher/PLAN.md)): patch `manager.bundleUri` / `manager.envId` in the Helm chart and rolling-restart the DaemonSet. Re-run `vms tasks` when rebuilding bundles so `tasks.jsonl` includes the standard `submit` tool schema. Relevant env vars:
+**Environment activation (cluster).** Per-run bundle binding is done by the launcher (see [`cli/PLAN.md`](../../cli/PLAN.md)): patch `manager.bundleUri` / `manager.envId` in the Helm chart and rolling-restart the DaemonSet. Re-run `vms tasks` when rebuilding bundles so `tasks.jsonl` includes the standard `submit` tool schema. Relevant env vars:
 
 | Variable | Purpose |
 |----------|---------|

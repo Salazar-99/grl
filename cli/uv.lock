@@ -189,8 +189,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
-    { name = "grl-config" },
-    { name = "grl-proto" },
     { name = "grpcio" },
     { name = "kubernetes" },
     { name = "protobuf" },
@@ -206,8 +204,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.35.0" },
-    { name = "grl-config", editable = "../config" },
-    { name = "grl-proto", directory = "../proto" },
     { name = "grpcio", specifier = ">=1.81.1" },
     { name = "kubernetes", specifier = ">=31.0.0" },
     { name = "protobuf", specifier = ">=5.0" },
@@ -217,45 +213,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
-
-[[package]]
-name = "grl-config"
-version = "0.1.0"
-source = { editable = "../config" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0" }]
-
-[[package]]
-name = "grl-proto"
-version = "0.1.0"
-source = { directory = "../proto" }
-dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "grpcio", specifier = ">=1.81.1" },
-    { name = "protobuf", specifier = ">=5.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "grpcio-tools", specifier = ">=1.60" },
-    { name = "pytest", specifier = ">=8.0" },
-]
 
 [[package]]
 name = "grpcio"

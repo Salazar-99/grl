@@ -19,6 +19,8 @@ from grl.k8s import (
     cluster_reachable,
     create_or_update_configmap,
     create_rayjob,
+    active_rayjobs,
+    delete_rayjob,
     daemonset_exists,
     helm_upgrade,
     is_kubernetes_service_addr,
@@ -33,8 +35,10 @@ from grl.k8s import (
     wait_for_rollout,
     watch_rayjob,
 )
-from grl.clusters import format_cluster_table, list_clusters, mark_cluster_destroyed, register_cluster
+from grl.clusters import (format_cluster_table, list_clusters, load_cluster_record,
+                          mark_cluster_destroyed, register_cluster)
 from grl.paths import env_chart_path, state_dir
+from grl.runs import RunRecord, format_table as format_run_table, list_runs, load as load_run, save as save_run, write_config as write_run_config
 from grl.terraform import apply_infra, destroy_infra, write_env_overlay
 from grl.tools import ensure_tools
 from grl_proto.environment_client import ListTasksError, list_task_ids
@@ -408,6 +412,8 @@ def submit_training_job(
         namespace=config.infra.ray_cluster.namespace,
         ray_cluster_name=config.infra.ray_cluster.name,
         entrypoint=entrypoint,
+        run_id=run_id,
+        cluster_id=config.infra.cluster_name,
     )
     create_rayjob(api_client, manifest, dry_run=dry_run)
     if config.launch.job.wait and not dry_run:
@@ -427,23 +433,66 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     run_id = config.resolve_run_id()
     if config.telemetry.run_id is None:
         config.telemetry.run_id = run_id
+    # This is intentionally the first persistent operation: failures during
+    # tool/image/preflight setup are still inspectable as runs.
+    run_record = RunRecord(
+        run_id=run_id,
+        cluster_name=config.infra.cluster_name,
+        source_config_path=str(config_path) if config_path else None,
+        source_config_hash=config.config_hash(),
+    )
+    save_run(run_record)
     print(
         f"GRL launch run_id={run_id} "
         f"deployment_type={launch_cfg.deployment_type} "
         f"cluster_type={launch_cfg.cluster_type}"
     )
 
-    tools = ensure_managed_tools(config)
-    resolved = resolve_runtime_images(config, dry_run=dry_run)
-    config.apply_resolved_images(resolved)
+    try:
+        tools = ensure_managed_tools(config)
+        resolved = resolve_runtime_images(config, dry_run=dry_run)
+        config.apply_resolved_images(resolved)
+        run_record.resolved_images = resolved.model_dump()
+        run_record.environment = {
+            "bundle_uri": config.environment.bundle_uri or "",
+            "env_id": config.environment.id or "",
+            "split": config.environment.split or "",
+        }
+        run_record.effective_config_hash = config.config_hash()
+        write_run_config(run_id, config)
+        save_run(run_record)
+    except Exception as exc:
+        run_record.state, run_record.failure_reason = "FAILED", str(exc)
+        save_run(run_record)
+        raise
     print(f"Resolved images: head={resolved.head} manager={resolved.manager}")
 
-    run_preflight(config, dry_run=dry_run)
+    try:
+        run_preflight(config, dry_run=dry_run)
+    except Exception as exc:
+        run_record.state, run_record.failure_reason = "FAILED", str(exc)
+        save_run(run_record)
+        raise
     if launch_cfg.preflight_only:
         print("Preflight complete.")
         return LaunchResult(run_id=run_id, resolved_images=resolved)
 
     api_client = None
+    # A READY record represents an EKS cluster provisioned by `clusters create`
+    # (or a previous launch).  FULL is the normal operator workflow: do not
+    # create its infrastructure again, but continue through environment and
+    # training reconciliation below.  Explicit legacy deployment types retain
+    # their exact historical layer semantics.
+    reuse_cluster = (
+        launch_cfg.deployment_type == "FULL"
+        and launch_cfg.is_eks()
+        and (record := load_cluster_record(config.infra.cluster_name)) is not None
+        # ``active`` is the pre-lifecycle registry spelling, retained so an
+        # existing installation upgrades into create-or-reuse safely.
+        and record.status in {"READY", "active", "DEGRADED"}
+    )
+    if reuse_cluster:
+        print(f"Reusing registered cluster {config.infra.cluster_name}")
 
     # Fail fast if a single-layer run's prerequisite layer isn't already present.
     prev = launch_cfg.required_present_layer()
@@ -454,7 +503,9 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
 
     # --- CLUSTER layer ---
     terraform_applied = False
-    if launch_cfg.runs_cluster():
+    if launch_cfg.runs_cluster() and not reuse_cluster:
+        run_record.state = "DEPLOYING_CLUSTER"
+        save_run(run_record)
         if launch_cfg.is_eks():
             # For EKS+FULL this single apply also deploys RESOURCES
             # (deploy_workloads=True), so the RESOURCES step below is a no-op.
@@ -468,11 +519,13 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
 
     # --- RESOURCES layer ---
     if launch_cfg.runs_resources() and (launch_cfg.is_byok() or not launch_cfg.runs_cluster()):
+        run_record.state = "DEPLOYING_RESOURCES"
+        save_run(run_record)
         apply_infra(config, resolved, tools["terraform"], run_id, dry_run=dry_run)
         terraform_applied = True
 
-    if terraform_applied and not dry_run:
-        register_cluster(config, run_id=run_id)
+    if (terraform_applied or reuse_cluster) and not dry_run:
+        register_cluster(config, run_id=run_id, status="READY")
         if launch_cfg.is_eks() and launch_cfg.infra.auto_kubeconfig:
             update_eks_kubeconfig(
                 config.infra.cluster_name,
@@ -486,6 +539,8 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     # --- ENVS layer ---
     task_count: int | None = None
     if launch_cfg.runs_envs():
+        run_record.state = "ACTIVATING_ENVIRONMENT"
+        save_run(run_record)
         activate_environment(config, tools, api_client, run_id, dry_run=dry_run)
         if launch_cfg.environment.verify and not dry_run:
             with manager_verify_session(config, tools) as addr:
@@ -495,8 +550,29 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     # --- TRAINING layer ---
     rayjob_name: str | None = None
     if launch_cfg.runs_training():
+        run_record.state = "QUEUED"
+        save_run(run_record)
+        if not dry_run:
+            try:
+                active = active_rayjobs(api_client, config.infra.ray_cluster.namespace, config.infra.cluster_name)
+            except AttributeError:
+                # Allows lightweight callers/tests which provide only the API
+                # operations they need; real Kubernetes API errors still fail.
+                active = []
+            if active and not launch_cfg.job.force:
+                names = ", ".join(item.get("metadata", {}).get("name", "unknown") for item in active)
+                run_record.state = "FAILED"
+                run_record.failure_reason = f"active GRL run already present: {names}; use --replace-active"
+                save_run(run_record)
+                raise GrlError(run_record.failure_reason)
+            for item in active:
+                delete_rayjob(api_client, item["metadata"]["name"], config.infra.ray_cluster.namespace)
         wait_for_model_cache(config, api_client, dry_run=dry_run)
         rayjob_name = submit_training_job(config, run_id, api_client, dry_run=dry_run)
+        run_record.rayjob_name = rayjob_name
+        run_record.namespace = config.infra.ray_cluster.namespace
+        run_record.state = "TRAINING" if not launch_cfg.job.wait else "DONE"
+        save_run(run_record)
         print(f"Submitted RayJob {rayjob_name}")
 
     result = LaunchResult(
@@ -506,6 +582,9 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
         task_count=task_count,
     )
     persist_run_metadata(config, result, api_client, dry_run=dry_run)
+    if not launch_cfg.runs_training():
+        run_record.state = "DONE"
+        save_run(run_record)
     print("Launch complete.")
     return result
 
@@ -556,3 +635,58 @@ def teardown(
 
 def list_registered_clusters() -> str:
     return format_cluster_table(list_clusters())
+
+
+def create_cluster(config: GRLConfig, *, wait: bool = False) -> None:
+    """Provision the durable cluster/resources layers only.
+
+    This bypasses the legacy single-layer prerequisite checks deliberately: the
+    Terraform EKS root can create its cluster and resource chart in one apply.
+    """
+    config = config.model_copy(deep=True)
+    config.launch.deployment_type = "RESOURCES"
+    run_id = config.resolve_run_id()
+    tools = ensure_managed_tools(config)
+    resolved = resolve_runtime_images(config, dry_run=config.launch.dry_run)
+    config.apply_resolved_images(resolved)
+    if config.launch.is_byok() and not config.launch.dry_run:
+        assert_cluster_present(config, load_cluster_client(config))
+    apply_infra(config, resolved, tools["terraform"], run_id, dry_run=config.launch.dry_run)
+    if not config.launch.dry_run:
+        if config.launch.is_eks() and config.launch.infra.auto_kubeconfig:
+            update_eks_kubeconfig(config.infra.cluster_name, config.infra.region,
+                                  kubeconfig=config.launch.infra.kubeconfig)
+        register_cluster(config, status="READY")
+        if wait:
+            client = load_cluster_client(config)
+            manager = config.resolved_manager()
+            wait_for_rollout(client, manager.name, manager.namespace)
+
+
+def cluster_status(name: str):
+    record = load_cluster_record(name)
+    if record is None:
+        raise GrlError(f"cluster not found: {name}")
+    return record
+
+
+def list_registered_runs(*, cluster_name: str | None = None) -> str:
+    records = list_runs()
+    if cluster_name:
+        records = [record for record in records if record.cluster_name == cluster_name]
+    return format_run_table(records)
+
+
+def run_config(run_id: str, *, format: str = "yaml") -> str:
+    path = state_dir(run_id) / "config.yaml"
+    if not path.is_file():
+        raise GrlError(f"run not found: {run_id}")
+    value = yaml.safe_load(path.read_text())
+    return json.dumps(value, indent=2) if format == "json" else path.read_text()
+
+
+def run_status(run_id: str) -> RunRecord:
+    record = load_run(run_id)
+    if record is None:
+        raise GrlError(f"run not found: {run_id}")
+    return record

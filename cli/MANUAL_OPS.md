@@ -9,7 +9,7 @@ Ship a manager fix (Firecracker API keep-alive deadlock in `put`) without tearin
 ## Procedure used (2026-07-11)
 
 1. **Publish images** — tag `v0.0.9` and push; GitHub Actions workflow `Publish Images` builds `ghcr.io/salazar-99/grl-{manager,training-*}:0.0.9`.
-2. **Bump config** — set `images.tag: "0.0.9"` in `launcher/config.yaml`.
+2. **Bump config** — set `images.tag: "0.0.9"` in `cli/config.yaml`.
 3. **Stop the in-flight job** (manual):
    ```bash
    kubectl delete rayjob -n default <running-rayjob-name> --wait=false
@@ -21,7 +21,7 @@ Ship a manager fix (Firecracker API keep-alive deadlock in `put`) without tearin
      deployment_type: RESOURCES
    ```
    ```bash
-   uv run --directory launcher grl launch /path/to/launcher/config.yaml
+   uv run --directory cli grl launch /path/to/cli/config.yaml
    ```
    Helm updates manager + Ray worker images; manager DaemonSet uses `imagePullPolicy: Always` and rolls to the new tag.
 5. **Submit TRAINING**:
@@ -30,7 +30,7 @@ Ship a manager fix (Firecracker API keep-alive deadlock in `put`) without tearin
      deployment_type: TRAINING
    ```
    ```bash
-   uv run --directory launcher grl launch /path/to/launcher/config.yaml
+   uv run --directory cli grl launch /path/to/cli/config.yaml
    ```
    Assumes ENVS (bundle-sync) is already healthy from a prior activate.
 
@@ -49,7 +49,7 @@ Ship a manager fix (Firecracker API keep-alive deadlock in `put`) without tearin
 | **No post-roll readiness gate for manager API** | Relied on DS Ready + later TRAINING traffic. | After manager image change, optional probe: gRPC `ListTasks` or catalog non-empty before submit. |
 | **TRAINING races the model cache on a cold cluster** | On a FULL provision the RayJob was submitted ~11 min before `model-cache` finished pulling 9.3 GB onto the training node. `hf download` only moves shards into place at the end, so the trainer read `model.safetensors.index.json` (already present), opened shard 1, and died with `FileNotFoundError`. Waited for the DaemonSet, deleted the RayJob, re-submitted TRAINING — same config, ran fine. Invisible on a warm cluster, reproducible on every cold one. | Gate TRAINING on the `.ready` sentinel the `model-cache` DaemonSet already writes (it is created only after a complete sync, and `rm -f`'d at the start of each one). Either block the submit until `.ready` exists on every training/rollout node, or have the trainer's entrypoint wait on it. |
 | **RayCluster image bump does not restart pods** | Helm set RayCluster images to `0.0.9`, but head/worker pods kept running `0.0.8` until manually deleted. Manager DS *did* roll (template change + Always pull). | After RESOURCES apply, if Ray pod images ≠ CR images, delete head/worker pods (or annotate restart) and wait Ready before TRAINING. Prefer a KubeRay-supported rolling update if available. |
-| **Config path with `uv run --directory launcher`** | Relative `launcher/config.yaml` fails because cwd is `launcher/`. | Document absolute path, or resolve config relative to repo root / caller cwd. |
+| **Config path with `uv run --directory cli`** | Relative `cli/config.yaml` fails because cwd is `cli/`. | Document absolute path, or resolve config relative to repo root / caller cwd. |
 
 ## What the launcher already does correctly
 

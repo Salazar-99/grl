@@ -21,16 +21,25 @@ class ClusterRecord:
     region: str
     release_namespace: str
     release_name: str
-    status: str
-    state_path: str
+    status: str = "PROVISIONING"
+    state_path: str = ""
     kubeconfig_hash: str | None = None
     created_at: str = ""
     updated_at: str = ""
     last_run_id: str | None = None
+    readiness: str | None = None
+    environment_fingerprint: str | None = None
+    resources_fingerprint: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> ClusterRecord:
-        return cls(**{key: payload.get(key) for key in cls.__dataclass_fields__})
+        # Older registries did not include lifecycle/fingerprint fields.
+        values = {
+            key: payload[key]
+            for key in cls.__dataclass_fields__
+            if key in payload
+        }
+        return cls(**values)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

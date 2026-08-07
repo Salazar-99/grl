@@ -26,7 +26,7 @@ GRL trains an LLM with GRPO on real software-engineering tasks. Rollout generati
 └─────────────────┘
 ```
 
-**Launcher** (`launcher/`) provisions infra, syncs environment bundles, and submits a KubeRay `RayJob`. **Training** (`training/`) is the Ray driver + actor code. **Infra** (`infra/`) is Terraform + Helm for EKS, node groups, and the resources chart.
+**CLI** (`cli/`) provisions infra, syncs environment bundles, and submits a KubeRay `RayJob`. **Training** (`training/`) is the Ray driver + actor code. **Infra** (`infra/`) is Terraform + Helm for EKS, node groups, and the resources chart.
 
 ## Deployment layers
 
@@ -40,7 +40,7 @@ GRL trains an LLM with GRPO on real software-engineering tasks. Rollout generati
 | `TRAINING` | RayJob that runs `training.main` |
 | `FULL` | All four in order |
 
-See `launcher/example-config.yaml` and `launcher/README.md` for the full config surface.
+See `cli/example-config.yaml` and `cli/README.md` for the full config surface.
 
 ## Compute and node groups
 
@@ -137,4 +137,4 @@ Default `compute.ray.nodes: 2` provisions two CPU nodes but only schedules one h
 
 ---
 
-For component-level detail see `README.md`. For launcher usage see `launcher/README.md`. For a worked example config see `launcher/example-config.yaml`.
+For component-level detail see `README.md`. For CLI usage see `cli/README.md`. For a worked example config see `cli/example-config.yaml`.

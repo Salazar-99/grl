@@ -16,7 +16,7 @@ Distributed, async RLVR system for LLM post-training. grl lets you train an open
 
 ```
 grl/
-├── launcher/                  # `grl` CLI: Terraform/Helm/RayJob orchestration from one YAML config
+├── cli/                       # `grl` CLI: Terraform/Helm/RayJob orchestration from one YAML config
 ├── config/                    # grl-config: shared Pydantic config models (used by launcher + training)
 ├── proto/                     # grl-proto: generated Python gRPC stubs + codegen script (checked in)
 ├── environments/
@@ -51,7 +51,7 @@ grl/
 
 ## Launcher
 
-The `grl` CLI ([`launcher/`](launcher/)) drives everything from a single YAML config: training hyperparameters, hardware sizing (`compute`), environment bundle, images, and infra settings.
+The `grl` CLI ([`cli/`](cli/)) drives everything from a single YAML config: training hyperparameters, hardware sizing (`compute`), environment bundle, images, and infra settings.
 
 ```bash
 grl init config.yaml     # write a starter config
@@ -59,7 +59,7 @@ grl launch config.yaml   # provision + activate + submit
 grl teardown config.yaml
 ```
 
-`launch.deployment_type` selects how much of the stack to run — `CLUSTER` (provider infrastructure), `RESOURCES` (KubeRay cluster, manager DaemonSet, caches, collector), `ENVS` (per-run bundle sync), `TRAINING` (RayJob), or `FULL` (all four). Images resolve from a registry (`published`), explicit refs (`custom`), or a local build (`build_and_push`). Local state lives under `~/.grl`. See [`launcher/README.md`](launcher/README.md).
+`launch.deployment_type` selects how much of the stack to run — `CLUSTER` (provider infrastructure), `RESOURCES` (KubeRay cluster, manager DaemonSet, caches, collector), `ENVS` (per-run bundle sync), `TRAINING` (RayJob), or `FULL` (all four). Images resolve from a registry (`published`), explicit refs (`custom`), or a local build (`build_and_push`). Local state lives under `~/.grl`. See [`cli/README.md`](cli/README.md).
 
 ## Providers and deployment modes
 

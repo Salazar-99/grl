@@ -1,8 +1,16 @@
 from contextlib import nullcontext as _nullcontext
 from pathlib import Path
 
+import pytest
+
 from grl.config import GRLConfig, ResolvedImages
 from grl.k8s import rayjob_manifest, training_entrypoint
+
+
+@pytest.fixture(autouse=True)
+def _isolated_grl_state(monkeypatch, tmp_path: Path):
+    """Launch tests must not consult or write a developer's ~/.grl registry."""
+    monkeypatch.setenv("GRL_HOME", str(tmp_path / "grl-home"))
 
 
 def _stub_launch_prelude(monkeypatch, launcher_module, calls):
