@@ -40,6 +40,9 @@ manager:
   port: 50051
   # Optional environment label surfaced in metrics/ListTasks (GRL_ENV_ID).
   envId: ""
+  # Per-launch telemetry scope. Durable resource provisioning leaves this empty;
+  # the launcher upgrades the release with a one-value overlay for each run.
+  runId: ""
   # Subdirectory under vmImageCache.hostPath where the bundle-sync DaemonSet
   # (the launcher-owned `environments` chart) writes the active bundle's
   # tasks.jsonl. The manager reads {hostPath}/{activeDir}/tasks.jsonl and

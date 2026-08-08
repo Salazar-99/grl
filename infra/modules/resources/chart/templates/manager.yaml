@@ -55,6 +55,8 @@ spec:
               value: {{ .Values.manager.activeDir | quote }}
             - name: GRL_ENV_ID
               value: {{ .Values.manager.envId | quote }}
+            - name: GRL_RUN_ID
+              value: {{ .Values.manager.runId | quote }}
             - name: GRL_TASKS_FILE
               value: {{ .Values.vmImageCache.hostPath }}/{{ .Values.manager.activeDir }}/tasks.jsonl
             - name: POD_IP

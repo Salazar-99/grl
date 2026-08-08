@@ -55,6 +55,18 @@ def test_helm_upgrade_passes_kubeconfig(monkeypatch, tmp_path: Path):
     ]
 
 
+def test_helm_upgrade_can_reuse_installed_values(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "grl.k8s.run_tool",
+        lambda helm_bin, args, *, dry_run=False: captured.update(args=args),
+    )
+    helm_upgrade(
+        Path("helm"), "grl-resources", tmp_path, "default", [], reuse_values=True
+    )
+    assert "--reuse-values" in captured["args"]
+
+
 def test_load_kube_client_uses_explicit_kubeconfig(monkeypatch, tmp_path: Path):
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n")

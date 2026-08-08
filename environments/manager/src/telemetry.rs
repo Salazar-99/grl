@@ -6,8 +6,8 @@
 //! here is safe to call regardless — disabled runs simply discard the data.
 //!
 //! The manager is a long-lived, environment-scoped DaemonSet, so its metrics
-//! carry `service.name=grl-manager` (plus `env.id`/`pod`) but no `run.id`; the
-//! dashboard scopes them to a run by time window, like the scraped infra jobs.
+//! carry `service.name=grl-manager` plus the run, environment, and pod resource
+//! attributes supplied by the manager DaemonSet.
 
 use std::time::Instant;
 
@@ -51,12 +51,7 @@ pub fn init_telemetry(role: &str) -> Option<TelemetryGuard> {
 
     let reader = PeriodicReader::builder(exporter, runtime::Tokio).build();
 
-    let resource = Resource::new(vec![
-        KeyValue::new(SERVICE_NAME, "grl-manager"),
-        KeyValue::new("grl.role", role.to_string()),
-        KeyValue::new("env.id", std::env::var("GRL_ENV_ID").unwrap_or_default()),
-        KeyValue::new("pod", std::env::var("HOSTNAME").unwrap_or_default()),
-    ]);
+    let resource = Resource::new(resource_attributes(role));
 
     let provider = SdkMeterProvider::builder()
         .with_reader(reader)
@@ -65,6 +60,16 @@ pub fn init_telemetry(role: &str) -> Option<TelemetryGuard> {
 
     global::set_meter_provider(provider.clone());
     Some(TelemetryGuard { provider })
+}
+
+fn resource_attributes(role: &str) -> Vec<KeyValue> {
+    vec![
+        KeyValue::new(SERVICE_NAME, "grl-manager"),
+        KeyValue::new("grl.role", role.to_string()),
+        KeyValue::new("run.id", std::env::var("GRL_RUN_ID").unwrap_or_default()),
+        KeyValue::new("env.id", std::env::var("GRL_ENV_ID").unwrap_or_default()),
+        KeyValue::new("pod", std::env::var("HOSTNAME").unwrap_or_default()),
+    ]
 }
 
 /// The global meter. When telemetry is disabled this is the OTel no-op meter,
@@ -120,5 +125,22 @@ mod tests {
         counter("grl.test.counter").add(1, &[]);
         histogram("grl.test.hist").record(0.1, &[]);
         gauge("grl.test.gauge").record(1.0, &[]);
+    }
+
+    #[test]
+    fn resource_attributes_include_populated_and_empty_run_id() {
+        unsafe { std::env::set_var("GRL_RUN_ID", "run-under-test") };
+        let populated = resource_attributes("manager");
+        assert_eq!(
+            populated.iter().find(|attr| attr.key.as_str() == "run.id").unwrap().value.to_string(),
+            "run-under-test",
+        );
+
+        unsafe { std::env::remove_var("GRL_RUN_ID") };
+        let empty = resource_attributes("manager");
+        assert_eq!(
+            empty.iter().find(|attr| attr.key.as_str() == "run.id").unwrap().value.to_string(),
+            "",
+        );
     }
 }

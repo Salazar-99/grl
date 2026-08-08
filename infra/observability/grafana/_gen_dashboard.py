@@ -324,6 +324,13 @@ WINDOW = (
 )
 
 
+def q_scraped_scope(service: str) -> str:
+    """Manager is OTLP-pushed and has a run resource; scraped infra uses time."""
+    if service == "grl-manager":
+        return "$__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'"
+    return WINDOW
+
+
 def q_scraped_gauge(name: str, svc: str, by: str) -> str:
     # Identity labels (pod/node) are often resource attrs for OTLP pushers
     # (e.g. grl-manager) and datapoint attrs for Prometheus scrapes (dcgm/ray).
@@ -335,7 +342,7 @@ def q_scraped_gauge(name: str, svc: str, by: str) -> str:
     return (
         f"SELECT TimeUnix AS time, {series} AS series, Value\n"
         "FROM default.grl_metrics_landing\n"
-        f"WHERE {WINDOW}\n"
+        f"WHERE {q_scraped_scope(svc)}\n"
         f"  AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "ORDER BY TimeUnix"
     )
@@ -386,7 +393,34 @@ def q_scraped_by_phase(name: str, svc: str) -> str:
     return q_scraped_gauge(name, svc, "phase")
 
 
-def q_scraped_counter_rate(name: str, svc: str, by: str | None = None) -> str:
+def q_scraped_counter_rate(name: str, svc: str, by: str | tuple[str, ...] | None = None) -> str:
+    # Counters from manager are emitted independently by every DaemonSet pod.
+    # Diff each pod first, then sum, otherwise a changing max across pods can
+    # yield under-counts or artificial spikes.
+    if svc == "grl-manager":
+        def attr_value(attr: str) -> str:
+            return f"if(ResourceAttributes['{attr}'] != '', ResourceAttributes['{attr}'], Attributes['{attr}'])"
+        series = (
+            "concat(" + ", ' / ', ".join(attr_value(attr) for attr in by) + ")"
+            if isinstance(by, tuple)
+            else attr_value(by) if by else "''"
+        )
+        pod = "if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod'])"
+        return (
+            "SELECT t AS time, series, sum(delta) AS delta\n"
+            "FROM (\n"
+            "  SELECT t, series, greatest(0, v - lagInFrame(v) OVER "
+            "(PARTITION BY pod, series ORDER BY t)) AS delta\n"
+            "  FROM (\n"
+            "    SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
+            f"           {series} AS series, {pod} AS pod, max(Value) AS v\n"
+            "    FROM default.grl_metrics_sum_landing\n"
+            f"    WHERE {q_scraped_scope(svc)}\n"
+            f"      AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
+            "    GROUP BY t, series, pod\n"
+            "  )\n"
+            ")\nGROUP BY t, series\nORDER BY t"
+        )
     series = f"Attributes['{by}']" if by else "''"
     return (
         "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER "
@@ -395,7 +429,7 @@ def q_scraped_counter_rate(name: str, svc: str, by: str | None = None) -> str:
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n"
         f"         {series} AS series, max(Value) AS v\n"
         "  FROM default.grl_metrics_sum_landing\n"
-        f"  WHERE {WINDOW}\n"
+        f"  WHERE {q_scraped_scope(svc)}\n"
         f"    AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "  GROUP BY t, series\n"
         ")\n"
@@ -429,7 +463,7 @@ def q_scraped_hist_mean_max(name: str, svc: str) -> str:
         "       sum(Sum) / nullIf(sum(Count), 0) AS mean,\n"
         "       max(Max) AS max\n"
         "FROM default.grl_metrics_histogram_landing\n"
-        f"WHERE {WINDOW}\n"
+        f"WHERE {q_scraped_scope(svc)}\n"
         f"  AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "GROUP BY time\n"
         "HAVING sum(Count) > 0\n"
@@ -447,7 +481,7 @@ def q_scraped_hist_quant_by_attr(name: str, svc: str, attr: str) -> str:
         f"         Attributes['{attr}'] AS k,\n"
         "         sumForEach(BucketCounts) AS bc, any(ExplicitBounds) AS eb\n"
         "  FROM default.grl_metrics_histogram_landing\n"
-        f"  WHERE {WINDOW}\n"
+        f"  WHERE {q_scraped_scope(svc)}\n"
         f"    AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
         "  GROUP BY t, k\n"
         ")\n"
@@ -536,45 +570,66 @@ timeseries("Group assembly duration (mean)",
 timeseries("Group assembly timeouts / 30s",
            q_otlp_counter_rate("grl.pipeline.group.timeout"), w=12)
 
-# 5. Environment (client view) ------------------------------------------------
-row("Environment")
-timeseries("RPC duration p50/p95 (by rpc)",
-           q_otlp_hist_quant_by_attr("grl.env.rpc.duration", "rpc"), w=12, unit="s")
-timeseries("RPC errors / 30s (by rpc)",
-           q_otlp_counter_rate("grl.env.rpc.errors", "rpc"), w=8)
-timeseries("RPC retries / 30s (by rpc)",
-           q_otlp_counter_rate("grl.env.rpc.retries", "rpc"), w=8)
-timeseries("Infra errors / 30s (by rpc)",
-           q_otlp_counter_rate("grl.env.infra_errors", "rpc"), w=8)
-timeseries("Tool calls / 30s (by tool)",
-           q_otlp_counter_rate("grl.env.tool.calls", "tool"), w=12)
-
-# 6. Manager / Environments (server view) -------------------------------------
-row("Manager / Environments")
+# 5. Manager / Environment ----------------------------------------------------
+row("Manager / Environment")
+# Capacity / lifecycle
 timeseries("Active envs (by pod)",
            q_scraped_gauge("grl.manager.envs.active", "grl-manager", "pod"), w=8)
+timeseries("Active VMs (by pod)",
+           q_scraped_gauge("grl.manager.vms.active", "grl-manager", "pod"), w=8)
 timeseries("Envs by phase", q_scraped_by_phase("grl.manager.envs.by_phase", "grl-manager"),
            w=8, stack=True)
 timeseries("Capacity utilization",
            q_scraped_gauge("grl.manager.capacity.utilization", "grl-manager", "pod"),
            w=8, unit="percentunit")
+timeseries("Catalog tasks", q_scraped_gauge("grl.manager.catalog.tasks", "grl-manager", "pod"), w=8)
+# Admission / boot
 timeseries("Admission rejected / 30s",
            q_scraped_counter_rate("grl.manager.admission.rejected", "grl-manager"), w=8)
 timeseries("VM boots / 30s (by ok)",
            q_scraped_counter_rate("grl.manager.vm.boots", "grl-manager", "ok"), w=8)
 timeseries("VM boot duration (mean/max)",
            q_scraped_hist_mean_max("grl.manager.vm.boot.duration", "grl-manager"), w=8, unit="s")
-timeseries("VM boot failures / 30s",
-           q_scraped_counter_rate("grl.manager.vm.boot.failures", "grl-manager"), w=8)
+# RPC path: client next to manager handler data.
+timeseries("Client RPC duration p50/p95 (by rpc)",
+           q_otlp_hist_quant_by_attr("grl.env.rpc.duration", "rpc"), w=8, unit="s")
+timeseries("Client RPC retries (by rpc)",
+           q_otlp_counter_rate("grl.env.rpc.retries", "rpc"), w=8)
+timeseries("Client RPC errors (by rpc)",
+           q_otlp_counter_rate("grl.env.rpc.errors", "rpc"), w=8)
 timeseries("Manager RPC duration p50/p95 (by rpc)",
            q_scraped_hist_quant_by_attr("grl.manager.rpc.duration", "grl-manager", "rpc"),
            w=8, unit="s")
-timeseries("Manager RPC requests / 30s (by rpc)",
-           q_scraped_counter_rate("grl.manager.rpc.requests", "grl-manager", "rpc"), w=8)
+timeseries("Manager request status / 30s (by rpc/code)",
+           q_scraped_counter_rate("grl.manager.rpc.requests", "grl-manager", ("rpc", "code")), w=8)
+# Execution / evaluation
+timeseries("Client tool calls / 30s (by tool)",
+           q_otlp_counter_rate("grl.env.tool.calls", "tool"), w=8)
+timeseries("Manager execute calls / 30s (by tool)",
+           q_scraped_counter_rate("grl.manager.execute.calls", "grl-manager", "tool"), w=8)
+timeseries("Submissions / 30s",
+           q_scraped_counter_rate("grl.manager.submit", "grl-manager"), w=8)
+timeseries("Execute latency (mean/max)",
+           q_scraped_hist_mean_max("grl.manager.execute.forward.duration", "grl-manager"), w=8, unit="s")
+timeseries("Evaluation duration (mean/max)",
+           q_scraped_hist_mean_max("grl.manager.evaluate.duration", "grl-manager"), w=8, unit="s")
+timeseries("Evaluation reward (mean/max)",
+           q_scraped_hist_mean_max("grl.manager.evaluate.reward", "grl-manager"), w=8)
 timeseries("Evaluate infra errors / 30s",
            q_scraped_counter_rate("grl.manager.evaluate.infra_errors", "grl-manager"), w=8)
+ # Snapshot panels intentionally remain visible when snapshots are disabled.
+timeseries("Snapshot cache results / 30s (by result)",
+           q_scraped_counter_rate("grl.manager.snapshot.cache", "grl-manager", "result"), w=8)
+timeseries("Snapshot builds / 30s",
+           q_scraped_counter_rate("grl.manager.snapshot.builds", "grl-manager"), w=8)
+timeseries("Snapshot restores / 30s",
+           q_scraped_counter_rate("grl.manager.snapshot.restores", "grl-manager"), w=8)
+timeseries("Snapshot fallbacks / 30s",
+           q_scraped_counter_rate("grl.manager.snapshot.fallbacks", "grl-manager"), w=8)
+timeseries("Snapshot evictions / 30s",
+           q_scraped_counter_rate("grl.manager.snapshot.evictions", "grl-manager"), w=8)
 
-# 7. GPU (DCGM, scraped) ------------------------------------------------------
+# 6. GPU (DCGM, scraped) ------------------------------------------------------
 row("GPU")
 timeseries("GPU utilization %",
            q_dcgm_gpu_gauge("DCGM_FI_DEV_GPU_UTIL"), w=8, unit="percent")
@@ -597,8 +652,6 @@ timeseries("Node memory used",
            q_scraped_gauge("ray_node_mem_used", "ray", "pod"), w=8, unit="bytes")
 timeseries("Object store used memory",
            q_scraped_gauge("ray_object_store_used_memory", "ray", "pod"), w=8, unit="bytes")
-timeseries("Cluster active nodes",
-           q_scraped_gauge("ray_cluster_active_nodes", "ray", "ray_node_type"), w=8)
 timeseries("Pods by Ray group",
            q_scraped_pods_by_attr("ray_node_cpu_utilization", "ray", "ray_group"), w=8)
 

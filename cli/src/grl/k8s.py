@@ -223,6 +223,7 @@ def helm_upgrade(
     values_files: list[Path],
     *,
     kubeconfig: Path | str | None = None,
+    reuse_values: bool = False,
     dry_run: bool = False,
 ) -> None:
     args = [
@@ -236,6 +237,8 @@ def helm_upgrade(
     ]
     if kubeconfig is not None:
         args.extend(["--kubeconfig", str(Path(kubeconfig).expanduser())])
+    if reuse_values:
+        args.append("--reuse-values")
     for values_file in values_files:
         args.extend(["-f", str(values_file)])
     if dry_run:
@@ -485,6 +488,31 @@ def delete_rayjob(api_client: client.ApiClient, name: str, namespace: str) -> No
     client.CustomObjectsApi(api_client).delete_namespaced_custom_object(
         group="ray.io", version="v1", namespace=namespace, plural="rayjobs", name=name,
     )
+
+
+def wait_for_rayjob_deletion(
+    api_client: client.ApiClient,
+    name: str,
+    namespace: str,
+    *,
+    timeout_secs: float = 600.0,
+    poll_interval_secs: float = 5.0,
+) -> None:
+    """Wait until a deleted RayJob is gone before changing manager ownership."""
+    custom = client.CustomObjectsApi(api_client)
+    deadline = time.monotonic() + timeout_secs
+    while time.monotonic() < deadline:
+        try:
+            custom.get_namespaced_custom_object(
+                group="ray.io", version="v1", namespace=namespace,
+                plural="rayjobs", name=name,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise KubernetesError(f"RayJob deletion status failed: {exc}") from exc
+        time.sleep(poll_interval_secs)
+    raise KubernetesError(f"timed out waiting for RayJob {namespace}/{name} deletion")
 
 
 def watch_rayjob(

@@ -67,6 +67,17 @@ def write_env_overlay(config: GRLConfig, run_id: str, *, dry_run: bool = False) 
     return overlay_path
 
 
+def write_manager_run_overlay(run_id: str, *, dry_run: bool = False) -> Path:
+    """Write the one-value overlay used to scope manager telemetry to a run."""
+    if dry_run:
+        return Path("/tmp/grl-dry-run") / run_id / "manager-run-overlay.yaml"
+    overlay_path = state_dir(run_id) / "manager-run-overlay.yaml"
+    overlay_path.write_text(
+        yaml.safe_dump({"manager": {"runId": run_id}}, sort_keys=False)
+    )
+    return overlay_path
+
+
 def _state_args(state_path: Path) -> list[str]:
     return [f"-state={state_path}", f"-backup={state_path}.backup"]
 

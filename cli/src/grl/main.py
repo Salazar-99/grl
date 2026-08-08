@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from grl import __version__
 
-from grl.config import load_config
+from grl.config import DEPLOYMENT_TYPES, load_config
 from grl.agent import install_skill
 from grl.launcher import (cluster_status, create_cluster, launch, list_registered_clusters,
                           list_registered_runs, run_config, run_status, teardown, write_init_config)
@@ -25,6 +25,12 @@ def main(argv: list[str] | None = None) -> int:
 
     launch_parser = subparsers.add_parser("launch", help="Launch a GRL training run")
     launch_parser.add_argument("config", type=Path, help="Path to the run config YAML")
+    launch_parser.add_argument(
+        "--deployment-type",
+        type=str.upper,
+        choices=DEPLOYMENT_TYPES,
+        help="Override launch.deployment_type (FULL, CLUSTER, RESOURCES, ENVS, or TRAINING)",
+    )
     launch_parser.add_argument("--cluster", help="Override infra.cluster_name for this launch")
     launch_parser.add_argument("--env-bundle")
     launch_parser.add_argument("--env-id")
@@ -132,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
             config.launch.dry_run = True
         if args.preflight_only:
             config.launch.preflight_only = True
+        if args.deployment_type:
+            config.launch.deployment_type = args.deployment_type
         if args.cluster:
             config.infra.cluster_name = args.cluster
         for attribute, value in (("bundle_uri", args.env_bundle), ("id", args.env_id), ("split", args.env_split)):

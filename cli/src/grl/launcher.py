@@ -33,13 +33,19 @@ from grl.k8s import (
     training_entrypoint,
     update_eks_kubeconfig,
     wait_for_rollout,
+    wait_for_rayjob_deletion,
     watch_rayjob,
 )
 from grl.clusters import (format_cluster_table, list_clusters, load_cluster_record,
                           mark_cluster_destroyed, register_cluster)
-from grl.paths import env_chart_path, state_dir
+from grl.paths import env_chart_path, helm_chart_path, state_dir
 from grl.runs import RunRecord, format_table as format_run_table, list_runs, load as load_run, save as save_run, write_config as write_run_config
-from grl.terraform import apply_infra, destroy_infra, write_env_overlay
+from grl.terraform import (
+    apply_infra,
+    destroy_infra,
+    write_env_overlay,
+    write_manager_run_overlay,
+)
 from grl.tools import ensure_tools
 from grl_proto.environment_client import ListTasksError, list_task_ids
 
@@ -325,6 +331,45 @@ def activate_environment(
     wait_for_rollout(api_client, BUNDLE_SYNC_DAEMONSET, namespace, dry_run=dry_run)
 
 
+def replace_active_runs(config: GRLConfig, api_client, *, dry_run: bool = False) -> None:
+    """Ensure no GRL RayJob can overlap the manager's next telemetry scope."""
+    if dry_run:
+        return
+    namespace = config.infra.ray_cluster.namespace
+    active = active_rayjobs(api_client, namespace, config.infra.cluster_name)
+    if active and not config.launch.job.force:
+        names = ", ".join(item.get("metadata", {}).get("name", "unknown") for item in active)
+        raise GrlError(f"active GRL run already present: {names}; use --replace-active")
+    for item in active:
+        name = item["metadata"]["name"]
+        delete_rayjob(api_client, name, namespace)
+        wait_for_rayjob_deletion(api_client, name, namespace)
+
+
+def update_manager_run_id(
+    config: GRLConfig,
+    tools: dict[str, Path],
+    api_client,
+    run_id: str,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Roll the durable manager onto ``run_id`` before it accepts work."""
+    manager = config.resolved_manager()
+    overlay_path = write_manager_run_overlay(run_id, dry_run=dry_run)
+    helm_upgrade(
+        tools["helm"],
+        config.infra.release_name,
+        helm_chart_path(),
+        config.infra.release_namespace,
+        [overlay_path],
+        kubeconfig=resolved_kubeconfig(config),
+        reuse_values=True,
+        dry_run=dry_run,
+    )
+    wait_for_rollout(api_client, manager.name, manager.namespace, dry_run=dry_run)
+
+
 def verify_manager_catalog(config: GRLConfig, *, addr: str | None = None) -> int:
     target = addr or config.environment.server_addr
     split = config.environment.split
@@ -543,6 +588,26 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     if (launch_cfg.runs_envs() or launch_cfg.runs_training()) and not dry_run:
         api_client = api_client or load_cluster_client(config)
 
+    # The manager is a cluster-wide DaemonSet, so changing its run resource
+    # attribute while another RayJob can still issue RPCs would mix telemetry.
+    # Make the active-job decision before the Helm overlay, and wait for a
+    # requested replacement to disappear completely before rerolling manager.
+    if launch_cfg.runs_envs() or launch_cfg.runs_training():
+        run_record.state = "PREPARING_MANAGER"
+        save_run_record()
+        if not dry_run:
+            try:
+                replace_active_runs(config, api_client)
+            except GrlError as exc:
+                run_record.state, run_record.failure_reason = "FAILED", str(exc)
+                save_run_record()
+                raise
+            except AttributeError:
+                # Lightweight callers/tests may provide only the API methods
+                # they need. Real Kubernetes errors are deliberately not hidden.
+                pass
+        update_manager_run_id(config, tools, api_client, run_id, dry_run=dry_run)
+
     # --- ENVS layer ---
     task_count: int | None = None
     if launch_cfg.runs_envs():
@@ -559,21 +624,6 @@ def launch(config: GRLConfig, *, config_path: Path | None = None) -> LaunchResul
     if launch_cfg.runs_training():
         run_record.state = "QUEUED"
         save_run_record()
-        if not dry_run:
-            try:
-                active = active_rayjobs(api_client, config.infra.ray_cluster.namespace, config.infra.cluster_name)
-            except AttributeError:
-                # Allows lightweight callers/tests which provide only the API
-                # operations they need; real Kubernetes API errors still fail.
-                active = []
-            if active and not launch_cfg.job.force:
-                names = ", ".join(item.get("metadata", {}).get("name", "unknown") for item in active)
-                run_record.state = "FAILED"
-                run_record.failure_reason = f"active GRL run already present: {names}; use --replace-active"
-                save_run_record()
-                raise GrlError(run_record.failure_reason)
-            for item in active:
-                delete_rayjob(api_client, item["metadata"]["name"], config.infra.ray_cluster.namespace)
         wait_for_model_cache(config, api_client, dry_run=dry_run)
         rayjob_name = submit_training_job(config, run_id, api_client, dry_run=dry_run)
         run_record.rayjob_name = rayjob_name

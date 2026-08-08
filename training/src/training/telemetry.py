@@ -61,6 +61,11 @@ logger = logging.getLogger(__name__)
 
 _INITIALIZED = False
 
+# Observable gauges such as active trajectories only describe the instant at
+# which they are collected.  The OpenTelemetry default is 60 seconds, which
+# can miss a whole short rollout burst; collect once per second instead.
+_METRIC_EXPORT_INTERVAL_MILLIS = 1_000
+
 # Held so ``log_trajectory`` can emit through a provider whose Resource carries
 # ``run.id`` (the trajectory MV keys on it). ``None`` until ``init_telemetry``
 # runs with an endpoint, which is also how ``log_trajectory`` knows it's disabled.
@@ -100,7 +105,12 @@ def init_telemetry(
 
     meter_provider = MeterProvider(
         resource=resource,
-        metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())],
+        metric_readers=[
+            PeriodicExportingMetricReader(
+                OTLPMetricExporter(),
+                export_interval_millis=_METRIC_EXPORT_INTERVAL_MILLIS,
+            )
+        ],
     )
     metrics.set_meter_provider(meter_provider)
 

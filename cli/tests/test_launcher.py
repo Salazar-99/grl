@@ -39,6 +39,9 @@ def _stub_launch_prelude(monkeypatch, launcher_module, calls):
         launcher_module, "activate_environment", lambda *a, **k: calls.append("activate")
     )
     monkeypatch.setattr(
+        launcher_module, "update_manager_run_id", lambda *a, **k: calls.append("manager")
+    )
+    monkeypatch.setattr(
         launcher_module,
         "wait_for_model_cache",
         lambda *a, **k: calls.append("model_cache"),
@@ -123,7 +126,7 @@ def test_dry_run_full_launch_does_not_create_a_run_record(monkeypatch):
 
     launcher_module.launch(config)
 
-    assert calls == ["apply_infra", "activate", "model_cache", "submit"]
+    assert calls == ["apply_infra", "manager", "activate", "model_cache", "submit"]
     assert not (Path(os.environ["GRL_HOME"]) / "runs").exists()
 
 
@@ -264,7 +267,7 @@ def test_training_only_asserts_envs_then_submits(monkeypatch):
         }
     )
     launcher_module.launch(config)
-    assert calls == ["assert_envs", "model_cache", "submit"]
+    assert calls == ["assert_envs", "manager", "model_cache", "submit"]
 
 
 def test_envs_only_asserts_resources_then_activates(monkeypatch):
@@ -280,7 +283,7 @@ def test_envs_only_asserts_resources_then_activates(monkeypatch):
         }
     )
     launcher_module.launch(config)
-    assert calls == ["assert_resources", "activate"]
+    assert calls == ["assert_resources", "manager", "activate"]
 
 
 def test_cluster_only_applies_infra_and_stops(monkeypatch):
@@ -334,7 +337,7 @@ def test_full_launch_runs_all_layers(monkeypatch):
     # FULL: single EKS apply (CLUSTER step) covers resources, then envs, then training.
     # The model-cache gate must land before submit: on a cold cluster the weights
     # are still downloading when the layers above finish.
-    assert calls == ["apply_infra", "activate", "model_cache", "submit"]
+    assert calls == ["apply_infra", "manager", "activate", "model_cache", "submit"]
 
 
 def test_wait_for_model_cache_blocks_until_daemonset_ready(monkeypatch):
@@ -395,3 +398,69 @@ def test_wait_for_model_cache_dry_run_skips_cluster_calls(monkeypatch):
     config = GRLConfig.model_validate({"model": "org/model"})
 
     launcher_module.wait_for_model_cache(config, None, dry_run=True)
+
+
+def test_manager_run_overlay_and_rollout_use_only_the_resolved_run_id(monkeypatch):
+    from grl import launcher as launcher_module
+
+    config = GRLConfig.model_validate({"model": "org/model"})
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        launcher_module,
+        "helm_upgrade",
+        lambda *args, **kwargs: calls.append(("helm", args, kwargs)),
+    )
+    monkeypatch.setattr(
+        launcher_module,
+        "wait_for_rollout",
+        lambda *args, **kwargs: calls.append(("rollout", args, kwargs)),
+    )
+
+    launcher_module.update_manager_run_id(
+        config, {"helm": Path("helm")}, object(), "run-resolved"
+    )
+
+    overlay = Path(os.environ["GRL_HOME"]) / "runs" / "run-resolved" / "manager-run-overlay.yaml"
+    assert overlay.read_text() == "manager:\n  runId: run-resolved\n"
+    assert calls[0][0] == "helm"
+    assert calls[0][2]["reuse_values"] is True
+    assert calls[1][0] == "rollout"
+
+
+def test_active_run_is_rejected_before_manager_overlay(monkeypatch):
+    from grl import launcher as launcher_module
+
+    config = GRLConfig.model_validate({"model": "org/model"})
+    monkeypatch.setattr(
+        launcher_module,
+        "active_rayjobs",
+        lambda *args: [{"metadata": {"name": "grl-run-active"}}],
+    )
+
+    with pytest.raises(launcher_module.GrlError, match="--replace-active"):
+        launcher_module.replace_active_runs(config, object())
+
+
+def test_replacing_active_run_waits_for_termination(monkeypatch):
+    from grl import launcher as launcher_module
+
+    config = GRLConfig.model_validate({"model": "org/model", "launch": {"job": {"force": True}}})
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        launcher_module,
+        "active_rayjobs",
+        lambda *args: [{"metadata": {"name": "grl-run-active"}}],
+    )
+    monkeypatch.setattr(
+        launcher_module,
+        "delete_rayjob",
+        lambda _api, name, _namespace: calls.append(("delete", name)),
+    )
+    monkeypatch.setattr(
+        launcher_module,
+        "wait_for_rayjob_deletion",
+        lambda _api, name, _namespace: calls.append(("wait", name)),
+    )
+
+    launcher_module.replace_active_runs(config, object())
+    assert calls == [("delete", "grl-run-active"), ("wait", "grl-run-active")]
