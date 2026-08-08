@@ -45,7 +45,7 @@ otelCollector:
 
 grafana:
   # Keep the panel parser/dashboard aligned with the GRL runtime release.
-  image: ghcr.io/salazar-99/grl-grafana:0.28
+  image: ghcr.io/salazar-99/grl-grafana:0.29
   # Set to false when using a stock Grafana image without the private panel.
   installPlugin: true
   adminUser: admin

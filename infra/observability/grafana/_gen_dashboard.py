@@ -738,7 +738,10 @@ dashboard = {
     "timezone": "browser",
     "title": "GRL Training Observability",
     "uid": "grl-training-observability",
-    "version": 1,
+    # Grafana does not replace a database dashboard with a provisioned file
+    # whose version is older. Bump this whenever the generated dashboard
+    # changes so an existing Grafana PVC receives the new layout/query.
+    "version": 2,
     "weekStart": "",
 }
 

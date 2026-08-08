@@ -144,15 +144,15 @@ infra:
 ### Cohesive release checklist
 
 Use one immutable tag for every deployable artifact in a run. For example,
-release `0.28` means the launcher config must use `images.mode: published`,
-`images.tag: "0.28"`, and `auto` for the manager and all three training roles.
+release `0.29` means the launcher config must use `images.mode: published`,
+`images.tag: "0.29"`, and `auto` for the manager and all three training roles.
 The `Publish Images` workflow publishes those four images and the matching
-`ghcr.io/salazar-99/grl-grafana:0.28` image.
+`ghcr.io/salazar-99/grl-grafana:0.29` image.
 
 The string-reverse guest is not a container image: its prompt and grader are
 compiled into `environment.squashfs`. Before launching, publish its 1,000-row
 catalog and guest package to an immutable bundle URI such as
-`s3://grl-swebench-lite/datasets/string-reverse/0.28`, then set that exact URI
+`s3://grl-swebench-lite/datasets/string-reverse/0.29`, then set that exact URI
 in `environment.bundle_uri`. A FULL launch applies the runtime images and
 activates that bundle; deploy the matching Grafana image through the separate
 observability Helm release so the dashboard and trace parser match as well.

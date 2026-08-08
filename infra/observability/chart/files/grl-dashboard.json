@@ -6252,6 +6252,6 @@
   "timezone": "browser",
   "title": "GRL Training Observability",
   "uid": "grl-training-observability",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
