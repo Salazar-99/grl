@@ -6148,12 +6148,13 @@
       "gridPos": {
         "x": 0,
         "y": 208,
-        "w": 8,
-        "h": 8
+        "w": 24,
+        "h": 24
       },
       "id": 74,
       "options": {
-        "bodyPreviewLength": 60
+        "bodyPreviewLength": 60,
+        "pageSize": 25
       },
       "targets": [
         {
@@ -6163,7 +6164,7 @@
           },
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT TimeUnix AS time, TaskId, GroupId, RolloutIndex, Reward, NumTurns,\n       DoneReason, PromptTokens, ResponseTokens, PolicyVersionStart,\n       PolicyVersionCurrent, Body\nFROM default.grl_trajectories\nWHERE RunId = '${run_id}'\nORDER BY TimeUnix DESC\nLIMIT 20",
+          "rawSql": "SELECT TimeUnix AS time, TaskId, GroupId, RolloutIndex, Reward, NumTurns,\n       DoneReason, PromptTokens, ResponseTokens, PolicyVersionStart,\n       PolicyVersionCurrent, Body\nFROM default.grl_trajectories\nWHERE RunId = '${run_id}'\nORDER BY TimeUnix DESC\nLIMIT 500",
           "refId": "A"
         }
       ],

@@ -8,5 +8,10 @@ export const plugin = new PanelPlugin<TrajectoriesOptions>(TrajectoriesPanel).se
     name: 'Body preview length',
     description: 'Maximum characters shown in the Body column before opening the trace modal',
     defaultValue: 60,
+  }).addNumberInput({
+    path: 'pageSize',
+    name: 'Page size',
+    description: 'Number of trajectories displayed per page',
+    defaultValue: 25,
   });
 });

@@ -39,6 +39,17 @@ def place(_w: int, _h: int) -> dict:
     return pos
 
 
+def place_full(h: int) -> dict:
+    """Place an intentional full-width exception on its own row."""
+    if _cur["x"] != 0:
+        _cur["y"] += _cur["row_h"]
+        _cur["x"] = 0
+        _cur["row_h"] = 0
+    pos = {"x": 0, "y": _cur["y"], "w": 24, "h": h}
+    _cur["y"] += h
+    return pos
+
+
 def row(title: str) -> None:
     if _cur["x"] != 0:
         _cur["y"] += _cur["row_h"]
@@ -160,10 +171,11 @@ def custom_panel(
     options: dict | None = None,
     w: int = 24,
     h: int = 10,
+    full_width: bool = False,
 ) -> None:
     panels.append({
         "datasource": DS,
-        "gridPos": place(w, h),
+        "gridPos": place_full(h) if full_width else place(w, h),
         "id": nid(),
         "options": options or {},
         "targets": [target(sql, fmt=1)],
@@ -669,10 +681,11 @@ custom_panel(
     "       PolicyVersionCurrent, Body\n"
     "FROM default.grl_trajectories\n"
     "WHERE RunId = '${run_id}'\n"
-    "ORDER BY TimeUnix DESC\nLIMIT 20",
-    options={"bodyPreviewLength": 60},
+    "ORDER BY TimeUnix DESC\nLIMIT 500",
+    options={"bodyPreviewLength": 60, "pageSize": 25},
     w=24,
     h=24,
+    full_width=True,
 )
 
 

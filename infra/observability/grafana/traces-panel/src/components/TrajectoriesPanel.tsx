@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { GrafanaTheme2, PanelProps } from '@grafana/data';
 import { css } from '@emotion/css';
 import { Button, useStyles2 } from '@grafana/ui';
@@ -15,9 +15,41 @@ interface SelectedTrace {
   parsed: ParsedTrajectory;
 }
 
+type SortKey = 'time' | 'taskId' | 'groupId' | 'rolloutIndex' | 'reward' | 'numTurns' | 'doneReason' | 'promptTokens' | 'responseTokens';
+type SortDirection = 'asc' | 'desc';
+
+const numericSortKeys = new Set<SortKey>([
+  'rolloutIndex',
+  'reward',
+  'numTurns',
+  'promptTokens',
+  'responseTokens',
+]);
+
+function compareRows(left: TrajectoryRow, right: TrajectoryRow, key: SortKey): number {
+  const leftValue = left[key];
+  const rightValue = right[key];
+  if (leftValue == null) {
+    return rightValue == null ? 0 : 1;
+  }
+  if (rightValue == null) {
+    return -1;
+  }
+  if (key === 'time') {
+    return new Date(leftValue).getTime() - new Date(rightValue).getTime();
+  }
+  if (numericSortKeys.has(key)) {
+    return Number(leftValue) - Number(rightValue);
+  }
+  return String(leftValue).localeCompare(String(rightValue));
+}
+
 export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, height, fieldConfig, id }) => {
   const styles = useStyles2(getStyles);
   const [selected, setSelected] = useState<SelectedTrace | null>(null);
+  const [page, setPage] = useState(0);
+  const [sortKey, setSortKey] = useState<SortKey>('time');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const rows = useMemo(() => {
     const frame = data.series[0];
@@ -29,6 +61,42 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
   }
 
   const previewLen = options.bodyPreviewLength > 0 ? options.bodyPreviewLength : 60;
+  const pageSize = Math.max(1, Math.floor(options.pageSize || 25));
+  const sortedRows = useMemo(
+    () => [...rows].sort((left, right) => {
+      const comparison = compareRows(left, right, sortKey);
+      return sortDirection === 'asc' ? comparison : -comparison;
+    }),
+    [rows, sortDirection, sortKey]
+  );
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageRows = sortedRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
+  useEffect(() => {
+    setPage(0);
+  }, [rows.length, sortDirection, sortKey]);
+
+  const changeSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === 'time' ? 'desc' : 'asc');
+  };
+
+  const sortableHeader = (label: string, key: SortKey) => {
+    const active = key === sortKey;
+    const arrow = active ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+    return (
+      <th aria-sort={active ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button className={styles.sortButton} onClick={() => changeSort(key)} type="button">
+          {label}{arrow}
+        </button>
+      </th>
+    );
+  };
 
   const openTrace = (row: TrajectoryRow) => {
     setSelected({
@@ -47,20 +115,20 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>Time</th>
-              <th>TaskId</th>
-              <th>GroupId</th>
-              <th>Rollout</th>
-              <th>Reward</th>
-              <th>Turns</th>
-              <th>DoneReason</th>
-              <th>PromptTok</th>
-              <th>RespTok</th>
+              {sortableHeader('Time', 'time')}
+              {sortableHeader('TaskId', 'taskId')}
+              {sortableHeader('GroupId', 'groupId')}
+              {sortableHeader('Rollout', 'rolloutIndex')}
+              {sortableHeader('Reward', 'reward')}
+              {sortableHeader('Turns', 'numTurns')}
+              {sortableHeader('DoneReason', 'doneReason')}
+              {sortableHeader('PromptTok', 'promptTokens')}
+              {sortableHeader('RespTok', 'responseTokens')}
               <th>Body</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {pageRows.map((row) => (
               <tr key={row.index} data-testid="trajectory-row">
                 <td>{formatTime(row.time)}</td>
                 <td title={row.taskId}>{truncate(row.taskId ?? '—', 24)}</td>
@@ -87,6 +155,16 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
             ))}
           </tbody>
         </table>
+      </div>
+      <div className={styles.pagination}>
+        <span>{`${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, rows.length)} of ${rows.length}`}</span>
+        <Button variant="secondary" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
+          Previous
+        </Button>
+        <span>Page {currentPage + 1} of {pageCount}</span>
+        <Button variant="secondary" size="sm" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>
+          Next
+        </Button>
       </div>
 
       {selected && (
@@ -132,5 +210,22 @@ const getStyles = (theme: GrafanaTheme2) => ({
     'tbody tr:hover': {
       background: theme.colors.action.hover,
     },
+  }),
+  pagination: css({
+    alignItems: 'center',
+    borderTop: `1px solid ${theme.colors.border.weak}`,
+    display: 'flex',
+    gap: theme.spacing(1),
+    justifyContent: 'flex-end',
+    padding: theme.spacing(1),
+  }),
+  sortButton: css({
+    background: 'none',
+    border: 0,
+    color: 'inherit',
+    cursor: 'pointer',
+    font: 'inherit',
+    fontWeight: 'inherit',
+    padding: 0,
   }),
 });
