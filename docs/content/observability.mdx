@@ -39,6 +39,11 @@ The chart initializes `grl_*` landing tables, promoted metrics, logs, traces, ty
 
 Dashboards expose training progress, GPU health, and queue pressure.
 
+GPU series are labelled as `<role> / <node> / GPU <index> (<UUID>)`. The role
+comes from the Ray worker group associated with the workload pod reported by
+DCGM, so GPUs remain distinguishable on multi-GPU and mixed-role nodes.
+Devices without an owning Ray worker are labelled `unassigned`.
+
 ## Alerts
 
 Alerts should focus on stalled training, failed environment managers, and missing telemetry.

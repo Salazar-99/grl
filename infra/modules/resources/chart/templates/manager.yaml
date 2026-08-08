@@ -42,6 +42,11 @@ spec:
             # attributes the dashboard breaks out by.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
+            # Observable manager gauges are collected by the Rust SDK only at
+            # its export interval (60s by default). One second captures
+            # short-lived Firecracker environments without high metric volume.
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "1000"
             - name: GRL_ENV_SERVER_ADDR
               value: 0.0.0.0:{{ .Values.manager.port }}
             - name: GRL_VM_CACHE_DIR

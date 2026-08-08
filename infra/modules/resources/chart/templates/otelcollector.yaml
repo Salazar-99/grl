@@ -42,6 +42,10 @@ spec:
                   target_label: ray_node_type
                 - source_labels: [__meta_kubernetes_pod_name]
                   target_label: pod
+                # Preserve the pod's Kubernetes node so Ray role samples can
+                # be correlated with device-level DCGM metrics.
+                - source_labels: [__meta_kubernetes_pod_node_name]
+                  target_label: node
             # vLLM engine metrics — rollouts pods only; RolloutWorker starts a
             # prometheus_client HTTP server on this port (see training code).
             - job_name: vllm

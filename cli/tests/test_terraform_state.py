@@ -47,6 +47,22 @@ def test_apply_infra_passes_state_aware_args(monkeypatch, tmp_path):
     )
 
 
+def test_dry_run_apply_does_not_create_launcher_state(monkeypatch, tmp_path):
+    from grl import terraform as terraform_module
+
+    monkeypatch.setenv("GRL_HOME", str(tmp_path))
+    monkeypatch.setattr(terraform_module, "terraform_init", lambda *args, **kwargs: None)
+    monkeypatch.setattr(terraform_module, "terraform_apply", lambda *args, **kwargs: None)
+    config = GRLConfig.model_validate(
+        {"model": "org/model", "launch": {"dry_run": True}, "infra": {"cluster_name": "dev-a"}}
+    )
+
+    terraform_module.apply_infra(config, _resolved(), tmp_path / "terraform", "grl-test", dry_run=True)
+
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "terraform-state").exists()
+
+
 def test_destroy_infra_routes_byok(monkeypatch, tmp_path):
     from grl import terraform as terraform_module
 

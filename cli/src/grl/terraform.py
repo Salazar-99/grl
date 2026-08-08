@@ -28,8 +28,13 @@ def write_tfvars(
     *,
     byok: bool = False,
     for_teardown: bool = False,
+    dry_run: bool = False,
 ) -> Path:
     filename = "byok.auto.tfvars.json" if byok else "terraform.auto.tfvars.json"
+    if dry_run:
+        # The command is only rendered, never executed, so a plausible path is
+        # sufficient and avoids creating ~/.grl/runs for a dry-run.
+        return Path("/tmp/grl-dry-run") / run_id / filename
     vars_path = state_dir(run_id) / filename
     if byok:
         payload = (
@@ -53,8 +58,10 @@ def write_helm_overlay(config: GRLConfig, run_id: str) -> Path:
     return overlay_path
 
 
-def write_env_overlay(config: GRLConfig, run_id: str) -> Path:
+def write_env_overlay(config: GRLConfig, run_id: str, *, dry_run: bool = False) -> Path:
     """Write the values overlay for the launcher-owned ``environments`` chart."""
+    if dry_run:
+        return Path("/tmp/grl-dry-run") / run_id / "env-overlay.yaml"
     overlay_path = state_dir(run_id) / "env-overlay.yaml"
     overlay_path.write_text(yaml.safe_dump(config.env_helm_values(), sort_keys=False))
     return overlay_path
@@ -165,9 +172,10 @@ def _apply_terraform_root(
     dry_run: bool = False,
 ) -> tuple[Path, Path]:
     state_path = terraform_state_path(config.infra.cluster_name, byok=byok)
-    _prepare_state(state_path)
+    if not dry_run:
+        _prepare_state(state_path)
     print(f"Terraform state: {state_path}")
-    tfvars = write_tfvars(config, resolved, run_id, byok=byok)
+    tfvars = write_tfvars(config, resolved, run_id, byok=byok, dry_run=dry_run)
     terraform_init(terraform_bin, tf_root, dry_run=dry_run)
     terraform_apply(terraform_bin, tf_root, tfvars, state_path, dry_run=dry_run)
     return tfvars, state_path
@@ -184,9 +192,12 @@ def _destroy_terraform_root(
     dry_run: bool = False,
 ) -> tuple[Path, Path]:
     state_path = terraform_state_path(config.infra.cluster_name, byok=byok)
-    _prepare_state(state_path)
+    if not dry_run:
+        _prepare_state(state_path)
     print(f"Terraform state: {state_path}")
-    tfvars = write_tfvars(config, resolved, run_id, byok=byok, for_teardown=True)
+    tfvars = write_tfvars(
+        config, resolved, run_id, byok=byok, for_teardown=True, dry_run=dry_run
+    )
     terraform_init(terraform_bin, tf_root, dry_run=dry_run)
     terraform_destroy(terraform_bin, tf_root, tfvars, state_path, dry_run=dry_run)
     return tfvars, state_path

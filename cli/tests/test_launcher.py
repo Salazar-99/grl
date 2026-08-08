@@ -1,4 +1,5 @@
 from contextlib import nullcontext as _nullcontext
+import os
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,26 @@ def test_dry_run_launch_skips_cluster_calls(monkeypatch):
     monkeypatch.setattr(launcher_module, "verify_bundle", fail_if_called)
     result = launcher_module.launch(config)
     assert result.run_id.startswith("grl-")
+    assert not (Path(os.environ["GRL_HOME"]) / "runs").exists()
+
+
+def test_dry_run_full_launch_does_not_create_a_run_record(monkeypatch):
+    from grl import launcher as launcher_module
+
+    calls: list[str] = []
+    _stub_launch_prelude(monkeypatch, launcher_module, calls)
+    config = GRLConfig.model_validate(
+        {
+            "model": "org/model",
+            "environment": {"bundle_uri": "s3://b/e"},
+            "launch": {"dry_run": True},
+        }
+    )
+
+    launcher_module.launch(config)
+
+    assert calls == ["apply_infra", "activate", "model_cache", "submit"]
+    assert not (Path(os.environ["GRL_HOME"]) / "runs").exists()
 
 
 def test_load_cluster_client_byok_uses_kubeconfig(monkeypatch, tmp_path):
@@ -293,7 +314,12 @@ def test_cluster_only_updates_kubeconfig_after_eks_apply(monkeypatch):
         {"model": "org/model", "launch": {"deployment_type": "CLUSTER"}}
     )
     launcher_module.launch(config)
-    assert calls == ["apply_infra", "register_cluster", "update_kubeconfig"]
+    assert calls == [
+        "register_cluster",
+        "apply_infra",
+        "register_cluster",
+        "update_kubeconfig",
+    ]
 
 
 def test_full_launch_runs_all_layers(monkeypatch):

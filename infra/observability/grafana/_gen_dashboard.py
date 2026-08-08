@@ -341,6 +341,45 @@ def q_scraped_gauge(name: str, svc: str, by: str) -> str:
     )
 
 
+def q_dcgm_gpu_gauge(name: str) -> str:
+    """DCGM device metrics labelled with the owning Ray worker group.
+
+    DCGM's Kubernetes-device metrics carry the workload pod plus a GPU index
+    and UUID.  Ray's pod scrape carries the worker-group role.  Joining on the
+    same pod and 30-second bucket keeps role attribution correct even when a
+    node hosts more than one role; an unassigned device is shown explicitly.
+    """
+    ray_pod = "if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod'])"
+    ray_role = "if(ResourceAttributes['ray_group'] != '', ResourceAttributes['ray_group'], Attributes['ray_group'])"
+    dcgm_node = "if(d.ResourceAttributes['node'] != '', d.ResourceAttributes['node'], d.Attributes['node'])"
+    return (
+        "WITH ray_roles AS (\n"
+        "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS bucket,\n"
+        f"         {ray_pod} AS pod, any({ray_role}) AS role\n"
+        "  FROM default.grl_metrics_landing\n"
+        f"  WHERE {WINDOW}\n"
+        "    AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\n"
+        "  GROUP BY bucket, pod\n"
+        ")\n"
+        "SELECT d.TimeUnix AS time,\n"
+        "       concat(\n"
+        "         ifNull(nullIf(r.role, ''), 'unassigned'), ' / ',\n"
+        f"         {dcgm_node}, ' / GPU ',\n"
+        "         if(d.Attributes['gpu'] != '', d.Attributes['gpu'], 'unknown'),\n"
+        "         if(d.Attributes['UUID'] != '', concat(' (', d.Attributes['UUID'], ')'), '')\n"
+        "       ) AS series,\n"
+        "       d.Value\n"
+        "FROM default.grl_metrics_landing AS d\n"
+        "LEFT JOIN ray_roles AS r\n"
+        "  ON d.Attributes['pod'] = r.pod\n"
+        " AND toStartOfInterval(d.TimeUnix, INTERVAL 30 SECOND) = r.bucket\n"
+        f"WHERE d.TimeUnix BETWEEN parseDateTime64BestEffort('${{run_start}}') "
+        "AND parseDateTime64BestEffort('${run_end}')\n"
+        f"  AND d.ServiceName = 'dcgm' AND d.MetricName = '{name}'\n"
+        "ORDER BY d.TimeUnix"
+    )
+
+
 def q_scraped_by_phase(name: str, svc: str) -> str:
     return q_scraped_gauge(name, svc, "phase")
 
@@ -378,6 +417,21 @@ def q_scraped_hist_quant(name: str, svc: str) -> str:
         "  GROUP BY t\n"
         ")\n"
         "WHERE arraySum(bc) > 0\nORDER BY t"
+    )
+
+
+def q_scraped_hist_mean_max(name: str, svc: str) -> str:
+    """Exact histogram mean plus maximum, avoiding bucket-derived quantiles."""
+    return (
+        "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n"
+        "       sum(Sum) / nullIf(sum(Count), 0) AS mean,\n"
+        "       max(Max) AS max\n"
+        "FROM default.grl_metrics_histogram_landing\n"
+        f"WHERE {WINDOW}\n"
+        f"  AND ServiceName = '{svc}' AND MetricName = '{name}'\n"
+        "GROUP BY time\n"
+        "HAVING sum(Count) > 0\n"
+        "ORDER BY time"
     )
 
 
@@ -497,8 +551,6 @@ timeseries("Tool calls / 30s (by tool)",
 row("Manager / Environments")
 timeseries("Active envs (by pod)",
            q_scraped_gauge("grl.manager.envs.active", "grl-manager", "pod"), w=8)
-timeseries("Active VMs (by pod)",
-           q_scraped_gauge("grl.manager.vms.active", "grl-manager", "pod"), w=8)
 timeseries("Envs by phase", q_scraped_by_phase("grl.manager.envs.by_phase", "grl-manager"),
            w=8, stack=True)
 timeseries("Capacity utilization",
@@ -508,8 +560,8 @@ timeseries("Admission rejected / 30s",
            q_scraped_counter_rate("grl.manager.admission.rejected", "grl-manager"), w=8)
 timeseries("VM boots / 30s (by ok)",
            q_scraped_counter_rate("grl.manager.vm.boots", "grl-manager", "ok"), w=8)
-timeseries("VM boot duration (p50/p95)",
-           q_scraped_hist_quant("grl.manager.vm.boot.duration", "grl-manager"), w=8, unit="s")
+timeseries("VM boot duration (mean/max)",
+           q_scraped_hist_mean_max("grl.manager.vm.boot.duration", "grl-manager"), w=8, unit="s")
 timeseries("VM boot failures / 30s",
            q_scraped_counter_rate("grl.manager.vm.boot.failures", "grl-manager"), w=8)
 timeseries("Manager RPC duration p50/p95 (by rpc)",
@@ -523,17 +575,17 @@ timeseries("Evaluate infra errors / 30s",
 # 7. GPU (DCGM, scraped) ------------------------------------------------------
 row("GPU")
 timeseries("GPU utilization %",
-           q_scraped_gauge("DCGM_FI_DEV_GPU_UTIL", "dcgm", "node"), w=8, unit="percent")
+           q_dcgm_gpu_gauge("DCGM_FI_DEV_GPU_UTIL"), w=8, unit="percent")
 timeseries("Framebuffer used (MiB)",
-           q_scraped_gauge("DCGM_FI_DEV_FB_USED", "dcgm", "node"), w=8, unit="decmbytes")
+           q_dcgm_gpu_gauge("DCGM_FI_DEV_FB_USED"), w=8, unit="decmbytes")
 timeseries("Power usage (W)",
-           q_scraped_gauge("DCGM_FI_DEV_POWER_USAGE", "dcgm", "node"), w=8, unit="watt")
+           q_dcgm_gpu_gauge("DCGM_FI_DEV_POWER_USAGE"), w=8, unit="watt")
 timeseries("GPU temperature (C)",
-           q_scraped_gauge("DCGM_FI_DEV_GPU_TEMP", "dcgm", "node"), w=8, unit="celsius")
+           q_dcgm_gpu_gauge("DCGM_FI_DEV_GPU_TEMP"), w=8, unit="celsius")
 timeseries("SM clock (MHz)",
-           q_scraped_gauge("DCGM_FI_DEV_SM_CLOCK", "dcgm", "node"), w=8, unit="rotmhz")
+           q_dcgm_gpu_gauge("DCGM_FI_DEV_SM_CLOCK"), w=8, unit="rotmhz")
 timeseries("Framebuffer free (MiB)",
-           q_scraped_gauge("DCGM_FI_DEV_FB_FREE", "dcgm", "node"), w=8, unit="decmbytes")
+           q_dcgm_gpu_gauge("DCGM_FI_DEV_FB_FREE"), w=8, unit="decmbytes")
 
 # 8. Ray (scraped) ------------------------------------------------------------
 row("Ray")
@@ -586,11 +638,11 @@ dashboard = {
     "templating": {"list": [
         {
             "current": {}, "datasource": DS,
-            "definition": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
+            "definition": "SELECT RunId FROM default.grl_metrics WHERE RunId != '' GROUP BY RunId ORDER BY max(TimeUnix) DESC",
             "hide": 0, "includeAll": False, "label": "Run", "multi": False,
             "name": "run_id", "options": [],
-            "query": "SELECT DISTINCT RunId FROM default.grl_metrics WHERE RunId != '' ORDER BY RunId DESC",
-            "refresh": 1, "regex": "", "skipUrlSync": False, "sort": 1, "type": "query",
+            "query": "SELECT RunId FROM default.grl_metrics WHERE RunId != '' GROUP BY RunId ORDER BY max(TimeUnix) DESC",
+            "refresh": 1, "regex": "", "skipUrlSync": False, "sort": 0, "type": "query",
         },
         {
             "current": {}, "datasource": DS,
