@@ -344,22 +344,24 @@ def q_scraped_gauge(name: str, svc: str, by: str) -> str:
 def q_dcgm_gpu_gauge(name: str) -> str:
     """DCGM device metrics labelled with the owning Ray worker group.
 
-    DCGM's Kubernetes-device metrics carry the workload pod plus a GPU index
-    and UUID.  Ray's pod scrape carries the worker-group role.  Joining on the
-    same pod and 30-second bucket keeps role attribution correct even when a
-    node hosts more than one role; an unassigned device is shown explicitly.
+    DCGM's DaemonSet scrape carries its Kubernetes node plus a GPU index and
+    UUID. Ray's workload-pod scrape carries both that node and its worker-group
+    role. Joining on the normalized node and a 30-second bucket associates each
+    device with its dedicated Ray node pool; an unassigned device is shown
+    explicitly.
     """
-    ray_pod = "if(ResourceAttributes['pod'] != '', ResourceAttributes['pod'], Attributes['pod'])"
+    ray_node = "if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node'])"
     ray_role = "if(ResourceAttributes['ray_group'] != '', ResourceAttributes['ray_group'], Attributes['ray_group'])"
     dcgm_node = "if(d.ResourceAttributes['node'] != '', d.ResourceAttributes['node'], d.Attributes['node'])"
     return (
         "WITH ray_roles AS (\n"
         "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS bucket,\n"
-        f"         {ray_pod} AS pod, any({ray_role}) AS role\n"
+        f"         {ray_node} AS node, any({ray_role}) AS role\n"
         "  FROM default.grl_metrics_landing\n"
         f"  WHERE {WINDOW}\n"
         "    AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\n"
-        "  GROUP BY bucket, pod\n"
+        f"    AND {ray_node} != ''\n"
+        "  GROUP BY bucket, node\n"
         ")\n"
         "SELECT d.TimeUnix AS time,\n"
         "       concat(\n"
@@ -371,7 +373,7 @@ def q_dcgm_gpu_gauge(name: str) -> str:
         "       d.Value\n"
         "FROM default.grl_metrics_landing AS d\n"
         "LEFT JOIN ray_roles AS r\n"
-        "  ON d.Attributes['pod'] = r.pod\n"
+        f"  ON {dcgm_node} = r.node\n"
         " AND toStartOfInterval(d.TimeUnix, INTERVAL 30 SECOND) = r.bucket\n"
         f"WHERE d.TimeUnix BETWEEN parseDateTime64BestEffort('${{run_start}}') "
         "AND parseDateTime64BestEffort('${run_end}')\n"
