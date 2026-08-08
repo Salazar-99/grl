@@ -24,6 +24,14 @@ already be reachable through `launch.infra.kubeconfig`.
 grl launch config.yaml --wait
 ```
 
+Override the configured deployment layer for one invocation with
+`--deployment-type` (`FULL`, `CLUSTER`, `RESOURCES`, `ENVS`, or `TRAINING`):
+
+```bash
+grl launch config.yaml --deployment-type envs
+grl launch config.yaml --deployment-type training --replace-active
+```
+
 Use in-memory overrides for an experiment rather than editing the YAML when
 appropriate:
 
@@ -36,6 +44,13 @@ Explicit `--head-image`, `--rollouts-image`, `--training-image`, and
 `--manager-image` take precedence over automatic image resolution. A launch
 refuses to overlap an active GRL RayJob on the selected Ray cluster; only use
 `--replace-active` when cancelling that active job is intended.
+
+For `FULL`, `ENVS`, and `TRAINING` launches, the CLI rolls the environment
+manager onto the resolved `run.id` before environment activation or RayJob
+submission. It writes a per-run manager values overlay under `~/.grl/runs`,
+upgrades the existing `grl-resources` Helm release with `--reuse-values`, and
+waits for the manager DaemonSet rollout. This is why an active RayJob is
+rejected (or fully deleted with `--replace-active`) before that update.
 
 ## Inspecting state
 

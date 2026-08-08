@@ -19,18 +19,23 @@ def nid() -> int:
     return _id[0]
 
 
-# ---- layout engine: flow panels left-to-right across a 24-col grid ----
+# ---- layout engine: three uniform panels across a 24-col grid ----
+#
+# Keep every dashboard panel at 8x8.  ``row()`` advances past the current
+# panel height, deliberately preserving blank cells in a partially filled row.
+_PANEL_W = 8
+_PANEL_H = 8
 _cur = {"x": 0, "y": 0, "row_h": 0}
 
 
-def place(w: int, h: int) -> dict:
-    if _cur["x"] + w > 24:
+def place(_w: int, _h: int) -> dict:
+    if _cur["x"] + _PANEL_W > 24:
         _cur["x"] = 0
         _cur["y"] += _cur["row_h"]
         _cur["row_h"] = 0
-    pos = {"x": _cur["x"], "y": _cur["y"], "w": w, "h": h}
-    _cur["x"] += w
-    _cur["row_h"] = max(_cur["row_h"], h)
+    pos = {"x": _cur["x"], "y": _cur["y"], "w": _PANEL_W, "h": _PANEL_H}
+    _cur["x"] += _PANEL_W
+    _cur["row_h"] = max(_cur["row_h"], _PANEL_H)
     return pos
 
 
@@ -500,7 +505,6 @@ def q_scraped_hist_quant_by_attr(name: str, svc: str, attr: str) -> str:
 # 1. Training -----------------------------------------------------------------
 row("Training")
 stat("Completed policy updates", q_otlp_stat("grl.train.policy_version"), w=4, h=8)
-stat("Rollouts per update", q_otlp_stat("grl.train.rollouts_used"), w=4, h=8)
 timeseries("Mean training reward", q_otlp_hist_avg("grl.train.reward"), w=8)
 timeseries("Policy stability: KL / entropy",
            q_otlp_multi(["grl.train.kl", "grl.train.entropy"]), w=8)
