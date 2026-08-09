@@ -29,6 +29,16 @@ otelCollector:
     username: ""
     password: ""
 
+# Portable host network metrics.  This runs on every schedulable Linux node and
+# is intentionally independent of the cloud, CNI, and physical NIC names.
+nodeExporter:
+  enabled: true
+  namespace: default
+  image: quay.io/prometheus/node-exporter:v1.11.1
+  # Ignore interfaces that represent local/overlay traffic rather than a node's
+  # external network. Set this to an empty string to include every interface.
+  interfaceExcludeRegex: '^(?:lo|veth.*|docker.*|br-.*|cali.*|flannel.*|cni.*|tun.*|tap.*|vxlan.*|genev.*)$'
+
 # Environment-agnostic Rust gRPC server (environments/manager/Dockerfile).
 # Runs as a DaemonSet: one pod per environment node, booting Firecracker VMs
 # from the vmImageCache hostPath. Rollout workers reach it through a ClusterIP

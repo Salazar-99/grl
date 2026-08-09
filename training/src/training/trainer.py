@@ -38,6 +38,7 @@ __all__ = ["TrainingBatch", "TrainingWorker", "grpo_valid_rollouts"]
 # The language stack of a checkpoint-shaped state dict. Everything else (e.g. a
 # vision tower) is carried for the rollout engine's benefit but never trained.
 LANGUAGE_PARAM_PREFIXES = ("model.language_model.", "model.layers.", "model.embed", "lm_head.")
+ROLLOUT_LANGUAGE_PARAM_PREFIXES = ("model.language_model.", "lm_head.")
 
 # Auxiliary heads that ship in the checkpoint but that neither transformers nor the
 # rollout engine instantiates for ordinary decoding. `mtp.*` is Qwen's multi-token
@@ -205,6 +206,8 @@ class TrainingWorker:
         self.min_rollouts_per_group = cfg.grpo.min_rollouts_per_group
         self.micro_batch_size = cfg.trainer.micro_batch_size
         self.logprob_chunk_size = cfg.trainer.logprob_chunk_size
+        self.language_model_only = cfg.rollout.language_model_only
+        self.rollout_tensor_parallel_size = cfg.rollout.tensor_parallel_size
         self.run_id = run_id
         self.checkpoint_bucket_uri = cfg.checkpoint.bucket_uri
         self.checkpoint_interval_steps = cfg.checkpoint.interval_steps
@@ -287,8 +290,21 @@ class TrainingWorker:
             )
             current.set_attribute("loss", loss)
 
-            with span("weight_sync"), record_duration("grl.train.weight_sync.duration"):
-                weights_ref = self.send_weights()
+            with span("weight_sync", backend="ray") as current, record_duration(
+                "grl.train.weight_sync.duration", backend="ray"
+            ):
+                state_dict = self._weight_sync_state_dict()
+                payload_bytes = weight_payload_bytes(state_dict)
+                current.set_attribute("payload_bytes", payload_bytes)
+                current.set_attribute("rollout_worker_count", len(rollout_workers))
+                current.set_attribute("tensor_parallel_size", self.rollout_tensor_parallel_size)
+                # This is the world size a future NCCL sender will create: one
+                # trainer rank plus each rollout worker's tensor-parallel ranks.
+                current.set_attribute(
+                    "nccl_world_size",
+                    1 + len(rollout_workers) * self.rollout_tensor_parallel_size,
+                )
+                weights_ref = self.send_weights(state_dict)
                 update_refs = []
                 for worker in rollout_workers:
                     update_refs.append(
@@ -693,14 +709,32 @@ class TrainingWorker:
         log_ratio = inference_logprobs - trainer_logprobs
         return torch.exp(log_ratio) - log_ratio - 1
 
-    def send_weights(self) -> PolicyWeightsRef:
+    def _weight_sync_state_dict(self) -> dict[str, "torch.Tensor"]:
+        """Return exactly the tensors sent to rollout workers, on CPU."""
         # TODO: Determine if we can use NCCL on A10 in AWS
         # Determine if we can send just the weight diff like Cursor does
         import torch
 
         with torch.no_grad():
-            state_dict = {
+            return {
                 name: tensor.detach().to("cpu", copy=True)
                 for name, tensor in self.model.state_dict().items()
+                if not getattr(self, "language_model_only", False)
+                or name.startswith(ROLLOUT_LANGUAGE_PARAM_PREFIXES)
             }
+
+    def send_weights(self, state_dict: dict[str, "torch.Tensor"] | None = None) -> PolicyWeightsRef:
+        """Put the exact rollout payload in Ray's object store.
+
+        The current transport is Ray/checkpoint reload, not NCCL. Keeping this
+        payload construction separate makes the trace's byte count exact and
+        gives an NCCL transport a single well-defined payload to send later.
+        """
+        if state_dict is None:
+            state_dict = self._weight_sync_state_dict()
         return PolicyWeightsRef(ray.put(state_dict))
+
+
+def weight_payload_bytes(state_dict: dict[str, "torch.Tensor"]) -> int:
+    """Byte size of the exact tensor mapping selected for a policy transfer."""
+    return sum(tensor.numel() * tensor.element_size() for tensor in state_dict.values())

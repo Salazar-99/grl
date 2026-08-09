@@ -158,6 +158,32 @@ class PolicyUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state_dict["bias"].device.type, "cpu")
         self.assertNotEqual(state_dict["weight"].data_ptr(), original.data_ptr())
 
+    def test_weight_sync_payload_filters_and_counts_exact_sent_tensors(self) -> None:
+        import torch
+
+        from training.trainer import TrainingWorker, weight_payload_bytes
+
+        worker_cls = TrainingWorker.__ray_metadata__.modified_class
+        worker = object.__new__(worker_cls)
+        worker.language_model_only = True
+        worker.model = torch.nn.Module()
+        worker.model.register_parameter(
+            "language", torch.nn.Parameter(torch.ones(2, dtype=torch.float16))
+        )
+        worker.model.register_parameter(
+            "vision", torch.nn.Parameter(torch.ones(4, dtype=torch.float32))
+        )
+        # Match the checkpoint-shaped names used by multimodal models.
+        worker.model.state_dict = lambda: {
+            "model.language_model.weight": worker.model.language,
+            "model.visual.weight": worker.model.vision,
+        }
+
+        payload = worker._weight_sync_state_dict()
+
+        self.assertEqual(set(payload), {"model.language_model.weight"})
+        self.assertEqual(weight_payload_bytes(payload), 4)
+
     def test_save_checkpoint_writes_model_and_tokenizer(self) -> None:
         from pathlib import Path
 

@@ -406,6 +406,77 @@ def q_dcgm_gpu_gauge(name: str) -> str:
     )
 
 
+def q_node_exporter_rate(name: str | tuple[str, ...]) -> str:
+    """Per-node counter rate labelled with the Ray workload role when known."""
+    ray_node = "if(ResourceAttributes['node'] != '', ResourceAttributes['node'], Attributes['node'])"
+    ray_role = "if(ResourceAttributes['ray_group'] != '', ResourceAttributes['ray_group'], Attributes['ray_group'])"
+    node = "if(n.ResourceAttributes['node'] != '', n.ResourceAttributes['node'], n.Attributes['node'])"
+    device = "if(n.Attributes['device'] != '', n.Attributes['device'], '')"
+    names = (
+        f"n.MetricName = '{name}'"
+        if isinstance(name, str)
+        else "n.MetricName IN (" + ", ".join(repr(metric) for metric in name) + ")"
+    )
+    return (
+        "WITH ray_roles AS (\n"
+        "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS bucket,\n"
+        f"         {ray_node} AS node, any({ray_role}) AS role\n"
+        "  FROM default.grl_metrics_landing\n"
+        f"  WHERE {WINDOW}\n"
+        "    AND ServiceName = 'ray' AND MetricName = 'ray_node_cpu_utilization'\n"
+        f"    AND {ray_node} != ''\n"
+        "  GROUP BY bucket, node\n"
+        "), samples AS (\n"
+        "  SELECT toStartOfInterval(n.TimeUnix, INTERVAL 30 SECOND) AS bucket,\n"
+        f"         {node} AS node, {device} AS device, n.MetricName AS metric, max(n.Value) AS value\n"
+        "  FROM default.grl_metrics_sum_landing AS n\n"
+        f"  WHERE {WINDOW}\n"
+        f"    AND n.ServiceName = 'node-exporter' AND {names}\n"
+        f"    AND {node} != ''\n"
+        "  GROUP BY bucket, node, device, metric\n"
+        "), rates AS (\n"
+        "  SELECT bucket, node, device, metric,\n"
+        "         greatest(0, value - lagInFrame(value) OVER "
+        "(PARTITION BY node, device, metric ORDER BY bucket)) / 30 AS value\n"
+        "  FROM samples\n"
+        ")\n"
+        "SELECT r.bucket AS time,\n"
+        "       concat(ifNull(nullIf(rr.role, ''), 'unassigned'), ' / ', r.node,\n"
+        "              if(r.metric = '', '', concat(' / ', r.metric))) AS series,\n"
+        "       sum(r.value) AS value\n"
+        "FROM rates AS r\n"
+        "LEFT JOIN ray_roles AS rr ON r.node = rr.node AND r.bucket = rr.bucket\n"
+        "GROUP BY time, series\n"
+        "ORDER BY time"
+    )
+
+
+def q_nccl_payload_throughput() -> str:
+    """Payload bytes divided by sender-only NCCL transfer time, per 30 seconds."""
+    return (
+        "WITH payload AS (\n"
+        "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t, sum(Sum) AS bytes\n"
+        "  FROM default.grl_metrics_histogram_landing\n"
+        f"  WHERE {WINDOW}\n"
+        "    AND ServiceName = 'grl-training'\n"
+        "    AND MetricName = 'grl.train.weight_sync.payload_bytes'\n"
+        "    AND Attributes['backend'] = 'nccl'\n"
+        "  GROUP BY t\n"
+        "), transfer AS (\n"
+        "  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t, sum(Sum) AS seconds\n"
+        "  FROM default.grl_metrics_histogram_landing\n"
+        f"  WHERE {WINDOW}\n"
+        "    AND ServiceName = 'grl-training'\n"
+        "    AND MetricName = 'grl.train.weight_sync.transfer.duration'\n"
+        "    AND Attributes['backend'] = 'nccl'\n"
+        "  GROUP BY t\n"
+        ")\n"
+        "SELECT payload.t AS time, payload.bytes / nullIf(transfer.seconds, 0) AS value\n"
+        "FROM payload INNER JOIN transfer ON payload.t = transfer.t\n"
+        "ORDER BY time"
+    )
+
+
 def q_scraped_by_phase(name: str, svc: str) -> str:
     return q_scraped_gauge(name, svc, "phase")
 
@@ -535,6 +606,11 @@ timeseries("Training response tokens / 30s",
 timeseries("Mean training-step / weight-sync duration",
            q_otlp_hist_avg_multi(["grl.train.step.duration",
                                   "grl.train.weight_sync.duration"]), w=8, unit="s")
+timeseries("NCCL payload throughput",
+           q_nccl_payload_throughput(), w=8, unit="Bps")
+timeseries("NCCL sender / end-to-end weight-sync duration",
+           q_otlp_hist_avg_multi(["grl.train.weight_sync.transfer.duration",
+                                  "grl.train.weight_sync.duration"]), w=8, unit="s")
 timeseries("Groups dropped / 30s (by reason)",
            q_otlp_counter_rate("grl.train.groups_dropped", "reason"), w=8)
 
@@ -646,6 +722,24 @@ timeseries("Snapshot evictions / 30s",
            q_scraped_counter_rate("grl.manager.snapshot.evictions", "grl-manager"), w=8)
 
 # 6. GPU (DCGM, scraped) ------------------------------------------------------
+row("Network")
+timeseries("Node transmit throughput", q_node_exporter_rate("node_network_transmit_bytes_total"),
+           w=8, unit="Bps")
+timeseries("Node receive throughput", q_node_exporter_rate("node_network_receive_bytes_total"),
+           w=8, unit="Bps")
+timeseries("Node TX / RX error rate",
+           q_node_exporter_rate(("node_network_transmit_errs_total", "node_network_receive_errs_total")),
+           w=8, unit="ops")
+timeseries("Node TX / RX drop rate",
+           q_node_exporter_rate(("node_network_transmit_drop_total", "node_network_receive_drop_total")),
+           w=8, unit="ops")
+timeseries("TCP retransmission rate", q_node_exporter_rate("node_netstat_Tcp_RetransSegs"),
+           w=8, unit="ops")
+timeseries("Linux softnet drops / time squeeze",
+           q_node_exporter_rate(("node_softnet_dropped_total", "node_softnet_times_squeezed_total")),
+           w=8, unit="ops")
+
+# 7. GPU (DCGM, scraped) ------------------------------------------------------
 row("GPU")
 timeseries("GPU utilization %",
            q_dcgm_gpu_gauge("DCGM_FI_DEV_GPU_UTIL"), w=8, unit="percent")
@@ -741,7 +835,7 @@ dashboard = {
     # Grafana does not replace a database dashboard with a provisioned file
     # whose version is older. Bump this whenever the generated dashboard
     # changes so an existing Grafana PVC receives the new layout/query.
-    "version": 2,
+    "version": 3,
     "weekStart": "",
 }
 

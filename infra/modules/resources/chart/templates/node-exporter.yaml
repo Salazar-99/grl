@@ -1,0 +1,66 @@
+{{- if .Values.nodeExporter.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: grl-node-exporter
+  namespace: {{ .Values.nodeExporter.namespace | quote }}
+  labels:
+    app.kubernetes.io/name: grl-node-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grl-node-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grl-node-exporter
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: node-exporter
+          image: {{ .Values.nodeExporter.image | quote }}
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --collector.netdev
+            - --collector.netstat
+            - --collector.sockstat
+            - --collector.softnet
+            - --no-collector.processes
+            - {{ printf "--collector.netdev.device-exclude=%s" .Values.nodeExporter.interfaceExcludeRegex | quote }}
+          ports:
+            - name: metrics
+              containerPort: 9100
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              readOnly: true
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: root
+          hostPath:
+            path: /
+            type: Directory
+{{- end }}

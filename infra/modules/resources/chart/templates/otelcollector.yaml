@@ -84,6 +84,26 @@ spec:
                   target_label: __address__
                 - source_labels: [__meta_kubernetes_pod_node_name]
                   target_label: node
+            # Chart-managed node exporter. Keep this discovery selector narrow
+            # so a cluster's unrelated exporters are never scraped by GRL.
+            {{- if .Values.nodeExporter.enabled }}
+            - job_name: node-exporter
+              scrape_interval: 1s
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces:
+                    names:
+                      - {{ .Values.nodeExporter.namespace | quote }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                  regex: grl-node-exporter
+                  action: keep
+                - source_labels: [__meta_kubernetes_pod_ip]
+                  replacement: $$1:9100
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_pod_node_name]
+                  target_label: node
+            {{- end }}
     processors:
       memory_limiter:
         check_interval: 1s
