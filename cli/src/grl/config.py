@@ -469,6 +469,11 @@ class GRLConfig(TrainingGRLConfig):
             "ray_rollouts_replicas": self.compute.rollouts.nodes,
             "ray_training_replicas": self.compute.training.nodes,
             "manager_image": resolved.manager,
+            # A FULL deployment creates the manager before the RayJob exists.
+            # Pass the resolved launch identity through Terraform so its first
+            # pod is already scoped to this run.
+            "manager_run_id": self.telemetry.run_id or "",
+            "manager_env_id": self.resolved_manager().env_id,
             "manager_snapshots_enabled": self.infra.manager.snapshots_enabled,
             "manager_snapshot_cache_max_entries": self.infra.manager.snapshot_cache_max_entries,
             "manager_use_jailer": self.infra.manager.use_jailer,
@@ -524,6 +529,7 @@ class GRLConfig(TrainingGRLConfig):
                 "grpo",
                 "trainer",
                 "workers",
+                "weight_sync",
                 "rollout",
                 "pipeline",
                 "environment",

@@ -1,14 +1,18 @@
 import React from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Alert, Badge, Collapse, Modal, Stack, Text, useStyles2 } from '@grafana/ui';
+import { Alert, Badge, Button, Collapse, Modal, Stack, Text, useStyles2 } from '@grafana/ui';
 import { ParsedTrajectory, ToolCall, TranscriptExchange } from '../parsing';
 import { TrajectoryRow, formatTime } from './rows';
 
 interface Props {
   row: TrajectoryRow;
   parsed: ParsedTrajectory;
+  tracePosition: number;
+  traceCount: number;
   onDismiss: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
 }
 
 function formatArgs(call: ToolCall): string {
@@ -17,7 +21,15 @@ function formatArgs(call: ToolCall): string {
     .join('\n\n');
 }
 
-export const TraceModal: React.FC<Props> = ({ row, parsed, onDismiss }) => {
+export const TraceModal: React.FC<Props> = ({
+  row,
+  parsed,
+  tracePosition,
+  traceCount,
+  onDismiss,
+  onPrevious,
+  onNext,
+}) => {
   const styles = useStyles2(getStyles);
   const title = [
     row.taskId ? `Task ${row.taskId}` : 'Trajectory',
@@ -28,22 +40,18 @@ export const TraceModal: React.FC<Props> = ({ row, parsed, onDismiss }) => {
     .join(' · ');
 
   return (
-    <Modal
-      title={title}
-      isOpen
-      onDismiss={onDismiss}
-      className={styles.modal}
-      contentClassName={styles.modalContent}
-    >
+    <Modal title={title} isOpen onDismiss={onDismiss} className={styles.modal} contentClassName={styles.modalContent}>
       <div data-testid="trace-modal" className={styles.body}>
         <div className={styles.meta}>
           <Text variant="bodySmall" color="secondary">
             {formatTime(row.time)}
-            {row.reward != null ? ` · reward ${row.reward}` : ''}
             {row.numTurns != null ? ` · ${row.numTurns} turns` : ''}
             {row.promptTokens != null || row.responseTokens != null
               ? ` · tokens ${row.promptTokens ?? '—'}/${row.responseTokens ?? '—'}`
               : ''}
+          </Text>
+          <Text element="p" weight="medium" data-testid="trace-reward">
+            Reward: {row.reward ?? '—'}
           </Text>
         </div>
 
@@ -85,14 +93,39 @@ export const TraceModal: React.FC<Props> = ({ row, parsed, onDismiss }) => {
           </div>
         </section>
       </div>
+      <Modal.ButtonRow
+        leftItems={
+          <Text color="secondary">
+            Trace {tracePosition} of {traceCount}
+          </Text>
+        }
+      >
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={tracePosition === 1}
+          onClick={onPrevious}
+          data-testid="previous-trace-button"
+        >
+          Previous trace
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={tracePosition === traceCount}
+          onClick={onNext}
+          data-testid="next-trace-button"
+        >
+          Next trace
+        </Button>
+      </Modal.ButtonRow>
     </Modal>
   );
 };
 
 const ExchangeRow: React.FC<{ exchange: TranscriptExchange; index: number }> = ({ exchange, index }) => {
   const styles = useStyles2(getStyles);
-  const missingResponse =
-    exchange.toolCalls.length > 0 && exchange.toolResults.length === 0;
+  const missingResponse = exchange.toolCalls.length > 0 && exchange.toolResults.length === 0;
 
   return (
     <div className={styles.exchange} data-testid={`trace-exchange-${index}`}>
@@ -140,9 +173,7 @@ const ExchangeRow: React.FC<{ exchange: TranscriptExchange; index: number }> = (
             No tool response in this trajectory body.
           </Text>
         )}
-        {exchange.toolCalls.length === 0 && exchange.toolResults.length === 0 && (
-          <Text color="secondary">—</Text>
-        )}
+        {exchange.toolCalls.length === 0 && exchange.toolResults.length === 0 && <Text color="secondary">—</Text>}
       </div>
     </div>
   );

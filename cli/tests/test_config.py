@@ -38,6 +38,14 @@ def test_training_payload_excludes_infra():
     assert "compute" not in payload
     assert payload["telemetry"]["run_id"] == "grl-test"
     assert payload["workers"]["num_rollout_workers"] == 1
+    assert payload["weight_sync"]["backend"] == "auto"
+
+
+def test_training_payload_preserves_weight_sync_backend():
+    config = GRLConfig.model_validate(
+        {"model": "org/model", "weight_sync": {"backend": "nccl"}}
+    )
+    assert config.training_payload(run_id="grl-test")["weight_sync"] == {"backend": "nccl"}
 
 
 def test_training_payload_derives_rollout_workers():
@@ -133,6 +141,8 @@ def test_terraform_vars_from_resolved_images():
     config = GRLConfig.model_validate(
         {
             "model": "org/model",
+            "telemetry": {"run_id": "run-123"},
+            "environment": {"id": "string-reverse"},
             "compute": {
                 "training": {
                     "instance_type": "g5.12xlarge",
@@ -151,6 +161,8 @@ def test_terraform_vars_from_resolved_images():
     vars_ = config.terraform_vars(resolved)
     assert vars_["ray_head_image"] == "reg/training-head:1"
     assert vars_["manager_image"] == "reg/manager:1"
+    assert vars_["manager_run_id"] == "run-123"
+    assert vars_["manager_env_id"] == "string-reverse"
     assert vars_["node_groups"]["training"]["instance_types"] == ["g5.12xlarge"]
     assert vars_["node_groups"]["environments"]["instance_types"] == ["c5.metal"]
     assert vars_["ray_training_gpus_per_node"] == 4

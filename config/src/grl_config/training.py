@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -53,6 +53,16 @@ class WorkersConfig(BaseModel):
     num_rollout_workers: int | None = None
     """Ray RolloutWorker actors. None = derive from compute capacity at launch."""
     max_in_flight_rollouts: int = 32
+
+
+class WeightSyncConfig(BaseModel):
+    """Transport used to move a newly-trained policy to rollout engines.
+
+    ``auto`` performs one NCCL preflight before work starts and uses the Ray
+    object-store path for the entire run if that preflight cannot be completed.
+    """
+
+    backend: Literal["auto", "nccl", "ray"] = "auto"
 
 
 class RolloutConfig(BaseModel):
@@ -183,6 +193,7 @@ class GRLConfig(BaseModel):
     grpo: GRPOConfig = Field(default_factory=GRPOConfig)
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     workers: WorkersConfig = Field(default_factory=WorkersConfig)
+    weight_sync: WeightSyncConfig = Field(default_factory=WeightSyncConfig)
     rollout: RolloutConfig = Field(default_factory=RolloutConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)

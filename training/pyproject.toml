@@ -42,11 +42,12 @@ grl-proto = { path = "../proto" }
 training = [
     "torch>=2.5.0",
     "transformers>=4.46",
+    "vllm==0.22.0",
 ]
 rollouts = [
     "renderers>=0.1.6",
     "transformers>=4.46",
-    "vllm>=0.8.0",
+    "vllm==0.22.0",
 ]
 
 [project.scripts]

@@ -257,6 +257,7 @@ class RolloutWorker:
             from vllm import AsyncLLMEngine as AsyncLLM
 
         rollout = cfg.rollout
+        self.weight_sync_backend = cfg.weight_sync.backend
         model_id = cfg.model
         model_path = cfg.resolved_model_path()
 
@@ -289,6 +290,13 @@ class RolloutWorker:
             max_num_seqs=rollout.max_num_seqs,
             language_model_only=rollout.language_model_only,
         )
+        if self.weight_sync_backend == "nccl":
+            # This is intentionally omitted for Ray mode: vLLM only constructs
+            # its NCCL receiver when the effective transport selected at startup
+            # is NCCL.
+            from vllm.config import WeightTransferConfig
+
+            engine_args.weight_transfer_config = WeightTransferConfig(backend="nccl")
         if rollout.tensor_parallel_size > 1:
             engine_args.tensor_parallel_size = rollout.tensor_parallel_size
             engine_args.distributed_executor_backend = "mp"
@@ -356,6 +364,49 @@ class RolloutWorker:
 
         state_dict = await asyncio.to_thread(ray.get, weights_ref.ref)
         await self._reload_vllm_weights(policy_version, state_dict)
+
+    async def init_nccl_weight_transfer(
+        self,
+        master_address: str,
+        master_port: int,
+        rank_offset: int,
+        world_size: int,
+    ) -> None:
+        """Join the shared trainer/rollout NCCL group before generation starts."""
+        if self.weight_sync_backend != "nccl":
+            raise RuntimeError("NCCL initialization requested for a Ray rollout worker")
+        await self.engine.collective_rpc(
+            "init_weight_transfer_engine",
+            kwargs={
+                "init_info": {
+                    "master_address": master_address,
+                    "master_port": master_port,
+                    "rank_offset": rank_offset,
+                    "world_size": world_size,
+                }
+            },
+        )
+
+    async def start_nccl_weight_update(self) -> None:
+        """Quiesce inference and put every vLLM rank in an update session."""
+        await self.engine.pause_generation(mode="keep", clear_cache=True)
+        try:
+            await self.engine.collective_rpc("start_weight_update")
+        except Exception:
+            await self.engine.resume_generation()
+            raise
+
+    async def receive_nccl_weights(self, metadata: dict[str, Any]) -> None:
+        """Enter vLLM's NCCL receives; this runs alongside the trainer send."""
+        await self.engine.collective_rpc("update_weights", kwargs={"update_info": metadata})
+
+    async def finish_nccl_weight_update(self, policy_version: int) -> None:
+        """Commit a fully received policy, then make it eligible for generation."""
+        try:
+            await self.engine.collective_rpc("finish_weight_update")
+            self.policy_version = policy_version
+        finally:
+            await self.engine.resume_generation()
 
     async def _reload_vllm_weights(
         self,

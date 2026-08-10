@@ -13,6 +13,7 @@ from unittest.mock import patch
 from opentelemetry.metrics import Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation
 
 from training import telemetry
 
@@ -71,6 +72,26 @@ class TelemetryDisabledTests(unittest.TestCase):
             response="yo",
         )
 
+    def test_resource_attributes_include_kubernetes_identity_when_available(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "GRL_POD_NAME": "grl-training-abc",
+                "GRL_POD_UID": "pod-uid",
+                "GRL_POD_NAMESPACE": "default",
+                "GRL_NODE_NAME": "gpu-node-1",
+            },
+            clear=False,
+        ):
+            attributes = telemetry.resource_attributes("training", "run-123")
+
+        self.assertEqual(attributes["service.name"], "grl-training")
+        self.assertEqual(attributes["run.id"], "run-123")
+        self.assertEqual(attributes["k8s.pod.name"], "grl-training-abc")
+        self.assertEqual(attributes["k8s.pod.uid"], "pod-uid")
+        self.assertEqual(attributes["k8s.namespace.name"], "default")
+        self.assertEqual(attributes["k8s.node.name"], "gpu-node-1")
+
 
 class TelemetryInstrumentTests(unittest.TestCase):
     """With a real (in-memory) meter the helpers emit the expected instruments."""
@@ -102,6 +123,20 @@ class TelemetryInstrumentTests(unittest.TestCase):
             "grl.test.obs",
         ):
             self.assertIn(expected, names)
+
+
+class TelemetryHistogramViewTests(unittest.TestCase):
+    def test_rpc_duration_views_use_10ms_buckets_through_two_seconds(self) -> None:
+        views = telemetry._rpc_duration_views()
+        self.assertEqual(len(views), 1)
+        self.assertEqual(telemetry.RPC_DURATION_BUCKETS[0], 0.0)
+        self.assertEqual(telemetry.RPC_DURATION_BUCKETS[1], 0.01)
+        self.assertEqual(telemetry.RPC_DURATION_BUCKETS[-1], 2.0)
+        self.assertEqual(len(telemetry.RPC_DURATION_BUCKETS), 201)
+        for view in views:
+            aggregation = view._aggregation
+            self.assertIsInstance(aggregation, ExplicitBucketHistogramAggregation)
+            self.assertEqual(tuple(aggregation._boundaries), telemetry.RPC_DURATION_BUCKETS)
 
 
 if __name__ == "__main__":

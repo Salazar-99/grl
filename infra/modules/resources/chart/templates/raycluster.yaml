@@ -57,6 +57,10 @@ spec:
             - name: ray-worker
               image: {{ .Values.rayCluster.images.rollouts | quote }}
               env:
+                - name: GRL_POD_IP
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: status.podIP
                 - name: OTEL_EXPORTER_OTLP_ENDPOINT
                   value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
                 - name: GRL_VLLM_METRICS_PORT
@@ -113,6 +117,26 @@ spec:
             - name: ray-worker
               image: {{ .Values.rayCluster.images.training | quote }}
               env:
+                - name: GRL_POD_IP
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: status.podIP
+                - name: GRL_POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: GRL_POD_UID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.uid
+                - name: GRL_POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: GRL_NODE_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
                 - name: OTEL_EXPORTER_OTLP_ENDPOINT
                   value: http://{{ .Values.otelCollector.name }}-collector.{{ .Values.otelCollector.namespace }}.svc:4317
               {{- if .Values.modelCache.tag }}

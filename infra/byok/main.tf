@@ -18,6 +18,8 @@ module "resources" {
   ray_training_image                 = var.ray_training_image
   ray_version                        = var.ray_version
   manager_image                      = var.manager_image
+  manager_run_id                     = var.manager_run_id
+  manager_env_id                     = var.manager_env_id
   manager_snapshots_enabled          = var.manager_snapshots_enabled
   manager_snapshot_cache_max_entries = var.manager_snapshot_cache_max_entries
   manager_use_jailer                 = var.manager_use_jailer

@@ -36,6 +36,8 @@ resource "helm_release" "resources" {
       }
       manager = {
         image                   = var.manager_image
+        runId                   = var.manager_run_id
+        envId                   = var.manager_env_id
         snapshotsEnabled        = var.manager_snapshots_enabled
         snapshotCacheMaxEntries = var.manager_snapshot_cache_max_entries
         useJailer               = var.manager_use_jailer

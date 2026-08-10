@@ -3045,6 +3045,7 @@ rollouts = [
 training = [
     { name = "torch" },
     { name = "transformers" },
+    { name = "vllm" },
 ]
 
 [package.dev-dependencies]
@@ -3070,7 +3071,8 @@ requires-dist = [
     { name = "torch", marker = "extra == 'training'", specifier = ">=2.5.0" },
     { name = "transformers", marker = "extra == 'rollouts'", specifier = ">=4.46" },
     { name = "transformers", marker = "extra == 'training'", specifier = ">=4.46" },
-    { name = "vllm", marker = "extra == 'rollouts'", specifier = ">=0.8.0" },
+    { name = "vllm", marker = "extra == 'rollouts'", specifier = "==0.22.0" },
+    { name = "vllm", marker = "extra == 'training'", specifier = "==0.22.0" },
 ]
 provides-extras = ["training", "rollouts"]
 

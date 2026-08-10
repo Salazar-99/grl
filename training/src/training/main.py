@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import logging
 import random
 import time
 import uuid
@@ -18,8 +19,12 @@ from training.telemetry import (
     histogram,
     init_telemetry,
     observable_gauge,
+    record_duration,
 )
 from training.types import RolloutRequest, RolloutResult, TrainingBatch
+
+logger = logging.getLogger(__name__)
+NCCL_STARTUP_TIMEOUT_SECS = 120.0
 
 
 @dataclass
@@ -340,28 +345,102 @@ async def trainer_loop(
             return policy_updates
 
 
-async def run(config: GRLConfig, run_id: str) -> None:
-    # Import worker classes only when spawning actors so the head image does
-    # not load rollouts/training implementation modules at process start.
+def _weight_sync_payload(config: GRLConfig, backend: str) -> dict[str, Any]:
+    payload = config.model_dump()
+    payload.setdefault("weight_sync", {})["backend"] = backend
+    return payload
+
+
+def _spawn_workers(
+    config: GRLConfig, run_id: str, backend: str
+) -> tuple[ray.actor.ActorHandle, list[ray.actor.ActorHandle]]:
     from training.rollouts import RolloutWorker
     from training.trainer import TrainingWorker
 
-    ray.init(ignore_reinit_error=config.ray.ignore_reinit_error)
-
-    config_payload = config.model_dump()
+    payload = _weight_sync_payload(config, backend)
     tp = config.rollout.tensor_parallel_size
     num_rollout_workers = config.workers.num_rollout_workers or 1
     rollout_workers = [
-        RolloutWorker.options(
-            num_gpus=tp,
-            resources={ROLLOUTS_RESOURCE: tp},
-        ).remote(config_payload, run_id=run_id)
+        RolloutWorker.options(num_gpus=tp, resources={ROLLOUTS_RESOURCE: tp}).remote(
+            payload, run_id=run_id
+        )
         for _ in range(num_rollout_workers)
     ]
     training_worker = TrainingWorker.options(
-        num_gpus=1,
-        resources={TRAINING_RESOURCE: 1},
-    ).remote(config_payload, run_id=run_id)
+        num_gpus=1, resources={TRAINING_RESOURCE: 1}
+    ).remote(payload, run_id=run_id)
+    return training_worker, rollout_workers
+
+
+async def _initialize_nccl_weight_sync(
+    training_worker: ray.actor.ActorHandle,
+    rollout_workers: list[ray.actor.ActorHandle],
+    *,
+    tensor_parallel_size: int,
+) -> None:
+    """Bring up one fixed NCCL group before any rollout can be scheduled."""
+    world_size = 1 + len(rollout_workers) * tensor_parallel_size
+    attributes = {
+        "backend": "nccl",
+        "rollout_worker_count": len(rollout_workers),
+        "tensor_parallel_size": tensor_parallel_size,
+        "nccl_world_size": world_size,
+    }
+    try:
+        with record_duration("grl.train.weight_sync.nccl.setup.duration", **attributes):
+            address, port = await _get(training_worker.nccl_rendezvous.remote())
+            joins = [
+                worker.init_nccl_weight_transfer.remote(
+                    address, port, 1 + index * tensor_parallel_size, world_size
+                )
+                for index, worker in enumerate(rollout_workers)
+            ]
+            # Submit rollout joins before rank zero opens the TCP store. Both sides are
+            # awaited together so a blocked rendezvous has one bounded failure surface.
+            trainer_join = training_worker.init_nccl_weight_transfer.remote(
+                address, port, world_size
+            )
+            await asyncio.wait_for(
+                asyncio.gather(_get(trainer_join), *(_get(join) for join in joins)),
+                timeout=NCCL_STARTUP_TIMEOUT_SECS,
+            )
+    except Exception:
+        counter("grl.train.weight_sync.nccl.failures").add(1, {**attributes, "phase": "setup"})
+        raise
+
+
+def _kill_workers(
+    training_worker: ray.actor.ActorHandle,
+    rollout_workers: list[ray.actor.ActorHandle],
+) -> None:
+    for worker in [training_worker, *rollout_workers]:
+        ray.kill(worker, no_restart=True)
+
+
+async def run(config: GRLConfig, run_id: str) -> None:
+    # Import worker classes only when spawning actors so the head image does
+    # not load rollouts/training implementation modules at process start.
+    ray.init(ignore_reinit_error=config.ray.ignore_reinit_error)
+    requested_backend = config.weight_sync.backend
+    effective_backend = "ray" if requested_backend == "ray" else "nccl"
+    training_worker, rollout_workers = _spawn_workers(config, run_id, effective_backend)
+    if effective_backend == "nccl":
+        try:
+            await _initialize_nccl_weight_sync(
+                training_worker,
+                rollout_workers,
+                tensor_parallel_size=config.rollout.tensor_parallel_size,
+            )
+        except Exception as exc:
+            if requested_backend == "nccl":
+                _kill_workers(training_worker, rollout_workers)
+                raise RuntimeError("NCCL weight-sync setup failed") from exc
+            _kill_workers(training_worker, rollout_workers)
+            logger.warning(
+                "weight_sync_auto_fallback",
+                extra={"event": "weight_sync_auto_fallback", "reason": str(exc)},
+            )
+            training_worker, rollout_workers = _spawn_workers(config, run_id, "ray")
 
     rpc_timeouts = RpcTimeouts.from_config(config.environment.rpc_timeouts)
     task_ids = await list_task_ids(

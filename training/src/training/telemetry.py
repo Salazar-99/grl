@@ -52,6 +52,7 @@ from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -66,10 +67,49 @@ _INITIALIZED = False
 # can miss a whole short rollout burst; collect once per second instead.
 _METRIC_EXPORT_INTERVAL_MILLIS = 1_000
 
+# The OpenTelemetry default histogram buckets jump from 0 to 5 seconds.  That
+# makes the RPC p50/p95 dashboard render every normal request as 5 s, even
+# when it completed in milliseconds.  Keep the fine-grained buckets narrowly
+# scoped to the two RPC duration instruments; the other histograms retain
+# their existing distributions and cardinality.
+_RPC_DURATION_METRIC_NAMES = ("grl.env.rpc.duration",)
+RPC_DURATION_BUCKETS = tuple(step / 100 for step in range(201))
+
+
+def _rpc_duration_views() -> tuple[View, ...]:
+    """Return 10 ms buckets from 0 through 2 s for RPC latency histograms.
+
+    Explicit histogram boundaries also retain an implicit ``+Inf`` bucket, so
+    slow RPCs are still recorded rather than discarded.
+    """
+    return tuple(
+        View(
+            instrument_name=name,
+            aggregation=ExplicitBucketHistogramAggregation(
+                boundaries=RPC_DURATION_BUCKETS
+            ),
+        )
+        for name in _RPC_DURATION_METRIC_NAMES
+    )
+
 # Held so ``log_trajectory`` can emit through a provider whose Resource carries
 # ``run.id`` (the trajectory MV keys on it). ``None`` until ``init_telemetry``
 # runs with an endpoint, which is also how ``log_trajectory`` knows it's disabled.
 _LOGGER_PROVIDER: LoggerProvider | None = None
+
+
+def resource_attributes(role: str, run_id: str) -> dict[str, str]:
+    """Return stable service and Kubernetes identity attributes for this process."""
+    attributes = {"service.name": f"grl-{role}", "grl.role": role, "run.id": run_id}
+    for environment_name, attribute_name in (
+        ("GRL_POD_NAME", "k8s.pod.name"),
+        ("GRL_POD_UID", "k8s.pod.uid"),
+        ("GRL_POD_NAMESPACE", "k8s.namespace.name"),
+        ("GRL_NODE_NAME", "k8s.node.name"),
+    ):
+        if value := os.environ.get(environment_name):
+            attributes[attribute_name] = value
+    return attributes
 
 
 
@@ -95,9 +135,7 @@ def init_telemetry(
 
     os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
 
-    resource = Resource.create(
-        {"service.name": f"grl-{role}", "grl.role": role, "run.id": run_id}
-    )
+    resource = Resource.create(resource_attributes(role, run_id))
 
     tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
@@ -111,6 +149,7 @@ def init_telemetry(
                 export_interval_millis=_METRIC_EXPORT_INTERVAL_MILLIS,
             )
         ],
+        views=_rpc_duration_views(),
     )
     metrics.set_meter_provider(meter_provider)
 

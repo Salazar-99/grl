@@ -17,6 +17,13 @@ def test_default_grl_config():
     assert config.environment.server_addr == "localhost:50051"
     assert config.workers.num_rollout_workers is None
     assert config.rollout.tensor_parallel_size == 1
+    assert config.weight_sync.backend == "auto"
+
+
+@pytest.mark.parametrize("backend", ["auto", "nccl", "ray"])
+def test_weight_sync_backend_modes(backend):
+    config = GRLConfig.model_validate({"model": "org/model", "weight_sync": {"backend": backend}})
+    assert config.weight_sync.backend == backend
 
 
 def test_pipeline_max_train_steps_accepts_positive_value():

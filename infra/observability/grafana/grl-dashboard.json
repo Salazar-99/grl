@@ -1172,7 +1172,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -1183,6 +1183,192 @@
         "h": 8
       },
       "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS time,\n       sum(Sum) / nullIf(sum(Count), 0) AS mean\nFROM default.grl_metrics_histogram_landing\nWHERE $__timeFilter(TimeUnix) AND ResourceAttributes['run.id'] = '${run_id}'\n  AND MetricName = 'grl.train.weight_sync.nccl.setup.duration'\nGROUP BY time\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "NCCL setup duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 33,
+        "w": 8,
+        "h": 8
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT t AS time, series, greatest(0, v - lagInFrame(v) OVER (PARTITION BY series ORDER BY t)) AS delta\nFROM (\n  SELECT toStartOfInterval(TimeUnix, INTERVAL 30 SECOND) AS t,\n         Attributes['phase'] AS series, max(Value) AS v\n  FROM default.grl_metrics\n  WHERE $__timeFilter(TimeUnix) AND RunId = '${run_id}'\n    AND MetricName = 'grl.train.weight_sync.nccl.failures'\n  GROUP BY t, series\n)\nORDER BY t",
+          "refId": "A"
+        }
+      ],
+      "title": "NCCL failures / 30s (by phase)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 33,
+        "w": 8,
+        "h": 8
+      },
+      "id": 16,
       "options": {
         "legend": {
           "calcs": [
@@ -1221,7 +1407,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 15,
+      "id": 17,
       "title": "Rollouts",
       "type": "row",
       "panels": []
@@ -1288,7 +1474,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 16,
+      "id": 18,
       "options": {
         "legend": {
           "calcs": [
@@ -1381,7 +1567,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 17,
+      "id": 19,
       "options": {
         "legend": {
           "calcs": [
@@ -1474,7 +1660,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 18,
+      "id": 20,
       "options": {
         "legend": {
           "calcs": [
@@ -1567,7 +1753,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 19,
+      "id": 21,
       "options": {
         "legend": {
           "calcs": [
@@ -1660,7 +1846,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 20,
+      "id": 22,
       "options": {
         "legend": {
           "calcs": [
@@ -1753,7 +1939,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 21,
+      "id": 23,
       "options": {
         "legend": {
           "calcs": [
@@ -1846,7 +2032,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 22,
+      "id": 24,
       "options": {
         "legend": {
           "calcs": [
@@ -1885,7 +2071,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 23,
+      "id": 25,
       "title": "vLLM",
       "type": "row",
       "panels": []
@@ -1952,7 +2138,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 24,
+      "id": 26,
       "options": {
         "legend": {
           "calcs": [
@@ -2045,7 +2231,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 25,
+      "id": 27,
       "options": {
         "legend": {
           "calcs": [
@@ -2138,7 +2324,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 26,
+      "id": 28,
       "options": {
         "legend": {
           "calcs": [
@@ -2231,7 +2417,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 27,
+      "id": 29,
       "options": {
         "legend": {
           "calcs": [
@@ -2324,7 +2510,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 28,
+      "id": 30,
       "options": {
         "legend": {
           "calcs": [
@@ -2417,7 +2603,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 29,
+      "id": 31,
       "options": {
         "legend": {
           "calcs": [
@@ -2510,7 +2696,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 30,
+      "id": 32,
       "options": {
         "legend": {
           "calcs": [
@@ -2549,7 +2735,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 31,
+      "id": 33,
       "title": "Pipeline",
       "type": "row",
       "panels": []
@@ -2616,7 +2802,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 32,
+      "id": 34,
       "options": {
         "legend": {
           "calcs": [
@@ -2709,7 +2895,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 33,
+      "id": 35,
       "options": {
         "legend": {
           "calcs": [
@@ -2802,7 +2988,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 34,
+      "id": 36,
       "options": {
         "legend": {
           "calcs": [
@@ -2895,7 +3081,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 35,
+      "id": 37,
       "options": {
         "legend": {
           "calcs": [
@@ -2988,7 +3174,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 36,
+      "id": 38,
       "options": {
         "legend": {
           "calcs": [
@@ -3027,7 +3213,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 37,
+      "id": 39,
       "title": "Manager / Environment",
       "type": "row",
       "panels": []
@@ -3094,7 +3280,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 38,
+      "id": 40,
       "options": {
         "legend": {
           "calcs": [
@@ -3187,7 +3373,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 39,
+      "id": 41,
       "options": {
         "legend": {
           "calcs": [
@@ -3280,7 +3466,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 40,
+      "id": 42,
       "options": {
         "legend": {
           "calcs": [
@@ -3373,7 +3559,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 41,
+      "id": 43,
       "options": {
         "legend": {
           "calcs": [
@@ -3466,7 +3652,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 42,
+      "id": 44,
       "options": {
         "legend": {
           "calcs": [
@@ -3559,7 +3745,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 43,
+      "id": 45,
       "options": {
         "legend": {
           "calcs": [
@@ -3652,7 +3838,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 44,
+      "id": 46,
       "options": {
         "legend": {
           "calcs": [
@@ -3745,7 +3931,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 45,
+      "id": 47,
       "options": {
         "legend": {
           "calcs": [
@@ -3838,7 +4024,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 46,
+      "id": 48,
       "options": {
         "legend": {
           "calcs": [
@@ -3931,7 +4117,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 47,
+      "id": 49,
       "options": {
         "legend": {
           "calcs": [
@@ -4024,7 +4210,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 48,
+      "id": 50,
       "options": {
         "legend": {
           "calcs": [
@@ -4117,7 +4303,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 49,
+      "id": 51,
       "options": {
         "legend": {
           "calcs": [
@@ -4210,7 +4396,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 50,
+      "id": 52,
       "options": {
         "legend": {
           "calcs": [
@@ -4303,7 +4489,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 51,
+      "id": 53,
       "options": {
         "legend": {
           "calcs": [
@@ -4396,7 +4582,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 52,
+      "id": 54,
       "options": {
         "legend": {
           "calcs": [
@@ -4489,7 +4675,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 53,
+      "id": 55,
       "options": {
         "legend": {
           "calcs": [
@@ -4582,7 +4768,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 54,
+      "id": 56,
       "options": {
         "legend": {
           "calcs": [
@@ -4675,7 +4861,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 55,
+      "id": 57,
       "options": {
         "legend": {
           "calcs": [
@@ -4768,7 +4954,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 56,
+      "id": 58,
       "options": {
         "legend": {
           "calcs": [
@@ -4861,7 +5047,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 57,
+      "id": 59,
       "options": {
         "legend": {
           "calcs": [
@@ -4954,7 +5140,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 58,
+      "id": 60,
       "options": {
         "legend": {
           "calcs": [
@@ -5047,7 +5233,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 59,
+      "id": 61,
       "options": {
         "legend": {
           "calcs": [
@@ -5140,7 +5326,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 60,
+      "id": 62,
       "options": {
         "legend": {
           "calcs": [
@@ -5233,7 +5419,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 61,
+      "id": 63,
       "options": {
         "legend": {
           "calcs": [
@@ -5326,7 +5512,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 62,
+      "id": 64,
       "options": {
         "legend": {
           "calcs": [
@@ -5365,7 +5551,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 63,
+      "id": 65,
       "title": "Network",
       "type": "row",
       "panels": []
@@ -5432,7 +5618,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 64,
+      "id": 66,
       "options": {
         "legend": {
           "calcs": [
@@ -5525,7 +5711,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 65,
+      "id": 67,
       "options": {
         "legend": {
           "calcs": [
@@ -5618,7 +5804,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 66,
+      "id": 68,
       "options": {
         "legend": {
           "calcs": [
@@ -5711,7 +5897,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 67,
+      "id": 69,
       "options": {
         "legend": {
           "calcs": [
@@ -5804,7 +5990,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 68,
+      "id": 70,
       "options": {
         "legend": {
           "calcs": [
@@ -5897,7 +6083,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 69,
+      "id": 71,
       "options": {
         "legend": {
           "calcs": [
@@ -5936,7 +6122,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 70,
+      "id": 72,
       "title": "GPU",
       "type": "row",
       "panels": []
@@ -6003,7 +6189,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 71,
+      "id": 73,
       "options": {
         "legend": {
           "calcs": [
@@ -6096,7 +6282,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 72,
+      "id": 74,
       "options": {
         "legend": {
           "calcs": [
@@ -6189,7 +6375,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 73,
+      "id": 75,
       "options": {
         "legend": {
           "calcs": [
@@ -6282,7 +6468,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 74,
+      "id": 76,
       "options": {
         "legend": {
           "calcs": [
@@ -6375,7 +6561,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 75,
+      "id": 77,
       "options": {
         "legend": {
           "calcs": [
@@ -6468,7 +6654,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 76,
+      "id": 78,
       "options": {
         "legend": {
           "calcs": [
@@ -6507,7 +6693,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 77,
+      "id": 79,
       "title": "Ray",
       "type": "row",
       "panels": []
@@ -6574,7 +6760,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 78,
+      "id": 80,
       "options": {
         "legend": {
           "calcs": [
@@ -6667,7 +6853,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 79,
+      "id": 81,
       "options": {
         "legend": {
           "calcs": [
@@ -6760,7 +6946,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 80,
+      "id": 82,
       "options": {
         "legend": {
           "calcs": [
@@ -6853,7 +7039,7 @@
         "w": 8,
         "h": 8
       },
-      "id": 81,
+      "id": 83,
       "options": {
         "legend": {
           "calcs": [
@@ -6892,7 +7078,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 82,
+      "id": 84,
       "title": "Trajectories",
       "type": "row",
       "panels": []
@@ -6908,7 +7094,7 @@
         "w": 24,
         "h": 24
       },
-      "id": 83,
+      "id": 85,
       "options": {
         "bodyPreviewLength": 60,
         "pageSize": 25
@@ -7009,6 +7195,6 @@
   "timezone": "browser",
   "title": "GRL Training Observability",
   "uid": "grl-training-observability",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }

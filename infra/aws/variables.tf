@@ -196,6 +196,18 @@ variable "manager_image" {
   description = "Environment manager image run as a DaemonSet on environment nodes (environments/manager/Dockerfile)."
 }
 
+variable "manager_run_id" {
+  type        = string
+  default     = ""
+  description = "Resolved launch ID injected into manager telemetry resources."
+}
+
+variable "manager_env_id" {
+  type        = string
+  default     = ""
+  description = "Environment ID injected into manager telemetry resources."
+}
+
 variable "manager_snapshots_enabled" {
   type        = bool
   default     = false

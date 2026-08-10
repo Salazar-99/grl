@@ -21,6 +21,11 @@ workers:
   #   rollouts.nodes × gpus_per_node(instance_type) ÷ rollout.tensor_parallel_size
   max_in_flight_rollouts: 32
 
+# auto tries NCCL once during startup and permanently falls back to Ray if the
+# pod network or NCCL rendezvous is unavailable. Set nccl to require it.
+weight_sync:
+  backend: auto
+
 rollout:
   max_model_len: 8192
   max_num_seqs: 64

@@ -19,6 +19,8 @@ RUN uv sync --no-dev --locked --no-cache
 CMD ["training"]
 
 FROM base AS training
+# Keep this in lockstep with the rollout image: NCCL transfer uses vLLM's
+# public weight-transfer API on both sides of the group.
 RUN uv sync --extra training --no-dev --locked --no-cache
 
 FROM base AS rollouts

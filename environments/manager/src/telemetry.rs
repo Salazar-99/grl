@@ -15,12 +15,32 @@ use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
+use opentelemetry_sdk::metrics::{
+    Aggregation, Instrument, PeriodicReader, SdkMeterProvider, Stream,
+};
 use opentelemetry_sdk::{Resource, runtime};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tonic::Status;
 
 const METER_NAME: &str = "grl.manager";
+const RPC_DURATION_METRIC: &str = "grl.manager.rpc.duration";
+
+/// 10 ms boundaries from zero through two seconds. Histograms retain their
+/// implicit +Inf bucket for slower calls.
+fn rpc_duration_buckets() -> Vec<f64> {
+    (0..=200).map(|step| f64::from(step) / 100.0).collect()
+}
+
+/// OpenTelemetry's default histogram buckets jump from 0 directly to 5 s,
+/// which turns ordinary millisecond RPCs into an unhelpful flat 5 s p50/p95.
+fn rpc_duration_view(instrument: &Instrument) -> Option<Stream> {
+    (instrument.name == RPC_DURATION_METRIC).then(|| {
+        Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
+            boundaries: rpc_duration_buckets(),
+            record_min_max: true,
+        })
+    })
+}
 
 /// Holds the provider so the periodic reader keeps flushing for the process
 /// lifetime; `shutdown()` on drop force-flushes whatever is still buffered.
@@ -55,6 +75,7 @@ pub fn init_telemetry(role: &str) -> Option<TelemetryGuard> {
 
     let provider = SdkMeterProvider::builder()
         .with_reader(reader)
+        .with_view(rpc_duration_view)
         .with_resource(resource)
         .build();
 
@@ -142,5 +163,14 @@ mod tests {
             empty.iter().find(|attr| attr.key.as_str() == "run.id").unwrap().value.to_string(),
             "",
         );
+    }
+
+    #[test]
+    fn rpc_duration_buckets_are_10ms_through_two_seconds() {
+        let buckets = rpc_duration_buckets();
+        assert_eq!(buckets.len(), 201);
+        assert_eq!(buckets.first(), Some(&0.0));
+        assert_eq!(buckets.get(1), Some(&0.01));
+        assert_eq!(buckets.last(), Some(&2.0));
     }
 }

@@ -89,6 +89,18 @@ The binding is a **custom Ray resource**: each worker group advertises a uniquel
 
 The mapping is defined in three places that must agree on the names: the provider node groups (e.g. [`infra/aws/modules/cluster`](infra/aws/modules/cluster)), the RayCluster worker groups ([`infra/modules/resources/chart/templates/raycluster.yaml`](infra/modules/resources/chart/templates/raycluster.yaml)), and the actor decorators in [`training/src/training/`](training/src/training/). Per-role images are built from [`training/Dockerfile`](training/Dockerfile) (one build target per role, each installing only that role's `uv` extra).
 
+### Weight synchronization networking
+
+`weight_sync.backend: auto` first attempts vLLM's NCCL weight-transfer group,
+using the training pod IP (`GRL_POD_IP`) and a fresh rendezvous port. EKS with
+the VPC CNI needs no additional Service, host networking, or default
+NetworkPolicy. Hardened clusters must allow TCP between pods labelled
+`role=training` and `role=rollouts`, including dynamic rendezvous and peer
+ports. If that setup is unavailable, `auto` logs `weight_sync_auto_fallback`
+and uses the Ray object-store reload path for the rest of the run; explicit
+`nccl` instead fails before training starts. NCCL chooses its pod-visible
+interface itself, so GRL does not set `NCCL_SOCKET_IFNAME`.
+
 The umbrella chart also deploys node-local caches: a model cache on GPU nodes and a VM image cache on environment nodes (base/task images plus the active bundle's `tasks.jsonl`, synced from S3).
 
 ## Environments

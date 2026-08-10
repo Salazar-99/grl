@@ -15,16 +15,19 @@ interface SelectedTrace {
   parsed: ParsedTrajectory;
 }
 
-type SortKey = 'time' | 'taskId' | 'groupId' | 'rolloutIndex' | 'reward' | 'numTurns' | 'doneReason' | 'promptTokens' | 'responseTokens';
+type SortKey =
+  | 'time'
+  | 'taskId'
+  | 'groupId'
+  | 'rolloutIndex'
+  | 'reward'
+  | 'numTurns'
+  | 'doneReason'
+  | 'promptTokens'
+  | 'responseTokens';
 type SortDirection = 'asc' | 'desc';
 
-const numericSortKeys = new Set<SortKey>([
-  'rolloutIndex',
-  'reward',
-  'numTurns',
-  'promptTokens',
-  'responseTokens',
-]);
+const numericSortKeys = new Set<SortKey>(['rolloutIndex', 'reward', 'numTurns', 'promptTokens', 'responseTokens']);
 
 function compareRows(left: TrajectoryRow, right: TrajectoryRow, key: SortKey): number {
   const leftValue = left[key];
@@ -63,10 +66,11 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
   const previewLen = options.bodyPreviewLength > 0 ? options.bodyPreviewLength : 60;
   const pageSize = Math.max(1, Math.floor(options.pageSize || 25));
   const sortedRows = useMemo(
-    () => [...rows].sort((left, right) => {
-      const comparison = compareRows(left, right, sortKey);
-      return sortDirection === 'asc' ? comparison : -comparison;
-    }),
+    () =>
+      [...rows].sort((left, right) => {
+        const comparison = compareRows(left, right, sortKey);
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }),
     [rows, sortDirection, sortKey]
   );
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
@@ -92,7 +96,8 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
     return (
       <th aria-sort={active ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>
         <button className={styles.sortButton} onClick={() => changeSort(key)} type="button">
-          {label}{arrow}
+          {label}
+          {arrow}
         </button>
       </th>
     );
@@ -105,12 +110,22 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
     });
   };
 
+  const selectedIndex = selected ? sortedRows.findIndex((row) => row.index === selected.row.index) : -1;
+
+  const selectTraceAt = (index: number) => {
+    const row = sortedRows[index];
+    if (row) {
+      openTrace(row);
+    }
+  };
+
   return (
-    <div
-      className={styles.wrapper}
-      style={{ width, height }}
-      data-testid="trajectories-panel"
-    >
+    <div className={styles.wrapper} style={{ width, height }} data-testid="trajectories-panel">
+      <div className={styles.header}>
+        <Button variant="secondary" size="sm" onClick={() => selectTraceAt(0)} data-testid="view-trajectories-button">
+          View Trajectories
+        </Button>
+      </div>
       <div className={styles.tableWrap}>
         <table className={styles.table}>
           <thead>
@@ -139,12 +154,15 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
                 <td>{row.doneReason ?? '—'}</td>
                 <td>{row.promptTokens ?? '—'}</td>
                 <td>{row.responseTokens ?? '—'}</td>
-                <td>
+                <td className={styles.bodyCell} onClick={() => openTrace(row)} data-testid="trace-body-cell">
                   <Button
                     variant="secondary"
                     fill="text"
                     size="sm"
-                    onClick={() => openTrace(row)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openTrace(row);
+                    }}
                     data-testid="view-trace-button"
                     aria-label={`View trace for ${row.taskId ?? `row ${row.index}`}`}
                   >
@@ -161,8 +179,15 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
         <Button variant="secondary" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
           Previous
         </Button>
-        <span>Page {currentPage + 1} of {pageCount}</span>
-        <Button variant="secondary" size="sm" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>
+        <span>
+          Page {currentPage + 1} of {pageCount}
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={currentPage >= pageCount - 1}
+          onClick={() => setPage(currentPage + 1)}
+        >
           Next
         </Button>
       </div>
@@ -171,7 +196,11 @@ export const TrajectoriesPanel: React.FC<Props> = ({ options, data, width, heigh
         <TraceModal
           row={selected.row}
           parsed={selected.parsed}
+          tracePosition={selectedIndex + 1}
+          traceCount={sortedRows.length}
           onDismiss={() => setSelected(null)}
+          onPrevious={() => selectTraceAt(selectedIndex - 1)}
+          onNext={() => selectTraceAt(selectedIndex + 1)}
         />
       )}
     </div>
@@ -188,6 +217,11 @@ const getStyles = (theme: GrafanaTheme2) => ({
   tableWrap: css({
     flex: 1,
     overflow: 'auto',
+  }),
+  header: css({
+    display: 'flex',
+    justifyContent: 'flex-end',
+    padding: theme.spacing(1),
   }),
   table: css({
     width: '100%',
@@ -227,5 +261,8 @@ const getStyles = (theme: GrafanaTheme2) => ({
     font: 'inherit',
     fontWeight: 'inherit',
     padding: 0,
+  }),
+  bodyCell: css({
+    cursor: 'pointer',
   }),
 });

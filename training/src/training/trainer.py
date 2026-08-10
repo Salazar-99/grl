@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -206,8 +207,10 @@ class TrainingWorker:
         self.min_rollouts_per_group = cfg.grpo.min_rollouts_per_group
         self.micro_batch_size = cfg.trainer.micro_batch_size
         self.logprob_chunk_size = cfg.trainer.logprob_chunk_size
+        self.weight_sync_backend = cfg.weight_sync.backend
         self.language_model_only = cfg.rollout.language_model_only
         self.rollout_tensor_parallel_size = cfg.rollout.tensor_parallel_size
+        self._nccl_group: Any | None = None
         self.run_id = run_id
         self.checkpoint_bucket_uri = cfg.checkpoint.bucket_uri
         self.checkpoint_interval_steps = cfg.checkpoint.interval_steps
@@ -290,29 +293,29 @@ class TrainingWorker:
             )
             current.set_attribute("loss", loss)
 
-            with span("weight_sync", backend="ray") as current, record_duration(
-                "grl.train.weight_sync.duration", backend="ray"
+            sync_attributes = {
+                "backend": self.weight_sync_backend,
+                "rollout_worker_count": len(rollout_workers),
+                "tensor_parallel_size": self.rollout_tensor_parallel_size,
+                "nccl_world_size": 1 + len(rollout_workers) * self.rollout_tensor_parallel_size,
+            }
+            with span("weight_sync", **sync_attributes) as current, record_duration(
+                "grl.train.weight_sync.duration", **sync_attributes
             ):
-                state_dict = self._weight_sync_state_dict()
-                payload_bytes = weight_payload_bytes(state_dict)
-                current.set_attribute("payload_bytes", payload_bytes)
-                current.set_attribute("rollout_worker_count", len(rollout_workers))
-                current.set_attribute("tensor_parallel_size", self.rollout_tensor_parallel_size)
-                # This is the world size a future NCCL sender will create: one
-                # trainer rank plus each rollout worker's tensor-parallel ranks.
-                current.set_attribute(
-                    "nccl_world_size",
-                    1 + len(rollout_workers) * self.rollout_tensor_parallel_size,
-                )
-                weights_ref = self.send_weights(state_dict)
-                update_refs = []
-                for worker in rollout_workers:
-                    update_refs.append(
-                        worker.apply_policy_update.remote(
-                            self.policy_version, weights_ref
+                if self.weight_sync_backend == "nccl":
+                    self._send_nccl_weights(rollout_workers)
+                else:
+                    state_dict = self._weight_sync_state_dict()
+                    current.set_attribute("payload_bytes", weight_payload_bytes(state_dict))
+                    weights_ref = self.send_weights(state_dict)
+                    update_refs = []
+                    for worker in rollout_workers:
+                        update_refs.append(
+                            worker.apply_policy_update.remote(
+                                self.policy_version, weights_ref
+                            )
                         )
-                    )
-                ray.get(update_refs)
+                    ray.get(update_refs)
             self._record_policy_update_interval()
             self.checkpoint()
             return self.policy_version
@@ -733,6 +736,104 @@ class TrainingWorker:
         if state_dict is None:
             state_dict = self._weight_sync_state_dict()
         return PolicyWeightsRef(ray.put(state_dict))
+
+    def init_nccl_weight_transfer(
+        self, master_address: str, master_port: int, world_size: int
+    ) -> None:
+        """Join rank zero of vLLM's supported NCCL transfer group."""
+        if self.weight_sync_backend != "nccl":
+            raise RuntimeError("NCCL initialization requested for a Ray training worker")
+        from vllm.distributed.weight_transfer.nccl_engine import NCCLWeightTransferEngine
+
+        self._nccl_group = NCCLWeightTransferEngine.trainer_init(
+            {
+                "master_address": master_address,
+                "master_port": master_port,
+                "world_size": world_size,
+            }
+        )
+
+    def nccl_rendezvous(self) -> tuple[str, int]:
+        """Return this training pod's routable address and a fresh TCP port."""
+        address = os.environ.get("GRL_POD_IP")
+        if not address:
+            raise RuntimeError("GRL_POD_IP is required for NCCL weight transfer")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind((address, 0))
+            return address, int(listener.getsockname()[1])
+
+    def _nccl_parameters(self):
+        """Yield the same text-only subset that the Ray reload path writes."""
+        for name, parameter in self.model.named_parameters():
+            if self.language_model_only and not (
+                name.startswith("model.language_model.") or name.startswith("lm_head.")
+            ):
+                continue
+            yield name, parameter
+
+    def _send_nccl_weights(self, rollout_workers: list[ray.actor.ActorHandle]) -> None:
+        """Run one all-or-nothing NCCL transfer transaction.
+
+        Once receivers have entered NCCL, an exception is fatal: attempting a
+        Ray recovery after a partial collective could mix policy versions.
+        """
+        if self._nccl_group is None:
+            raise RuntimeError("NCCL weight transfer was not initialized")
+        from vllm.distributed.weight_transfer.nccl_engine import (
+            NCCLTrainerSendWeightsArgs,
+            NCCLWeightTransferEngine,
+        )
+
+        attributes = {
+            "backend": "nccl",
+            "rollout_worker_count": len(rollout_workers),
+            "tensor_parallel_size": self.rollout_tensor_parallel_size,
+            "nccl_world_size": 1 + len(rollout_workers) * self.rollout_tensor_parallel_size,
+        }
+        metadata = {"names": [], "dtype_names": [], "shapes": [], "packed": True}
+        payload_bytes = 0
+        for name, parameter in self._nccl_parameters():
+            metadata["names"].append(name)
+            metadata["dtype_names"].append(str(parameter.dtype).rsplit(".", 1)[-1])
+            metadata["shapes"].append(list(parameter.shape))
+            payload_bytes += parameter.numel() * parameter.element_size()
+
+        histogram(
+            "grl.train.weight_sync.payload_bytes",
+            unit="By",
+            description="Bytes sent by the trainer in one policy weight update",
+        ).record(payload_bytes, attributes)
+
+        # The control plane is deliberately completed before the data plane;
+        # then every receiver blocks in its NCCL broadcast while we transmit.
+        try:
+            ray.get([worker.start_nccl_weight_update.remote() for worker in rollout_workers])
+        except Exception:
+            counter("grl.train.weight_sync.nccl.failures").add(1, {**attributes, "phase": "prepare"})
+            raise
+        receive_refs = [
+            worker.receive_nccl_weights.remote(metadata) for worker in rollout_workers
+        ]
+        try:
+            with record_duration("grl.train.weight_sync.transfer.duration", **attributes):
+                NCCLWeightTransferEngine.trainer_send_weights(
+                    self._nccl_parameters(),
+                    NCCLTrainerSendWeightsArgs(group=self._nccl_group, packed=True),
+                )
+        except Exception:
+            counter("grl.train.weight_sync.nccl.failures").add(1, {**attributes, "phase": "send"})
+            raise
+        try:
+            ray.get(receive_refs)
+            ray.get(
+                [
+                    worker.finish_nccl_weight_update.remote(self.policy_version)
+                    for worker in rollout_workers
+                ]
+            )
+        except Exception as exc:
+            counter("grl.train.weight_sync.nccl.failures").add(1, {**attributes, "phase": "receive"})
+            raise RuntimeError("fatal NCCL weight-sync collective failure") from exc
 
 
 def weight_payload_bytes(state_dict: dict[str, "torch.Tensor"]) -> int:

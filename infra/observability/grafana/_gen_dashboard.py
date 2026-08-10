@@ -611,6 +611,10 @@ timeseries("NCCL payload throughput",
 timeseries("NCCL sender / end-to-end weight-sync duration",
            q_otlp_hist_avg_multi(["grl.train.weight_sync.transfer.duration",
                                   "grl.train.weight_sync.duration"]), w=8, unit="s")
+timeseries("NCCL setup duration",
+           q_otlp_hist_avg("grl.train.weight_sync.nccl.setup.duration"), w=8, unit="s")
+timeseries("NCCL failures / 30s (by phase)",
+           q_otlp_counter_rate("grl.train.weight_sync.nccl.failures", "phase"), w=8)
 timeseries("Groups dropped / 30s (by reason)",
            q_otlp_counter_rate("grl.train.groups_dropped", "reason"), w=8)
 
@@ -835,7 +839,7 @@ dashboard = {
     # Grafana does not replace a database dashboard with a provisioned file
     # whose version is older. Bump this whenever the generated dashboard
     # changes so an existing Grafana PVC receives the new layout/query.
-    "version": 3,
+    "version": 4,
     "weekStart": "",
 }
 
