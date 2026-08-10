@@ -1,0 +1,202 @@
+launch:
+  dry_run: false
+  preflight_only: false
+  # Deployment layer stack (each builds on the one below):
+  #   CLUSTER -> RESOURCES -> ENVS -> TRAINING
+  # A single layer deploys only itself and requires the layer beneath it to be
+  # present; FULL runs all four in order.
+  deployment_type: FULL
+  # EKS provisions/targets a cluster via infra/aws (client via EKS token);
+  # BYOK targets a pre-existing cluster via launch.infra.kubeconfig (infra/byok).
+  cluster_type: EKS
+  tools:
+    auto_install: true
+    terraform: terraform
+    terraform_version: "1.13.0"
+    helm_version: "3.16.4"
+    kubectl_version: "1.32.0"
+  infra:
+    terraform_dir: infra/aws
+    byok_terraform_dir: infra/byok
+    kubeconfig: null
+    auto_kubeconfig: true
+  environment:
+    verify: true
+  job:
+    force: false
+    wait: false
+    backend: rayjob
+
+# Hardware sizing — single source of truth for nodes, GPUs, and Ray worker pods.
+# The launcher resolves gpus_per_node from instance_type on EKS (AWS EC2 SKU table)
+# and propagates to Terraform node_groups, KubeRay replicas/gpusPerNode, and
+# num_rollout_workers. Optional per role: ami_type (defaults from role),
+# gpus_per_node (required on BYOK or unknown SKUs).
+compute:
+  ray:
+    instance_type: m5.large
+    nodes: 1
+    disk_size: 100
+  rollouts:
+    instance_type: g5.xlarge
+    nodes: 1
+    disk_size: 100
+  training:
+    # One NVIDIA A10G with 24 GiB. This is sufficient for the 0.8B model's
+    # full bf16 AdamW fine-tune with checkpointing and micro-batch size 1.
+    instance_type: g5.xlarge
+    nodes: 1
+    disk_size: 100
+  environments:
+    instance_type: c5.metal
+    nodes: 1
+    disk_size: 100
+
+# Full bf16 AdamW fine-tune on a 24 GiB A10G training node.
+model: Qwen/Qwen3.5-0.8B
+
+environment:
+  id: string-reverse
+  # Immutable environment package for the same release as images.tag.
+  bundle_uri: s3://grl-swebench-lite/datasets/string-reverse/0.28
+  split: train
+  server_addr: grl-manager.default.svc:50051
+  rpc_timeouts:
+    # A cold Firecracker boot copies the 2 GiB scratch template before the
+    # guest initializes; the generic 30-second deadline cancels that copy.
+    create_secs: 300
+
+trainer:
+  # Eight rollouts per forward/backward; grads accumulate across the batch, so
+  # the update is identical to the whole-batch one, only the peak memory differs.
+  micro_batch_size: 8
+  logprob_chunk_size: 512
+  gradient_checkpointing: true
+
+grpo:
+  beta: 0.001
+  epsilon: 0.2
+  learning_rate: 1.0e-6
+  # One GRPO group contains eight samples from one task; the optimizer batch is
+  # four groups (32 rollouts).  The trainer keeps the full batch on host RAM
+  # and processes it one rollout at a time, so peak A10G activation memory is
+  # still controlled by trainer.micro_batch_size below.
+  num_rollouts: 8
+  groups_per_batch: 4
+  min_rollouts_per_group: 2
+  temperature: 1.0
+  top_p: 1.0
+
+workers:
+  # num_rollout_workers is derived from compute unless set explicitly:
+  #   rollouts.nodes × gpus_per_node(instance_type) ÷ rollout.tensor_parallel_size
+  # The rollout node is a 24 GiB A10G. Limit its queue to the number of
+  # long-context sequences it can keep in KV cache.
+  max_in_flight_rollouts: 32
+
+rollout:
+  # 30 turns of explore → read → edit → test → fix only pays off if the context can
+  # hold them: every turn appends the assistant message plus its full tool output.
+  # Budget ~1.5k prompt + 30 × (assistant + bash output) → 32k.
+  max_model_len: 32768
+  max_num_seqs: 32
+  tensor_parallel_size: 1
+  max_concurrent_trajectories: 32
+  # 512 truncated mid-patch; a read-then-edit turn needs more room.
+  max_tokens_per_turn: 1024
+  max_assistant_turns: 30
+  # The string-reverse task has text prompts only. Keep Qwen3.5's language
+  # stack and skip its unused vision encoder in vLLM.
+  language_model_only: true
+  enable_prefix_caching: true
+  vllm_metrics_port: 9090
+  generation_timeout_secs: 600
+  # ~3.75× the turns means ~3.75× the wall clock per trajectory.
+  trajectory_timeout_secs: 7200
+
+pipeline:
+  pending_tasks_queue_size: 64
+  completed_rollouts_queue_size: 256
+  train_batches_queue_size: 16
+  # 1,000 optimizer updates × 4 groups/update × 8 rollouts/group.
+  max_train_steps: 1000
+  max_policy_staleness: 0
+  seed: 0
+  # Must stay above rollout.trajectory_timeout_secs, or groups are flushed as
+  # partial while their slowest rollouts are still legitimately running.
+  group_assembly_timeout_secs: 7500
+  group_poll_interval_secs: 5
+
+checkpoint:
+  bucket_uri: s3://grl-swebench-lite/checkpoints/string-reverse
+  interval_steps: null
+  staging_dir: /tmp/grl-checkpoints
+  max_background_uploads: 1
+
+telemetry:
+  run_id: null
+  otel_endpoint: null
+
+ray:
+  ignore_reinit_error: true
+
+images:
+  # All four runtime images resolve from this one immutable release tag. Do not
+  # add per-role overrides here: a FULL launch must use one tested code set.
+  mode: published
+  registry: ghcr.io/salazar-99/grl
+  tag: "0.30"
+  training:
+    head: auto
+    rollouts: auto
+    training: auto
+  manager: auto
+
+infra:
+  release_name: grl-resources
+  release_namespace: default
+  cluster_name: grl
+  region: us-west-2
+  # Keep the EKS subnets explicit so compute placement can be controlled.
+  availability_zones: [us-west-2a, us-west-2c]
+  ray_cluster:
+    name: grl-ray
+    namespace: default
+    version: "2.55.1"
+  otel_collector:
+    name: grl-collector
+    namespace: default
+    upstream:
+      endpoint: https://otel.gerardosalazar.com
+      username: grl-collector
+      password: grl
+  manager:
+    name: grl-manager
+    namespace: default
+    port: 50051
+    active_dir: active
+    max_concurrent_envs: "32"
+    snapshots_enabled: true
+    use_jailer: true
+    # Keep jail roots on the cache XFS volume. Snapshot memory can then be
+    # hard-linked into each jail and shared via Firecracker's MAP_PRIVATE CoW.
+    jailer_root: /var/lib/grl/jailer
+    # String-reverse runs one static Rust binary and needs no repository checkout.
+    vm_memory_mib: 128
+  vm_image_cache:
+    namespace: default
+    bucket: grl-swebench-lite
+    region: us-west-2
+    image: peakcom/s5cmd:v2.3.0
+    host_path: /var/lib/grl
+    bootstrap_key: bootstrap/grl-bootstrap-e9eb9c2f0c74affb.cpio.gz
+    # Per-VM scratch template (GiB). Copied into manager ephemeral at boot.
+    scratch_gb: 2
+  model_cache:
+    namespace: default
+    tag: Qwen/Qwen3.5-0.8B
+    revision: ""
+    huggingface_token: ""
+    image: python:3.12-slim
+    pause_image: registry.k8s.io/pause:3.10
+    host_path: /models
