@@ -50,12 +50,6 @@ jobs:
             dockerfile: environments/manager/Dockerfile
             target: ""
             platforms: linux/amd64
-          - component: grafana
-            dockerfile: infra/observability/Dockerfile
-            target: grafana
-            # The observability chart can run on either the x86 or Arm general
-            # node pool, unlike the GPU/KVM runtime images.
-            platforms: linux/amd64,linux/arm64
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
